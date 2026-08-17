@@ -1,4 +1,4 @@
-// 文库主页（FR-2）：搜索/排序/视图切换 + 项目栏 + 论文卡片网格 + 上传（预判扫描版）
+// 文库主页：搜索/排序/视图切换 + 项目栏 + 论文卡片网格 + 上传（预判扫描版）
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../../api/client'

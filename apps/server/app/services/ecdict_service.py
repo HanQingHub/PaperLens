@@ -60,7 +60,7 @@ def lookup(word: str) -> dict | None:
                         lemma = part[2:]
                         break
             if lemma is None:
-                # 主数据源 lemma.en.txt 词形库（§8.3）：exchange 缺失时补查
+                # 主数据源 lemma.en.txt 词形库：exchange 缺失时补查
                 lem = conn.execute("SELECT lemma FROM lemmas WHERE word=?", (word,)).fetchone()
                 if lem is not None:
                     lemma = lem[0]

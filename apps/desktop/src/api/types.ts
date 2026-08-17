@@ -1,4 +1,4 @@
-// PaperLens API 类型定义（对齐设计文档 §9 契约）
+// PaperLens API 类型定义
 
 export interface User {
   id: number
@@ -164,7 +164,7 @@ export interface OcrPageBlocks {
   }[]
 }
 
-// ── SSE 翻译事件（§8.1 协议）───────────────────────────────
+// ── SSE 翻译事件 ────────────────────────────────────────
 export type TranslateEvent =
   | { event: 'hit'; layer: 'wordbook' | 'glossary' | 'cache' | 'ecdict'; data: Record<string, unknown> }
   | { event: 'delta'; text: string }

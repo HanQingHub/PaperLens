@@ -2,7 +2,7 @@
 name = "paperlens-desktop"
 version = "0.1.0"
 description = "PaperLens desktop shell (Tauri v2 thin shell)"
-authors = ["PaperLens"]
+authors = ["筝青寒"]
 edition = "2021"
 
 [lib]

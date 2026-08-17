@@ -1,4 +1,4 @@
-// 词形归一与规则还原（§8.3）：lowercase + 规则变体多候选，与词库求交集
+// 词形归一与规则还原：lowercase + 规则变体多候选，与词库求交集
 // 不规则形态经 GET /api/dictionary/{lemma} 验证（异步缓存，可选增强）
 import { api } from '../../api/client'
 

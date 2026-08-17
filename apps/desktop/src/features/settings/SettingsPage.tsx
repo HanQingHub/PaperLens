@@ -1,4 +1,4 @@
-// 设置页（FR-11）：外观 / 生词高亮 / 批注 / LLM 模型管理 / 词典 / 数据 / 快捷键
+// 设置页：外观 / 生词高亮 / 批注 / LLM 模型管理 / 词典 / 数据 / 快捷键
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, downloadBlob } from '../../api/client'
 import type { LLMModelInfo, LLMStatus } from '../../api/types'

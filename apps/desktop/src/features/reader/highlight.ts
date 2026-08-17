@@ -1,4 +1,4 @@
-// textLayer / OCR 层词级拆分与高亮（§8.5）
+// textLayer / OCR 层词级拆分与高亮
 // pdfjs 的 text span 是 absolute + transform，子元素用 <i> 包裹避开 .textLayer span 选择器
 import { lookupStage } from './lemma'
 

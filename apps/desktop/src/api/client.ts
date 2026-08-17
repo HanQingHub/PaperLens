@@ -185,7 +185,7 @@ export function downloadBlob(blob: Blob, filename: string) {
 export const addGlossaryTerm = (paperId: number, term: string, domainTranslation: string) =>
   api.addGlossaryTerm(paperId, term, domainTranslation)
 
-// ── 阅读器追加（reader agent）──────────────────────────────
+// ── 阅读器追加 ───────────────────────────────────────────
 
 /** PDF 文件加载地址（一次性 token 查询参数，Range 请求不消耗） */
 export function pdfFileUrl(paperId: number, token: string) {

@@ -1,6 +1,6 @@
 //! PaperLens desktop shell (Tauri v2 thin shell).
 //!
-//! Responsibilities (per docs/软件需求与架构文档.md §6.5):
+//! Responsibilities:
 //! - Spawn the `paperlens-server` sidecar with a boot handshake token and the data dir.
 //! - Attach the sidecar to a Windows Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`)
 //!   so the entire sidecar process tree dies when the shell exits
@@ -71,7 +71,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building PaperLens window")
         .run(|app_handle, event| {
-            // Two-step exit policy (docs §6.5): the graceful HTTP shutdown step
+            // Two-step exit policy: the graceful HTTP shutdown step
             // is skipped because the backend has no shutdown endpoint; closing
             // the Job Object handle cascade-kills the whole sidecar tree.
             if let RunEvent::ExitRequested { .. } = event {

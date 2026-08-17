@@ -1,4 +1,4 @@
-// 首启动向导（FR-1/FR-11）：欢迎+数据目录 → 模型推荐（下载/导入/跳过）→ 完成
+// 首启动向导：欢迎+数据目录 → 模型推荐（下载/导入/跳过）→ 完成
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../../api/client'

@@ -68,7 +68,7 @@ def client(data_dir, monkeypatch):
     from app.main import app
     from app.services.ocr_manager import OCRManager
 
-    # 测试确定性：不拉起真实 OCR worker（apps/ocr-worker 可能已被并行开发）
+    # 测试确定性：不拉起真实 OCR worker
     monkeypatch.setattr(OCRManager, "spawn_worker", lambda self: None)
     with TestClient(app) as c:
         yield c
