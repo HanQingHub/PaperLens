@@ -9,7 +9,7 @@
       "identifier": "shell:allow-spawn",
       "allow": [
         {
-          "name": "binaries/paperlens-server",
+          "name": "paperlens-server",
           "sidecar": true,
           "args": true
         }
@@ -19,7 +19,7 @@
       "identifier": "shell:allow-kill",
       "allow": [
         {
-          "name": "binaries/paperlens-server",
+          "name": "paperlens-server",
           "sidecar": true,
           "args": true
         }

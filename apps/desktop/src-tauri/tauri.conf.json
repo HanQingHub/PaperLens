@@ -27,12 +27,23 @@
     "active": true,
     "targets": ["nsis"],
     "externalBin": ["binaries/paperlens-server"],
+    "resources": {
+      "bundle-resources/models/Qwen3.5-0.8B-Q4_K_M.gguf": "resources/models/Qwen3.5-0.8B-Q4_K_M.gguf",
+      "bundle-resources/ecdict.db": "resources/ecdict.db",
+      "ocr-dist/paperlens-ocr": "resources/paperlens-ocr"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.png",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "template": "installer.nsi",
+        "installMode": "currentUser"
+      }
+    }
   }
 }

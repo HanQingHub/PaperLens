@@ -1,6 +1,6 @@
 // SSE 客户端：fetch ReadableStream 实现（支持 POST + Bearer 头 + 取消 + 心跳看门狗）
 import type { TranslateEvent } from './types'
-import { getToken } from './client'
+import { BASE, getToken } from './client'
 
 export interface SseOptions {
   /** 15s 无任何事件视为死链，抛 SseTimeoutError */
@@ -27,7 +27,7 @@ export async function* ssePost(
   const onOuterAbort = () => controller.abort()
   opts.signal?.addEventListener('abort', onOuterAbort, { once: true })
 
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

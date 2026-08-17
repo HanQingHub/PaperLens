@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.core.util import now_iso
+from app.core.config import get_settings
 from app.models import (
     Annotation, AppSetting, Excerpt, FileRef, GlossaryTerm, Paper, Project,
     ReadingProgress, ReadingSession, ReviewLog, TranslationCache, User, Word,
@@ -90,7 +91,7 @@ def import_zip(zip_path: Path, data_dir: Path, session_factory) -> dict:
             old_uid = user_data["id"]
 
             # 文件与引用计数
-            files_dir = data_dir / "files"
+            files_dir = get_settings().files_dir
             files_dir.mkdir(parents=True, exist_ok=True)
             for p in tables.get("papers", []):
                 h = p["file_hash"]

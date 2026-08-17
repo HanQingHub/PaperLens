@@ -15,11 +15,19 @@ def _connect() -> sqlite3.Connection | None:
     if _tried:
         return None
     _tried = True
-    path = get_settings().ecdict_path
-    if not path.exists():
-        return None
-    _conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, check_same_thread=False)
-    return _conn
+    s = get_settings()
+    candidates = [s.ecdict_path]
+    if s.bundled_ecdict_path is not None and s.bundled_ecdict_path.resolve() != s.ecdict_path.resolve():
+        candidates.append(s.bundled_ecdict_path)
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            _conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, check_same_thread=False)
+            return _conn
+        except sqlite3.Error:
+            continue
+    return None
 
 
 def reset():

@@ -7,7 +7,7 @@
 //!   (tauri-plugin-shell's `kill` only terminates the direct child).
 //! - Write the handshake token to `{data dir}\.token` for the sidecar to pick up.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use tauri::{Manager, RunEvent};
@@ -15,16 +15,40 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 /// Sidecar binary name as declared in `bundle.externalBin`.
-/// Tauri resolves it with the target-triple suffix at runtime
-/// (e.g. `binaries/paperlens-server-x86_64-pc-windows-msvc.exe`).
-const SIDECAR_BIN: &str = "binaries/paperlens-server";
+/// tauri-plugin-shell resolves it flat relative to the app exe dir
+/// (`{exe_dir}/paperlens-server.exe`), so the `binaries/` source prefix
+/// must NOT be included here.
+const SIDECAR_BIN: &str = "paperlens-server";
 
 /// Default data directory, consistent with the backend configuration.
 /// Can be overridden with the `PAPERLENS_DATA_DIR` environment variable.
 const DEFAULT_DATA_DIR: &str = r"D:\PaperLens";
 
+/// Fixed backend port (see `scripts/server_entry.py`, `PAPERLENS_PORT`).
+/// Injected explicitly to shield against a system-level PAPERLENS_PORT.
+const DEFAULT_PORT: &str = "8737";
+
 /// Handshake token file name inside the data directory.
 const TOKEN_FILE: &str = ".token";
+
+/// Resolve the data directory, mirroring the backend fallback in
+/// `apps/server/app/core/config.py`: explicit env wins; otherwise
+/// `D:\PaperLens` when the D: drive exists, else `%LOCALAPPDATA%\PaperLens`.
+fn resolve_data_dir() -> String {
+    if let Ok(d) = std::env::var("PAPERLENS_DATA_DIR") {
+        if !d.is_empty() {
+            return d;
+        }
+    }
+    if Path::new("D:\\").is_dir() {
+        DEFAULT_DATA_DIR.to_string()
+    } else {
+        PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default())
+            .join("PaperLens")
+            .to_string_lossy()
+            .into_owned()
+    }
+}
 
 /// Managed app state guarding the sidecar lifetime.
 ///
@@ -69,17 +93,38 @@ fn generate_boot_token() -> Result<String, getrandom::Error> {
 
 fn setup_sidecar(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // (a) Boot handshake token + data directory.
-    let data_dir =
-        std::env::var("PAPERLENS_DATA_DIR").unwrap_or_else(|_| DEFAULT_DATA_DIR.to_string());
+    let data_dir = resolve_data_dir();
     let token = generate_boot_token().expect("failed to generate boot handshake token");
 
     // (b) Spawn the sidecar, injecting the handshake env contract.
-    // The backend chooses its own random port on 127.0.0.1, so no `--port` is passed.
-    let command = app
+    // Port is fixed (PAPERLENS_PORT) so the frontend BASE URL can be static.
+    let mut command = app
         .shell()
         .sidecar(SIDECAR_BIN)?
         .env("PAPERLENS_BOOT_TOKEN", &token)
-        .env("PAPERLENS_DATA_DIR", &data_dir);
+        .env("PAPERLENS_DATA_DIR", &data_dir)
+        .env("PAPERLENS_PORT", DEFAULT_PORT);
+
+    // (c) Point the backend at bundled read-only resources (install dir).
+    // Resource dir layout mirrors `bundle.resources` in tauri.conf.json;
+    // absent in dev mode, where scripts/dev.py provides the equivalents.
+    if let Ok(res_dir) = app.path().resource_dir() {
+        let models = res_dir.join("resources").join("models");
+        if models.is_dir() {
+            command = command.env("PAPERLENS_MODELS_DIR", models);
+        }
+        let ecdict = res_dir.join("resources").join("ecdict.db");
+        if ecdict.is_file() {
+            command = command.env("PAPERLENS_ECDICT_PATH", ecdict);
+        }
+        let ocr = res_dir
+            .join("resources")
+            .join("paperlens-ocr")
+            .join("paperlens-ocr.exe");
+        if ocr.is_file() {
+            command = command.env("PAPERLENS_OCR_EXE", ocr);
+        }
+    }
 
     match command.spawn() {
         Ok((mut rx, child)) => {
