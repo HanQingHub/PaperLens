@@ -41,3 +41,7 @@ vite-dev*
 
 # AI 工具目录（内部日志/会话状态，不入库）
 .trae/
+# agent 日志（仅本地，不入库）
+docs/AGENT-REPORT-*.md
+docs/DECISION-*.md
+docs/DISCOVERY-*.md
