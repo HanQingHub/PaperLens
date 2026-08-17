@@ -1,4 +1,4 @@
-// 阅读器页面（FR-3/4/7/8/9）：文档加载 · 单页/连续滚动 · 划词翻译 · 连线批注 · OCR 叠加 ·
+// 阅读器页面：文档加载 · 单页/连续滚动 · 划词翻译 · 连线批注 · OCR 叠加 ·
 // 页内搜索 · 大纲 · 进度恢复 · 阅读会话计时。组件保持薄壳：页渲染在 PageView，选区动作在
 // SelectionToolbar，翻译卡片在 TranslateCard，跨模块通信走 readerBus。
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -303,7 +303,7 @@ export default function ReaderPage() {
     }
   }, [pid, goto])
 
-  // ── 阅读会话计时（FR-9：失焦暂停）──
+  // ── 阅读会话计时（窗口失焦暂停）──
   useEffect(() => {
     if (!Number.isFinite(pid)) return
     const s = { start: new Date().toISOString(), seconds: 0, lastTick: Date.now(), focused: document.hasFocus() }
@@ -451,7 +451,7 @@ export default function ReaderPage() {
     })
   }, [])
 
-  // ── 快捷键（§10.4）──
+  // ── 快捷键 ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null

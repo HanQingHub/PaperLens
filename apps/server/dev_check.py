@@ -100,7 +100,7 @@ def main():
         has_error = any(e["event"] == "error" and e["data"]["code"] == "llm_loading_timeout" for e in events)
         step("翻译 SSE（ECDICT 兜底）", ecdict_hit and has_error, f"events={kinds}")
 
-        # OCR 入队（worker 并行开发中：若 worker 已运行会立即认领，状态可能推进到 running/done）
+        # OCR 入队（若 worker 已运行会立即认领，状态可能推进到 running/done）
         r = c.post(f"/api/papers/{paper['id']}/ocr", headers=h)
         r2 = c.get(f"/api/papers/{paper['id']}/ocr-status", headers=h)
         ocr_dir = DATA_DIR / "ocr" / str(paper["id"])

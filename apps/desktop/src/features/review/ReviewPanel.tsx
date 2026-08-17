@@ -1,4 +1,4 @@
-// 右面板·生词复习（FR-6 / §8.4 SM-2）
+// 右面板·生词复习（SM-2 间隔重复）
 // 注：后端 GET /api/words?due=1 暂不返回 occurrence（原句语境），
 //     背面展示词典释义 + 词库存译法；掌握建议基于 interval_days≥21 且 stage=1。
 import { useCallback, useEffect, useState } from 'react'

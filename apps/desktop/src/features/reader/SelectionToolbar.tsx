@@ -1,4 +1,4 @@
-// 划词浮动工具条（§10.3 毛玻璃 + 120ms 淡入）：翻译/释义/入生词/批注/高亮/摘录/复制
+// 划词浮动工具条（毛玻璃 + 120ms 淡入）：翻译/释义/入生词/批注/高亮/摘录/复制
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
 import { useAuth } from '../../stores/auth'
@@ -83,7 +83,7 @@ export default function SelectionToolbar({
   if (!selection || !paper) return null
   const pageNo = selection.pageIndex + 1
 
-  // ── 入生词库（FR-6）──
+  // ── 入生词库 ──
   const addWord = async () => {
     const word = selection.text.trim().split(/\s+/)[0] ?? ''
     if (!word) return
@@ -116,7 +116,7 @@ export default function SelectionToolbar({
     }
   }
 
-  // ── 五色高亮循环（FR-7 句子批注）──
+  // ── 五色高亮循环（句子批注）──
   const cycleHighlight = async () => {
     const color = ANNO_COLORS[colorIdx]
     setColorIdx((i) => (i + 1) % ANNO_COLORS.length)
@@ -145,7 +145,7 @@ export default function SelectionToolbar({
     }
   }
 
-  // ── 摘录（FR-10）──
+  // ── 摘录 ──
   const excerpt = async () => {
     try {
       await api.addExcerpt({
@@ -159,7 +159,7 @@ export default function SelectionToolbar({
     }
   }
 
-  // ── 复制附引用（FR-10）──
+  // ── 复制附引用 ──
   const copy = async () => {
     const cite = citationSuffix(paper.authors, paper.year, paper.title, pageNo)
     try {
@@ -170,7 +170,7 @@ export default function SelectionToolbar({
     }
   }
 
-  // ── 连线批注（FR-7）──
+  // ── 连线批注 ──
   const startLinking = () => {
     setLinking({
       pageIndex: selection.pageIndex,

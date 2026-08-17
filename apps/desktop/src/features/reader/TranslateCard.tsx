@@ -1,4 +1,4 @@
-// 翻译卡片（FR-4/5）：四层命中徽标 + LLM 流式打字机 + 句译 + 修正译法 + 入生词
+// 翻译卡片：四层命中徽标 + LLM 流式打字机 + 句译 + 修正译法 + 入生词
 import { useEffect, useRef, useState } from 'react'
 import { ssePost, SseTimeoutError } from '../../api/sse'
 import { api, addGlossaryTerm } from '../../api/client'
@@ -249,7 +249,7 @@ export default function TranslateCard({
     }
   }
 
-  // ── 修正译法 → 术语表 source=user（FR-5 用户沉淀）──
+  // ── 修正译法 → 术语表 source=user（用户沉淀）──
   const submitFix = async () => {
     const term = request.word.trim()
     if (!term || !fixText.trim()) return

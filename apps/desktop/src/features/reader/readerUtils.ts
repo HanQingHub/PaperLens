@@ -1,5 +1,5 @@
 // 阅读器工具：页面文本提取（缓存）、句子上下文断句、PDF↔CSS 坐标映射
-// 坐标约定：批注/锚点/卡片一律存 PDF 用户空间（pt，原点左下，§8.6）；
+// 坐标约定：批注/锚点/卡片一律存 PDF 用户空间（pt，原点左下）；
 // 渲染映射假设页面 rotation=0（学术论文常态），公式与 pdfjs PageViewport 一致。
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { pageTextCache } from '../../stores/readerStore'
@@ -142,7 +142,7 @@ export function cssPointToPdf(x: number, y: number, geom: PageGeom) {
 export const bboxToCss = pdfRectToCss
 
 // ── 杂项 ──────────────────────────────────────────────────
-/** 复制附引用（FR-10）：作者 (年), p.N；作者缺失用标题前 20 字 */
+/** 复制附引用：作者 (年), p.N；作者缺失用标题前 20 字 */
 export function citationSuffix(authors: string | null, year: number | null, title: string | null, pageNo: number) {
   const who = (authors ?? '').trim()
   const y = year != null ? ` (${year})` : ''
@@ -155,7 +155,7 @@ export function wordCount(text: string) {
   return m ? m.length : 0
 }
 
-/** 贝塞尔连线 path：M 锚点 C 控制点1 控制点2 卡片边缘（§8.6 控制点取中垂线偏移） */
+/** 贝塞尔连线 path：M 锚点 C 控制点1 控制点2 卡片边缘（控制点取中垂线偏移） */
 export function linkPath(ax: number, ay: number, cx: number, cy: number) {
   const dx = cx - ax
   const bow = Math.min(56, Math.abs(dx) * 0.22 + 16) * (ay > cy ? 1 : -1)

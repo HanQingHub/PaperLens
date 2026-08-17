@@ -1,4 +1,4 @@
-// 右面板·批注与摘录（FR-7 / FR-10）：Tab 切换、过滤、定位、删除、导出 Markdown
+// 右面板·批注与摘录：Tab 切换、过滤、定位、删除、导出 Markdown
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, downloadBlob } from '../../api/client'
 import { parseAnchor, type Annotation, type Excerpt } from '../../api/types'

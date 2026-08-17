@@ -1,4 +1,4 @@
-// 右面板·统计（FR-9）：今日/累计时长、streak、30 天热力图、7 天新增生词柱状图、复习完成率
+// 右面板·统计：今日/累计时长、streak、30 天热力图、7 天新增生词柱状图、复习完成率
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import type { StatsOverview } from '../../api/types'

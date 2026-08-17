@@ -1,4 +1,4 @@
-// 右面板·本文术语表（FR-5）：TF-IDF 自动抽取 + 用户修正沉淀；修正优先级最高的裁决见 §8.1
+// 右面板·本文术语表：TF-IDF 自动抽取 + 用户修正沉淀
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import type { GlossaryTerm } from '../../api/types'

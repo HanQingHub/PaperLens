@@ -1,4 +1,4 @@
-// 阅读器私有状态：文档/页码/缩放/模式/选区/批注/OCR（reader agent 领地）
+// 阅读器私有状态：文档/页码/缩放/模式/选区/批注/OCR
 import { create } from 'zustand'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import type { OcrPageBlocks, Paper } from '../api/types'
