@@ -5,7 +5,7 @@ import type {
   ReadingProgress, StatsOverview, Word,
 } from './types'
 
-const BASE = '/api'
+export const BASE = 'http://127.0.0.1:8737/api'
 
 let token: string | null = localStorage.getItem('pl_token')
 export function setToken(t: string | null) {

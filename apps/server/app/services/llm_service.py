@@ -34,7 +34,7 @@ BUILTIN_MODELS = [
     {
         "id": "qwen3.5-0.8b-q4km",
         "file": "Qwen3.5-0.8B-Q4_K_M.gguf",
-        "size_bytes": 532676608,
+        "size_bytes": 532517120,
         "sha256": None,
         "sources": [
             "https://modelscope.cn/models/unsloth/Qwen3.5-0.8B-GGUF/resolve/master/Qwen3.5-0.8B-Q4_K_M.gguf",
@@ -138,14 +138,21 @@ class LLMService:
             pass
         return DEFAULT_MODEL_ID
 
-    def scan_models(self) -> list[dict]:
+    def _models_dirs(self) -> list[Path]:
         from app.core.config import get_settings
 
-        models_dir = get_settings().models_dir
+        s = get_settings()
+        dirs = [s.models_dir]
+        if s.bundled_models_dir is not None and s.bundled_models_dir.resolve() != s.models_dir.resolve():
+            dirs.append(s.bundled_models_dir)
+        return dirs
+
+    def scan_models(self) -> list[dict]:
         found_files: dict[str, Path] = {}
-        if models_dir.exists():
-            for f in sorted(models_dir.glob("*.gguf")):
-                found_files[f.stem.lower()] = f
+        for d in self._models_dirs():
+            if d.exists():
+                for f in sorted(d.glob("*.gguf")):
+                    found_files.setdefault(f.stem.lower(), f)
         result = []
         for m in BUILTIN_MODELS:
             key = Path(m["file"]).stem.lower()
@@ -165,17 +172,16 @@ class LLMService:
         return result
 
     def resolve_model_path(self, model_id: str | None = None) -> tuple[str, Path] | None:
-        from app.core.config import get_settings
-
         mid = (model_id or self.configured_model_id()).strip()
-        models_dir = get_settings().models_dir
-        if mid in _BUILTIN_BY_ID:
-            p = models_dir / _BUILTIN_BY_ID[mid]["file"]
-            return (mid, p) if p.exists() else None
-        if models_dir.exists():
-            for f in models_dir.glob("*.gguf"):
-                if f.stem.lower() == mid or f.name == mid:
-                    return mid, f
+        for models_dir in self._models_dirs():
+            if mid in _BUILTIN_BY_ID:
+                p = models_dir / _BUILTIN_BY_ID[mid]["file"]
+                if p.exists():
+                    return (mid, p)
+            if models_dir.exists():
+                for f in models_dir.glob("*.gguf"):
+                    if f.stem.lower() == mid or f.name == mid:
+                        return mid, f
         return None
 
     # ---- 生命周期 ----

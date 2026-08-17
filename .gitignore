@@ -21,11 +21,16 @@ __pycache__/
 .dev-data/
 
 # 大资产（有独立下载源/生成脚本，不入库）
+# bundle-resources 由 assets 经脚本生成（0.8B 拷贝 + ecdict_import.py），同样不入库
+apps/desktop/src-tauri/bundle-resources/
 assets/models/
 assets/wheels/
 assets/ecdict/stardict.db
 assets/ecdict/ecdict-sqlite-28.zip
 assets/ecdict/ecdict.db
+
+# 工具会话状态
+.freebuff/
 
 # 日志/临时
 *.log
