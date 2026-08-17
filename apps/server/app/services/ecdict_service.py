@@ -1,0 +1,79 @@
+import sqlite3
+import threading
+
+from app.core.config import get_settings
+
+_lock = threading.Lock()
+_conn: sqlite3.Connection | None = None
+_tried = False
+
+
+def _connect() -> sqlite3.Connection | None:
+    global _conn, _tried
+    if _conn is not None:
+        return _conn
+    if _tried:
+        return None
+    _tried = True
+    path = get_settings().ecdict_path
+    if not path.exists():
+        return None
+    _conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, check_same_thread=False)
+    return _conn
+
+
+def reset():
+    global _conn, _tried
+    with _lock:
+        if _conn is not None:
+            _conn.close()
+        _conn = None
+        _tried = False
+
+
+def lookup(word: str) -> dict | None:
+    """查词典：直接命中 → 解析 exchange 的 0=Lemma；未命中 → lemmas 表词形还原后再查。"""
+    word = word.strip().lower()
+    if not word:
+        return None
+    conn = _connect()
+    if conn is None:
+        return None
+    with _lock:
+        row = conn.execute(
+            "SELECT word,pos,phonetic,translation,collins_star,tag,exchange FROM dictionary WHERE word=?",
+            (word,),
+        ).fetchone()
+        if row is not None:
+            lemma = None
+            if row[6]:
+                for part in row[6].split("/"):
+                    if part.startswith("0="):
+                        lemma = part[2:]
+                        break
+            if lemma is None:
+                # 主数据源 lemma.en.txt 词形库（§8.3）：exchange 缺失时补查
+                lem = conn.execute("SELECT lemma FROM lemmas WHERE word=?", (word,)).fetchone()
+                if lem is not None:
+                    lemma = lem[0]
+            return {
+                "word": row[0], "pos": row[1], "phonetic": row[2], "translation": row[3],
+                "collins_star": row[4], "tag": row[5], "exchange": row[6], "lemma": lemma,
+            }
+        lem = conn.execute("SELECT lemma FROM lemmas WHERE word=?", (word,)).fetchone()
+        if lem is None:
+            return None
+        base = lem[0]
+        row = conn.execute(
+            "SELECT word,pos,phonetic,translation,collins_star,tag,exchange FROM dictionary WHERE word=?",
+            (base,),
+        ).fetchone()
+        if row is None:
+            return {
+                "word": word, "pos": None, "phonetic": None, "translation": None,
+                "collins_star": None, "tag": None, "exchange": None, "lemma": base,
+            }
+        return {
+            "word": word, "pos": row[1], "phonetic": row[2], "translation": row[3],
+            "collins_star": row[4], "tag": row[5], "exchange": row[6], "lemma": base,
+        }
