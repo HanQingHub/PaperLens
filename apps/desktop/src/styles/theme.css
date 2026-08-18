@@ -115,6 +115,7 @@ html,
 body {
   margin: 0;
   height: 100%;
+  overscroll-behavior: none;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
@@ -301,31 +302,78 @@ h1, h2, h3, h4, button, input, textarea, select {
   filter: saturate(0.75) brightness(0.85);
 }
 
-/* ── PDF 文本层（pdf.js）────────────────────────────────── */
+/* ── PDF 文本层（pdf.js v6 官方契约，web/pdf_viewer.css 6.2.108）───────── */
 .textLayer {
+  color-scheme: only light;
   position: absolute;
+  text-align: initial;
   inset: 0;
-  overflow: hidden;
-  line-height: 1;
+  overflow: clip;
   opacity: 1;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  -webkit-text-size-adjust: none;
+  -moz-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
   z-index: 2;
   --scale-factor: 1;
-  --total-scale-factor: 1;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
 }
-.textLayer span {
+.textLayer :is(span, br) {
   color: transparent;
   position: absolute;
   white-space: pre;
-  transform-origin: 0 0;
   cursor: text;
+  transform-origin: 0% 0%;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  user-select: text;
+}
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.textLayer .markedContent {
+  display: contents;
+}
+.textLayer span[role="img"] {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  cursor: default;
 }
 .textLayer ::selection {
   background: rgba(51, 101, 138, 0.35);
+  color: transparent;
+}
+.textLayer br::selection {
+  background: transparent;
 }
 .textLayer .endOfContent {
+  display: block;
   position: absolute;
-  inset: 0;
-  z-index: -1;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+}
+.textLayer.selecting .endOfContent {
+  top: 0;
 }
 
 /* ── 打字机流式光标（翻译卡片）───────────────────────────── */

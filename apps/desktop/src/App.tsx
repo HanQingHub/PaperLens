@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
+import { isTauri } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useAuth, applyTheme } from './stores/auth'
 import AppShell from './components/layout/AppShell'
 import AuthPage from './features/auth/AuthPage'
@@ -7,6 +9,7 @@ import WizardPage from './features/wizard/WizardPage'
 import LibraryPage from './features/library/LibraryPage'
 import ReaderPage from './features/reader/ReaderPage'
 import SettingsPage from './features/settings/SettingsPage'
+import UpdaterBoot from './features/updater/UpdaterBoot'
 
 export default function App() {
   const { booted, boot, user, settings } = useAuth()
@@ -21,6 +24,19 @@ export default function App() {
     document.documentElement.style.fontSize = `${14 * (settings.font_scale || 1)}px`
   }, [settings.theme, settings.animations, settings.font_scale])
 
+  useEffect(() => {
+    if (!isTauri()) return
+    const onKey = async (e: KeyboardEvent) => {
+      if (e.key === 'F11') {
+        e.preventDefault()
+        const win = getCurrentWindow()
+        win.setFullscreen(!(await win.isFullscreen()))
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   if (!booted) {
     return (
       <div className="flex h-full items-center justify-center bg-bg">
@@ -32,17 +48,26 @@ export default function App() {
     )
   }
 
-  if (!user) return <AuthPage />
+  if (!user)
+    return (
+      <>
+        <AuthPage />
+        <UpdaterBoot />
+      </>
+    )
 
   return (
-    <Routes>
-      <Route path="/wizard" element={<WizardPage />} />
-      <Route element={<AppShell />}>
-        <Route path="/" element={<LibraryPage />} />
-        <Route path="/reader/:paperId" element={<ReaderPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/wizard" element={<WizardPage />} />
+        <Route element={<AppShell />}>
+          <Route path="/" element={<LibraryPage />} />
+          <Route path="/reader/:paperId" element={<ReaderPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      <UpdaterBoot />
+    </>
   )
 }

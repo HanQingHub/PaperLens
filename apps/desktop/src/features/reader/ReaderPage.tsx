@@ -164,7 +164,11 @@ export default function ReaderPage() {
         if (!res.ok) throw new Error(`PDF 加载失败（HTTP ${res.status}）`)
         const data = new Uint8Array(await res.arrayBuffer())
         if (cancelled) return
-        task = getDocument({ data })
+        task = getDocument({
+          data,
+          cMapUrl: `${import.meta.env.BASE_URL}cmaps/`,
+          cMapPacked: true,
+        })
         const doc = await task.promise
         if (cancelled) return
         const pages = await Promise.all(
@@ -718,7 +722,7 @@ export default function ReaderPage() {
         ) : (
           <div
             ref={scrollRef}
-            className="h-full overflow-auto overscroll-contain"
+            className="h-full overflow-auto overscroll-none"
             onScroll={onScroll}
             onMouseUp={onMouseUp}
           >

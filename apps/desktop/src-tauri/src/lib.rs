@@ -65,8 +65,13 @@ struct SidecarGuard {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    inject_system_proxy();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![startup_check])
         .setup(setup_sidecar)
         .build(tauri::generate_context!())
         .expect("error while building PaperLens window")
@@ -296,4 +301,249 @@ fn shutdown_sidecar(app_handle: &tauri::AppHandle) {
         }
         g.job = 0;
     }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Auto-update: startup self-check (design doc P1-6 + resources integrity).
+// The updater plugin itself does not verify that a silent install succeeded,
+// so on boot we compare the NSIS-registered version with the running app and
+// verify the bundled resources survived the update (they must be preserved by
+// the resources-free update package).
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Result of the startup self-check, consumed by the frontend updater module.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StartupCheck {
+    /// Whether an NSIS installation is registered (false in `tauri dev`).
+    installed: bool,
+    /// Version registered by the installer (HKCU Uninstall\PaperLens).
+    installed_version: Option<String>,
+    /// Version of the running binary (tauri.conf.json).
+    app_version: String,
+    /// Installer version differs from the running one → last update did not finish.
+    version_mismatch: bool,
+    /// Missing bundled resource entries, e.g. "resources/ecdict.db".
+    missing_resources: Vec<String>,
+}
+
+#[tauri::command]
+fn startup_check(app: tauri::AppHandle) -> StartupCheck {
+    let app_version = app.package_info().version.to_string();
+
+    #[cfg(windows)]
+    let installed_version = read_installed_version();
+    #[cfg(not(windows))]
+    let installed_version: Option<String> = None;
+
+    let installed = installed_version.is_some();
+    let version_mismatch = installed_version.as_deref().is_some_and(|v| v != app_version);
+
+    // Skip the resources check in dev mode: resource_dir() points at
+    // target/debug there and never contains the bundled resources.
+    let missing_resources = if installed {
+        check_resources(&app)
+    } else {
+        Vec::new()
+    };
+
+    StartupCheck {
+        installed,
+        installed_version,
+        app_version,
+        version_mismatch,
+        missing_resources,
+    }
+}
+
+/// Read `DisplayVersion` from the currentUser uninstall registry key written
+/// by our NSIS template (installMode=currentUser → SHCTX = HKCU).
+#[cfg(windows)]
+fn read_installed_version() -> Option<String> {
+    use windows_sys::Win32::Foundation::{ERROR_SUCCESS, WIN32_ERROR};
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_SZ,
+    };
+
+    const UNINST_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PaperLens";
+    let subkey: Vec<u16> = UNINST_KEY.encode_utf16().chain(std::iter::once(0)).collect();
+    let value: Vec<u16> = "DisplayVersion".encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        // windows-sys 0.59: HKEY is a raw pointer (`*mut c_void`), not an integer.
+        let mut hkey: HKEY = std::ptr::null_mut();
+        let opened: WIN32_ERROR =
+            RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_READ, &mut hkey);
+        if opened != ERROR_SUCCESS {
+            return None;
+        }
+
+        let mut ty = 0u32;
+        let mut len = 0u32;
+        let mut result = None;
+        // Two-pass query: first for the size, then for the UTF-16 data.
+        if RegQueryValueExW(
+            hkey,
+            value.as_ptr(),
+            std::ptr::null(),
+            &mut ty,
+            std::ptr::null_mut(),
+            &mut len,
+        ) == ERROR_SUCCESS
+            && ty == REG_SZ
+            && len > 0
+        {
+            let mut buf = vec![0u16; (len as usize / 2) + 1];
+            if RegQueryValueExW(
+                hkey,
+                value.as_ptr(),
+                std::ptr::null(),
+                &mut ty,
+                buf.as_mut_ptr() as *mut u8,
+                &mut len,
+            ) == ERROR_SUCCESS
+            {
+                result = Some(String::from_utf16_lossy(&buf[..len as usize / 2]));
+            }
+        }
+        RegCloseKey(hkey);
+        // Defensively strip any trailing NUL from the fixed-size registry buffer.
+        result.map(|s| s.trim_end_matches('\0').to_string())
+    }
+}
+
+/// Inject the Windows system proxy (WinINET registry, where clash/v2ray etc.
+/// write their "system proxy" toggle) into this process's environment, so the
+/// updater plugin's reqwest client (which reads HTTPS_PROXY/HTTP_PROXY first,
+/// see hyper-util Matcher::from_system) routes update traffic through it.
+/// No proxy enabled → leave env untouched (reqwest falls back to direct).
+#[cfg(windows)]
+fn inject_system_proxy() {
+    use windows_sys::Win32::Foundation::{ERROR_SUCCESS, WIN32_ERROR};
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_DWORD,
+        REG_SZ,
+    };
+
+    const INET_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+    let subkey: Vec<u16> = INET_KEY.encode_utf16().chain(std::iter::once(0)).collect();
+    let enable_name: Vec<u16> = "ProxyEnable".encode_utf16().chain(std::iter::once(0)).collect();
+    let server_name: Vec<u16> = "ProxyServer".encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let mut hkey: HKEY = std::ptr::null_mut();
+        let opened: WIN32_ERROR =
+            RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_READ, &mut hkey);
+        if opened != ERROR_SUCCESS {
+            return;
+        }
+
+        let mut enabled = 0u32;
+        let mut ty = 0u32;
+        let mut len = std::mem::size_of::<u32>() as u32;
+        let enable_ok = RegQueryValueExW(
+            hkey,
+            enable_name.as_ptr(),
+            std::ptr::null(),
+            &mut ty,
+            &mut enabled as *mut u32 as *mut u8,
+            &mut len,
+        ) == ERROR_SUCCESS
+            && ty == REG_DWORD;
+
+        let mut server = None;
+        let mut ty = 0u32;
+        let mut len = 0u32;
+        if RegQueryValueExW(
+            hkey,
+            server_name.as_ptr(),
+            std::ptr::null(),
+            &mut ty,
+            std::ptr::null_mut(),
+            &mut len,
+        ) == ERROR_SUCCESS
+            && ty == REG_SZ
+            && len > 0
+        {
+            let mut buf = vec![0u16; (len as usize / 2) + 1];
+            if RegQueryValueExW(
+                hkey,
+                server_name.as_ptr(),
+                std::ptr::null(),
+                &mut ty,
+                buf.as_mut_ptr() as *mut u8,
+                &mut len,
+            ) == ERROR_SUCCESS
+            {
+                server = Some(String::from_utf16_lossy(&buf[..len as usize / 2]));
+            }
+        }
+        RegCloseKey(hkey);
+
+        let Some(server) = server.map(|s| s.trim_end_matches('\0').to_string()) else {
+            return;
+        };
+        if !enable_ok || enabled == 0 || server.is_empty() {
+            return;
+        }
+
+        // ProxyServer formats: "host:port" or per-scheme "http=host1:port;https=host2:port".
+        let mut http = None;
+        let mut https = None;
+        if server.contains('=') {
+            for part in server.split(';') {
+                let mut kv = part.splitn(2, '=');
+                if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                    let v = v.trim().to_string();
+                    match k.trim().to_ascii_lowercase().as_str() {
+                        "http" => http = Some(v),
+                        "https" => https = Some(v),
+                        _ => {}
+                    }
+                }
+            }
+        } else {
+            let plain = format!("http://{server}");
+            http = Some(plain.clone());
+            https = Some(plain);
+        }
+        // https requests fall back to the http proxy if no https one is set.
+        let https = https.or_else(|| http.clone());
+        if let Some(url) = http {
+            std::env::set_var("HTTP_PROXY", &url);
+        }
+        if let Some(url) = https {
+            std::env::set_var("HTTPS_PROXY", url);
+        }
+    }
+}
+
+/// Verify the install-dir resources tree laid out by `bundle.resources`
+/// (mirrors the env vars injected in `setup_sidecar`).
+fn check_resources(app: &tauri::AppHandle) -> Vec<String> {
+    let mut missing = Vec::new();
+    let Ok(res_dir) = app.path().resource_dir() else {
+        return missing;
+    };
+    let root = res_dir.join("resources");
+
+    if !root.join("ecdict.db").is_file() {
+        missing.push("resources/ecdict.db".into());
+    }
+
+    let models = root.join("models");
+    let has_model = std::fs::read_dir(&models).is_ok_and(|mut entries| {
+        entries.any(|e| {
+            e.is_ok_and(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("gguf")))
+        })
+    });
+    if !has_model {
+        missing.push("resources/models (GGUF)".into());
+    }
+
+    if !root.join("paperlens-ocr").join("paperlens-ocr.exe").is_file() {
+        missing.push("resources/paperlens-ocr".into());
+    }
+
+    missing
 }

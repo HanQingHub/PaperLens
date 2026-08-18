@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PaperLens",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "identifier": "com.paperlens.app",
   "build": {
     "devUrl": "http://localhost:5173",
@@ -16,16 +16,18 @@
         "minWidth": 1000,
         "minHeight": 640,
         "center": true,
-        "resizable": true
+        "resizable": true,
+        "fullscreen": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src ipc: http://ipc.localhost http://tauri.localhost http://127.0.0.1:* http://localhost:*"
     }
   },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "externalBin": ["binaries/paperlens-server"],
     "resources": {
       "bundle-resources/models/Qwen3.5-0.8B-Q4_K_M.gguf": "resources/models/Qwen3.5-0.8B-Q4_K_M.gguf",
@@ -45,5 +47,20 @@
         "installMode": "currentUser"
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg2OTlDODE1OEQ3MEE3OEUKUldTT3AzQ05GY2laaHRwdlJBT0wxZVQ5bnM0MWJDN1k2WEVlU2IzYlRMOFBuVFByYWNqR1U4a1IK",
+      "endpoints": [
+        "https://github.com/HanQingHub/PaperLens/releases/latest/download/latest.json",
+        "https://modelscope.cn/models/HanQingHub/PaperLens/resolve/master/latest.json"
+      ],
+      "windows": {
+        "installMode": "quiet"
+      }
+    }
   }
 }
+
+
+

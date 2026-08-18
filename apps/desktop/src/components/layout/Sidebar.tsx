@@ -4,6 +4,7 @@
 import { useRef, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useUi } from '../../stores/ui'
+import { useUpdater } from '../../stores/updater'
 
 function Icon({ path, size = 16 }: { path: string; size?: number }) {
   return (
@@ -25,6 +26,7 @@ const icons = {
 function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => void }) {
   const { rightTab, openPanel } = useUi()
   const navigate = useNavigate()
+  const hasUpdate = useUpdater((s) => s.update !== null && s.phase !== 'idle')
 
   const itemCls = (active: boolean) => `pl-nav-item${active ? ' pl-nav-item--active' : ''}`
 
@@ -52,9 +54,10 @@ function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => voi
           <span className="pl-nav-icon"><Icon path={icons.chart} /></span>
           <span className="pl-side-label">阅读统计</span>
         </button>
-        <button onClick={() => navigate('/settings')} className={itemCls(false)} title="设置">
+        <button onClick={() => navigate('/settings')} className={`${itemCls(false)} relative`} title="设置">
           <span className="pl-nav-icon"><Icon path={icons.settings} /></span>
           <span className="pl-side-label">设置</span>
+          {hasUpdate && <span className="absolute right-2.5 top-2 h-1.5 w-1.5 rounded-full" style={{ background: 'var(--danger)' }} />}
         </button>
       </nav>
 

@@ -32,6 +32,9 @@ assets/ecdict/ecdict.db
 # 工具会话状态
 .freebuff/
 
+# 更新签名私钥（公钥内嵌 tauri.conf.json；私钥仅本机保留，丢失将无法再发布更新）
+scripts/keys/*.key
+
 # 日志/临时
 *.log
 *.tsbuildinfo

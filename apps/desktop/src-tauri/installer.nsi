@@ -794,10 +794,12 @@ Section Uninstall
   ; Copy main executable
   Delete "$INSTDIR\${MAINBINARYNAME}.exe"
 
-  ; Delete resources
-  {{#each resources}}
-    Delete "$INSTDIR\\{{this.[1]}}"
-  {{/each}}
+  ; Delete resources — wipe the whole resources/ tree unconditionally.
+  ; Update packages are built with `bundle.resources` cleared (scripts/updater-config.json),
+  ; so the templated per-file loop would expand to nothing for an install that was last
+  ; updated via the updater, leaving ~1.15GB of models/dict/OCR files behind on uninstall.
+  ; All bundled resources live under $INSTDIR\resources (see bundle.resources map).
+  RMDir /r "$INSTDIR\resources"
 
   ; Delete external binaries
   {{#each binaries}}

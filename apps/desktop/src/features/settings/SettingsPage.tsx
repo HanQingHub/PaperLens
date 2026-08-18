@@ -1,8 +1,10 @@
-// 设置页：外观 / 生词高亮 / 批注 / LLM 模型管理 / 词典 / 数据 / 快捷键
+// 设置页：外观 / 生词高亮 / 批注 / LLM 模型管理 / 词典 / 数据 / 应用更新 / 快捷键
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, downloadBlob } from '../../api/client'
 import type { LLMModelInfo, LLMStatus } from '../../api/types'
 import { useAuth } from '../../stores/auth'
+import { useUpdater, type UpdatePolicy } from '../../stores/updater'
+import { updaterAvailable } from '../updater/updaterCore'
 import Modal, { ConfirmModal } from '../shared/Modal'
 import { toast } from '../shared/Toast'
 import '../../styles/panels.css'
@@ -79,6 +81,18 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 export default function SettingsPage() {
   const { settings, updateSettings } = useAuth()
   const [saving, setSaving] = useState(false)
+
+  // ── 应用更新 ──
+  const updater = useUpdater()
+  const { phase, policy, setPolicy, check, download, install, setDialogOpen } = updater
+  const update = updater.update
+  const updatePercent =
+    updater.progress && updater.progress.total
+      ? Math.min(100, (updater.progress.downloaded / updater.progress.total) * 100)
+      : null
+  const lastCheckText = updater.lastCheckAt
+    ? new Date(updater.lastCheckAt).toLocaleString('zh-CN', { hour12: false })
+    : '尚未检查'
 
   const save = async (patch: Parameters<typeof updateSettings>[0]) => {
     setSaving(true)
@@ -466,6 +480,85 @@ export default function SettingsPage() {
           </Row>
         </Section>
 
+        {/* 应用更新 */}
+        <Section title="应用更新">
+          <Row label="当前版本" hint={updaterAvailable() ? undefined : '浏览器开发模式（更新功能仅桌面应用可用）'}>
+            <span className="text-[12.5px] text-text-soft">v{updater.currentVersion}</span>
+          </Row>
+          <Row label="更新策略" hint="关闭后仍可手动检查；自动下载完成后会提示重启安装">
+            <div className="flex gap-1.5">
+              {(['ask', 'auto', 'off'] as const).map((p) => (
+                <button
+                  key={p}
+                  className={`rounded-md border px-2.5 py-1 text-[12px] transition-all ${policy === p ? 'border-accent text-accent' : 'border-border text-text-soft hover:border-border-strong'}`}
+                  onClick={() => setPolicy(p as UpdatePolicy)}
+                >
+                  {p === 'ask' ? '询问' : p === 'auto' ? '自动下载' : '关闭'}
+                </button>
+              ))}
+            </div>
+          </Row>
+          <Row
+            label="检查更新"
+            hint={`上次检查：${lastCheckText}${updater.error ? ` · 上次失败：${updater.error}` : ''}`}
+          >
+            <button
+              className="btn px-2.5 py-1 text-xs"
+              onClick={() => check({ manual: true })}
+              disabled={phase === 'checking' || phase === 'downloading'}
+            >
+              {phase === 'checking' ? '检查中…' : '检查更新'}
+            </button>
+          </Row>
+          {update && (
+            <div className={`mt-2 rounded-lg border p-3 ${phase === 'available' || phase === 'ready' || phase === 'error' ? 'border-accent' : 'border-border'}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[13px] font-medium">v{updater.currentVersion} → v{update.version}</span>
+                {phase === 'available' && <span className="badge badge-accent">有新版本</span>}
+                {phase === 'downloading' && <span className="badge badge-accent">下载中…</span>}
+                {phase === 'ready' && (
+                  <span className="badge" style={{ color: 'var(--ok)', borderColor: 'var(--ok)' }}>
+                    已就绪
+                  </span>
+                )}
+                {phase === 'error' && (
+                  <span className="badge" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}>
+                    下载失败
+                  </span>
+                )}
+                <span className="ml-auto flex gap-1.5">
+                  {phase === 'available' && (
+                    <button className="btn btn-primary px-2 py-1 text-xs" onClick={() => { setDialogOpen(true) }}>
+                      查看并更新
+                    </button>
+                  )}
+                  {phase === 'error' && (
+                    <button className="btn px-2 py-1 text-xs" onClick={download}>
+                      重试下载
+                    </button>
+                  )}
+                  {phase === 'ready' && (
+                    <button className="btn btn-primary px-2 py-1 text-xs" onClick={install}>
+                      重启并安装
+                    </button>
+                  )}
+                </span>
+              </div>
+              {phase === 'downloading' && (
+                <div className="mt-2.5">
+                  <div className="h-1.5 overflow-hidden rounded-full bg-bg-soft">
+                    <div className="pl-progress h-full rounded-full transition-[width] duration-300" style={{ width: `${updatePercent ?? 0}%` }} />
+                  </div>
+                  <div className="mt-1 text-[11px] text-text-faint">
+                    {updatePercent != null ? `${updatePercent.toFixed(1)}%` : '下载中…'}
+                    {updater.progress?.total ? ` · ${fmtSize(updater.progress.downloaded)} / ${fmtSize(updater.progress.total)}` : ''}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </Section>
+
         {/* 快捷键 */}
         <Section title="快捷键（V1 固定）">
           <table className="w-full text-[12.5px]">
@@ -491,7 +584,7 @@ export default function SettingsPage() {
         </Section>
 
         <p className="pb-4 text-center text-[11px] text-text-faint">
-          {saving ? '保存中…' : '设置即改即存'} · PaperLens v0.1
+          {saving ? '保存中…' : '设置即改即存'} · PaperLens v{updater.currentVersion}
         </p>
       </div>
 

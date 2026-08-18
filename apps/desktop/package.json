@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "pdfjs-dist": "file:../../assets/wheels/pdfjs-dist-6.2.108.tgz",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

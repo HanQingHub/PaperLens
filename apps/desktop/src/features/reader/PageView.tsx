@@ -125,7 +125,7 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
           // 文本层在分离容器中构建完成后再整体换入，避免选区中途塌陷
           const tmp = document.createElement('div')
           tmp.className = 'textLayer'
-          tmp.style.setProperty('--scale-factor', String(hiScale))
+          tmp.style.setProperty('--total-scale-factor', String(hiScale))
           textLayer = new TextLayer({
             textContentSource: page.streamTextContent(),
             container: tmp,
@@ -294,7 +294,7 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
           <div
             ref={textDivRef}
             className="textLayer"
-            style={{ ['--scale-factor' as string]: String(hiScale) }}
+            style={{ ['--total-scale-factor' as string]: String(hiScale) }}
           />
         )}
 
