@@ -4,8 +4,10 @@ import type {
   LLMModelInfo, LLMStatus, LlmDownloadEvent, OcrPageBlocks, OcrStatus, Paper, Project,
   ReadingProgress, StatsOverview, Word,
 } from './types'
+import { parseSseEvent, readFrames } from './stream'
 
-export const BASE = 'http://127.0.0.1:8737/api'
+// 生产/开发共用同一后端地址；vite dev 走 /api 代理（见 vite.config.ts 交叉引用）
+export const BASE = `${import.meta.env.VITE_API_BASE ?? 'http://127.0.0.1:8737'}/api`
 
 let token: string | null = localStorage.getItem('pl_token')
 export function setToken(t: string | null) {
@@ -15,6 +17,12 @@ export function setToken(t: string | null) {
 }
 export function getToken() {
   return token
+}
+
+/** 401 统一处理回调（App 注册：登出 + toast）；登录/登出接口自身除外 */
+let unauthorizedHandler: (() => void) | null = null
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  unauthorizedHandler = fn
 }
 
 export class ApiError extends Error {
@@ -31,6 +39,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   const res = await fetch(`${BASE}${path}`, { ...init, headers })
   if (res.status === 204) return undefined as T
+  // 401 统一处理：会话失效（登录/注册 401 是业务错误，登出 401 会递归）
+  if (res.status === 401 && !/^\/auth\/(login|register|logout)/.test(path)) {
+    unauthorizedHandler?.()
+  }
   const ct = res.headers.get('content-type') || ''
   if (ct.includes('application/json')) {
     const data = await res.json()
@@ -59,7 +71,7 @@ export const api = {
   deleteProject: (id: number) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
 
   // ── 论文 ──
-  papers: (params: { project_id?: number; tag?: string; favorite?: boolean; q?: string; sort?: string } = {}) => {
+  papers: (params: { project_id?: number; tag?: string; favorite?: boolean; q?: string; sort?: 'created' | 'title' | 'last_opened' | 'manual' } = {}) => {
     const q = new URLSearchParams()
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
@@ -112,8 +124,6 @@ export const api = {
 
   // ── 批注 ──
   annotations: (paperId: number) => request<Annotation[]>(`/papers/${paperId}/annotations`),
-  addAnnotation: (paperId: number, body: Partial<Annotation>) =>
-    request<Annotation>(`/papers/${paperId}/annotations`, { method: 'POST', body: JSON.stringify(body) }),
   updateAnnotation: (id: number, patch: Partial<Annotation>) =>
     request<Annotation>(`/annotations/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteAnnotation: (id: number) => request<void>(`/annotations/${id}`, { method: 'DELETE' }),
@@ -155,6 +165,8 @@ export const api = {
   settings: () => request<AppSettings>('/settings'),
   updateSettings: (patch: Partial<AppSettings>) =>
     request<AppSettings>('/settings', { method: 'PUT', body: JSON.stringify(patch) }),
+  migrateDataDir: (target: string) =>
+    request<{ ok: boolean; path: string }>('/data-dir/migrate', { method: 'POST', body: JSON.stringify({ target }) }),
   clearCache: (type: 'ocr' | 'translate') => request<{ freed_bytes: number }>(`/cache/${type}`, { method: 'DELETE' }),
 
   // ── LLM ──
@@ -171,14 +183,14 @@ export const api = {
   llmStatus: () => request<LLMStatus>('/llm/status'),
 }
 
-// 触发浏览器下载
-export function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 5000)
+// 弹"另存为"对话框保存（Tauri dialog + fs 插件）；用户取消返回 false
+export async function saveBlobWithDialog(blob: Blob, defaultName: string): Promise<boolean> {
+  const { save } = await import('@tauri-apps/plugin-dialog')
+  const { writeFile } = await import('@tauri-apps/plugin-fs')
+  const path = await save({ defaultPath: defaultName })
+  if (!path) return false
+  await writeFile(path, new Uint8Array(await blob.arrayBuffer()))
+  return true
 }
 
 // 具名导出（阅读器翻译卡片使用）
@@ -193,14 +205,13 @@ export function pdfFileUrl(paperId: number, token: string) {
 }
 
 /** OCR 结果是 NDJSON 流（每行一页），request() 无法解析，需单独 fetch */
-export async function fetchOcrBlocks(paperId: number): Promise<import('./types').OcrPageBlocks[]> {
+export async function fetchOcrBlocks(paperId: number): Promise<OcrPageBlocks[]> {
   const res = await fetch(`${BASE}/papers/${paperId}/ocr-result`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) throw new ApiError(res.status, await res.text().catch(() => ''))
-  const text = await res.text()
-  const pages: import('./types').OcrPageBlocks[] = []
-  for (const line of text.split('\n')) {
+  const pages: OcrPageBlocks[] = []
+  for await (const line of readFrames(res, '\n')) {
     const t = line.trim()
     if (!t) continue
     try {
@@ -254,7 +265,7 @@ export function saveProgress(paperId: number, page_no: number, scroll_y: number,
   })
 }
 
-// LLM 模型下载 SSE（fetch + ReadableStream 解析，参考 sse.ts 模式）
+// LLM 模型下载 SSE（fetch + ReadableStream 解析，共享帧读取器见 stream.ts）
 export async function* llmDownloadStream(
   modelId: string,
   opts: { signal?: AbortSignal } = {},
@@ -268,51 +279,30 @@ export async function* llmDownloadStream(
     body: JSON.stringify({ model_id: modelId }),
     signal: opts.signal,
   })
-  if (!res.ok || !res.body) {
+  if (!res.ok) {
     const detail = await res.text().catch(() => '')
     throw new Error(detail || `HTTP ${res.status}`)
   }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let sep: number
-    while ((sep = buf.indexOf('\n\n')) >= 0) {
-      const raw = buf.slice(0, sep)
-      buf = buf.slice(sep + 2)
-      let event = 'message'
-      const dataLines: string[] = []
-      for (const line of raw.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim()
-        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+  for await (const raw of readFrames(res, '\n\n')) {
+    const frame = parseSseEvent(raw)
+    if (!frame) continue
+    const data = frame.data
+    if (frame.event === 'progress') {
+      yield {
+        event: 'progress',
+        downloaded: Number(data.downloaded) || 0,
+        total_bytes: Number(data.total_bytes) || 0,
+        percent: data.percent == null ? null : Number(data.percent),
       }
-      if (dataLines.length === 0) continue
-      let data: Record<string, unknown>
-      try {
-        data = JSON.parse(dataLines.join('\n'))
-      } catch {
-        continue
+    } else if (frame.event === 'done') {
+      yield {
+        event: 'done',
+        model_id: String(data.model_id ?? ''),
+        file: String(data.file ?? ''),
+        size_bytes: Number(data.size_bytes) || 0,
       }
-      if (event === 'progress') {
-        yield {
-          event: 'progress',
-          downloaded: Number(data.downloaded) || 0,
-          total_bytes: Number(data.total_bytes) || 0,
-          percent: data.percent == null ? null : Number(data.percent),
-        }
-      } else if (event === 'done') {
-        yield {
-          event: 'done',
-          model_id: String(data.model_id ?? ''),
-          file: String(data.file ?? ''),
-          size_bytes: Number(data.size_bytes) || 0,
-        }
-      } else if (event === 'error') {
-        yield { event: 'error', code: String(data.code ?? 'internal'), detail: String(data.detail ?? '') }
-      }
+    } else if (frame.event === 'error') {
+      yield { event: 'error', code: String(data.code ?? 'internal'), detail: String(data.detail ?? '') }
     }
   }
 }

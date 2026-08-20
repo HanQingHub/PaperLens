@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paperlens-server"
+version = "1.0.0"
+description = "PaperLens 后端服务（FastAPI + SQLite）"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.109.0",
+    "uvicorn==0.27.0",
+    "starlette==0.35.1",
+    "pydantic==2.13.4",
+    "python-multipart==0.0.32",
+    "SQLAlchemy==2.0.25",
+    "alembic==1.18.5",
+    "bcrypt==4.0.1",
+    "pypdf==6.16.1",
+    "pypdfium2==5.13.0",
+    "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+# llama-cpp-python 依赖 Windows 编译工具链（LLAMA_CPP_DIR / CMAKE_ARGS），
+# 未纳入默认依赖；需要本地推理时手动安装，版本不锁定。
+inference = ["llama-cpp-python"]
+dev = [
+    "pytest==9.1.1",
+    "anyio==3.7.1",
+    "pytest-timeout==2.3.1",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]

@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  server-tests:
+    name: server pytest
+    runs-on: [self-hosted, windows, x64, paperlens]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run server pytest
+        shell: pwsh
+        run: |
+          $py = "D:\paperlens-ci\server\.venv\Scripts\python.exe"
+          if (-not (Test-Path $py)) { throw "server venv 缺失：$py（见 docs/CI自托管runner安装说明.md）" }
+          Push-Location apps\server
+          & $py -m pytest -q
+          Pop-Location
+
+  ocr-worker-tests:
+    name: ocr-worker pytest
+    runs-on: [self-hosted, windows, x64, paperlens]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ocr-worker pytest
+        shell: pwsh
+        run: |
+          $py = "D:\paperlens-ci\ocr-worker\.venv\Scripts\python.exe"
+          if (-not (Test-Path $py)) { throw "ocr-worker venv 缺失：$py（见 docs/CI自托管runner安装说明.md）" }
+          Push-Location apps\ocr-worker
+          & $py -m pytest -q
+          Pop-Location
+
+  frontend-build:
+    name: frontend npm build
+    runs-on: [self-hosted, windows, x64, paperlens]
+    steps:
+      - uses: actions/checkout@v4
+      - name: npm ci
+        shell: pwsh
+        run: npm ci
+        working-directory: apps/desktop
+        # 注：若 runner 上 node_modules 已持久化（仅依赖变更后需重建），可注释掉本步
+      - name: npm run build
+        shell: pwsh
+        run: npm run build
+        working-directory: apps/desktop

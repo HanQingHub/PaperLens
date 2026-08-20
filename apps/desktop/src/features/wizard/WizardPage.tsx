@@ -5,7 +5,6 @@ import { api } from '../../api/client'
 import type { LLMModelInfo } from '../../api/types'
 import { useAuth } from '../../stores/auth'
 import { toast } from '../shared/Toast'
-import '../../styles/panels.css'
 
 const MODEL_DESC: Record<string, string> = {
   'qwen3.5-2b-q4km': '默认推荐 · 语境翻译质量最佳（约 1.19 GiB）',

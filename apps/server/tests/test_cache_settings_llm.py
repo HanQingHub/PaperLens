@@ -117,3 +117,86 @@ def test_llm_import_gguf(client, data_dir):
     assert body["id"] == "tiny"
     assert (data_dir / "models" / "tiny.gguf").exists()
     assert body["size_bytes"] == len(b"GGUF fake content")
+
+
+def test_unhandled_exception_returns_500_without_leak(client, monkeypatch):
+    # conftest 的 httpx 兼容垫片会把 raise_server_exceptions 覆盖回 True（星环 TestClient
+    # 自建 transport 被替换），此处直接改回 False 以拿到 500 响应体
+    client._transport.raise_server_exceptions = False
+    token = register(client)
+
+    def boom():
+        raise RuntimeError("secret-internal-token-xyz")
+
+    monkeypatch.setattr("app.services.stats_service.overview", boom)
+    r = client.get("/api/stats/overview", headers=auth(token))
+    assert r.status_code == 500
+    body = r.json()
+    assert body["status"] == 500
+    assert body["error"] == "Internal Server Error"
+    assert "secret-internal-token-xyz" not in r.text
+    assert "服务器内部错误" in body["detail"]
+
+
+def test_unload_sync_waits_for_inflight_generation(monkeypatch):
+    import asyncio
+    import threading
+    import time
+
+    from app.services.llm_service import LLMService
+
+    svc = LLMService()
+    closed = threading.Event()
+
+    class SlowLLM:
+        def __init__(self):
+            self.closed = False
+
+        def create_chat_completion(self, **kwargs):
+            def gen():
+                for _ in range(5):
+                    time.sleep(0.1)
+                    yield {"choices": [{"delta": {"content": "x"}}]}
+                yield None
+
+            return gen()
+
+        def close(self):
+            self.closed = True
+            closed.set()
+
+    fake = SlowLLM()
+    svc._llm = fake
+    svc.state = "ready"
+    monkeypatch.setattr("app.services.llm_service.LLMService._unload_policy", lambda self: 0)
+
+    async def main():
+        collected = []
+
+        async def consume():
+            async for ev in svc.chat_stream([{"role": "user", "content": "hi"}], max_tokens=10):
+                collected.append(ev)
+
+        task = asyncio.create_task(consume())
+        while not svc._generating.is_set():
+            await asyncio.sleep(0.01)
+        done = asyncio.Event()
+
+        def do_unload():
+            svc.unload_sync()
+            done.set()
+
+        t = threading.Thread(target=do_unload)
+        t.start()
+        await asyncio.sleep(0.05)
+        # 首个 chunk 仍在原生线程中 sleep(0.1)，_generating 未清，unload_sync 必须阻塞
+        assert not done.is_set(), "unload_sync 不应在生成中提前返回"
+        assert not fake.closed
+        await task
+        t.join(timeout=5)
+        assert done.is_set()
+        assert fake.closed
+        assert not svc._generating.is_set()
+        assert svc._llm is None
+
+    asyncio.run(main())

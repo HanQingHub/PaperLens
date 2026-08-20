@@ -3,26 +3,26 @@
 // SelectionToolbar，翻译卡片在 TranslateCard，跨模块通信走 readerBus。
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import { api, downloadBlob, fetchOcrBlocks, pdfFileUrl, saveProgress } from '../../api/client'
+import { getDocument } from 'pdfjs-dist'
+import { api, fetchOcrBlocks, pdfFileUrl, saveBlobWithDialog, saveProgress } from '../../api/client'
 import { parseAnnotation, useReader } from '../../stores/readerStore'
 import { useReaderBus } from '../../stores/readerBus'
 import { useWords } from '../../stores/words'
 import { useUi } from '../../stores/ui'
+import { clientRectsToPdf } from '../../shared/coords'
+import { RENDER_DEBOUNCE_MS, PROGRESS_SAVE_THROTTLE_MS, ZOOM_STEP_RATIO } from './constants'
+import '../../lib/pdfjsSetup'
 import PageView from './PageView'
 import { clearPageBitmaps } from './renderScheduler'
 import SelectionToolbar, { type SelectionActions } from './SelectionToolbar'
 import TranslateCard, { type TranslateRequest } from './TranslateCard'
+import { clearIrregularCache } from './lemma'
 import {
-  clientRectsToPdf,
   ensurePageText,
   extractSentenceContext,
   ocrPageText,
 } from './readerUtils'
 import { toast } from '../shared/Toast'
-
-GlobalWorkerOptions.workerSrc = workerUrl
 
 /** 页间垂直间距（与 page-wrapper 的 mb-4 一致） */
 const PAGE_GAP = 16
@@ -117,7 +117,7 @@ export default function ReaderPage() {
   const [renderScale, setRenderScale] = useState(scale)
   useEffect(() => {
     if (scale === renderScale) return
-    const t = window.setTimeout(() => setRenderScale(scale), 180)
+    const t = window.setTimeout(() => setRenderScale(scale), RENDER_DEBOUNCE_MS)
     return () => window.clearTimeout(t)
   }, [scale, renderScale])
 
@@ -153,6 +153,7 @@ export default function ReaderPage() {
   useEffect(() => {
     if (!Number.isFinite(pid)) return
     useReader.getState().reset()
+    clearIrregularCache() // 文档切换：清空不规则词形缓存（跨文档无复用价值）
     clearPageBitmaps() // 文档切换：清空位图缓存
     let cancelled = false
     let task: ReturnType<typeof getDocument> | null = null
@@ -248,7 +249,11 @@ export default function ReaderPage() {
         for (const pg of pages) map.set(pg.page - 1, pg.blocks)
         if (!stop) useReader.getState().setOcr('done', map)
       } catch {
-        if (!stop) useReader.getState().setOcr('done')
+        // 结果拉取失败：标记 failed 供用户重试，不误报 done（否则扫描版静默显示无文本）
+        if (!stop) {
+          useReader.getState().setOcr('failed')
+          toast('OCR 结果加载失败', 'error')
+        }
       }
     }
     const tick = async () => {
@@ -363,7 +368,7 @@ export default function ReaderPage() {
       if (!e.ctrlKey) return
       e.preventDefault()
       // 按滚动量缩放：触控板微滚动小步长，鼠标滚轮大步长
-      zoomAccum.current *= Math.pow(e.deltaY < 0 ? 1.0016 : 1 / 1.0016, Math.min(120, Math.abs(e.deltaY)))
+      zoomAccum.current *= Math.pow(e.deltaY < 0 ? ZOOM_STEP_RATIO : 1 / ZOOM_STEP_RATIO, Math.min(120, Math.abs(e.deltaY)))
       if (zoomRaf.current) return
       zoomRaf.current = requestAnimationFrame(() => {
         zoomRaf.current = 0
@@ -562,7 +567,7 @@ export default function ReaderPage() {
       if (current + 1 !== st.currentPage) st.setCurrentPage(current + 1)
       // 进度节流 2s
       const now = Date.now()
-      if (now - lastSave.current > 2000) {
+      if (now - lastSave.current > PROGRESS_SAVE_THROTTLE_MS) {
         lastSave.current = now
         const top = pageTopOf(current, st.pageSizes, st.scale)
         const h = st.pageSizes[current].h * st.scale
@@ -577,7 +582,8 @@ export default function ReaderPage() {
     setExportOpen(false)
     try {
       const blob = await api.exportAnnotationsPdf(pid)
-      downloadBlob(blob, `${paper?.title?.slice(0, 40) || 'paper'}_批注版.pdf`)
+      const saved = await saveBlobWithDialog(blob, `${paper?.title?.slice(0, 40) || 'paper'}_批注版.pdf`)
+      if (!saved) return
       toast('已导出批注写回副本', 'ok')
     } catch {
       toast('导出失败', 'error')
@@ -587,7 +593,8 @@ export default function ReaderPage() {
     setExportOpen(false)
     try {
       const blob = await api.exportAnnotationsMd(pid)
-      downloadBlob(blob, `${paper?.title?.slice(0, 40) || 'paper'}_批注.md`)
+      const saved = await saveBlobWithDialog(blob, `${paper?.title?.slice(0, 40) || 'paper'}_批注.md`)
+      if (!saved) return
       toast('已导出批注 Markdown', 'ok')
     } catch {
       toast('导出失败', 'error')

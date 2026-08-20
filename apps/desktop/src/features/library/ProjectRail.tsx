@@ -1,18 +1,23 @@
 // 页面内左列项目栏：列表 + 新建（inline） + 双击重命名 + 删除确认 + 拖拽排序（PATCH sort_order）
+// + 卡片/文件投放（D1）：按 dragKind 区分来源，卡片拖入=移到该项目末尾，文件拖入=上传到该项目
 import { useRef, useState } from 'react'
 import { api, ApiError } from '../../api/client'
 import type { Project } from '../../api/types'
 import { ConfirmModal } from '../shared/Modal'
 import { toast } from '../shared/Toast'
+import { PROJECT_DRAG_MIME } from './dnd/types'
+import { dragKind } from './dnd/guard'
 
 interface Props {
   projects: Project[]
   activeProjectId: number | null
   onSelect: (id: number | null) => void
   onChanged: () => void // 增删改后刷新项目列表
+  onPaperDrop?: (projectId: number) => void // 卡片拖到项目条目 → 移动到该项目末尾
+  onFileDrop?: (projectId: number, files: File[]) => void // 文件拖到项目条目 → 上传到该项目
 }
 
-export default function ProjectRail({ projects, activeProjectId, onSelect, onChanged }: Props) {
+export default function ProjectRail({ projects, activeProjectId, onSelect, onChanged, onPaperDrop, onFileDrop }: Props) {
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [renamingId, setRenamingId] = useState<number | null>(null)
@@ -97,7 +102,16 @@ export default function ProjectRail({ projects, activeProjectId, onSelect, onCha
   }
 
   return (
-    <div className="flex w-48 shrink-0 flex-col gap-2 border-r border-border pr-3">
+    <div
+      className="flex w-48 shrink-0 flex-col gap-2 border-r border-border pr-3"
+      data-group-drop
+      onDragOver={(e) => {
+        // 文件悬停在侧栏空白（非项目条目）→ 不放行投放（no-op），阻断页面级兜底误上传
+        if (dragKind(e.dataTransfer.types) === 'files' && !(e.target as HTMLElement).closest('.pl-rail-item')) {
+          e.stopPropagation()
+        }
+      }}
+    >
       <div className="flex items-center justify-between px-1">
         <span className="text-xs font-medium text-text-soft">项目</span>
         <button
@@ -142,17 +156,29 @@ export default function ProjectRail({ projects, activeProjectId, onSelect, onCha
             <div
               key={p.id}
               draggable={renamingId !== p.id}
-              onDragStart={() => {
+              onDragStart={(e) => {
                 dragIndex.current = i
+                e.dataTransfer.setData(PROJECT_DRAG_MIME, String(p.id))
+                e.dataTransfer.effectAllowed = 'move'
               }}
               onDragOver={(e) => {
-                e.preventDefault()
-                setOverIndex(i)
+                // 仅对已知来源（卡片/文件/项目条目）放行投放并高亮，其余（如文本拖选）忽略
+                const types = Array.from(e.dataTransfer.types)
+                if (dragKind(types) !== null || types.includes(PROJECT_DRAG_MIME)) {
+                  e.preventDefault()
+                  setOverIndex(i)
+                }
               }}
               onDragLeave={() => setOverIndex((v) => (v === i ? null : v))}
               onDrop={(e) => {
                 e.preventDefault()
-                onDrop(i)
+                e.stopPropagation()
+                const types = Array.from(e.dataTransfer.types)
+                const kind = dragKind(types)
+                if (kind === 'paper' && onPaperDrop) onPaperDrop(p.id)
+                else if (kind === 'files' && onFileDrop) onFileDrop(p.id, [...e.dataTransfer.files])
+                else if (types.includes(PROJECT_DRAG_MIME)) onDrop(i)
+                setOverIndex(null)
               }}
               className={`pl-rail-item group flex cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 text-[13px] ${
                 active ? 'pl-rail-item--active bg-accent-soft font-medium text-accent' : 'text-text-soft hover:bg-panel-soft'

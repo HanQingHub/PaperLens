@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -10,10 +10,9 @@ from app.core.security import hash_password, new_token, verify_password
 from app.core.util import now_iso
 from app.models import Session as DbSession
 from app.models import User
-from app.api.deps import get_current_user
+from app.api.deps import _bearer
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-_bearer = HTTPBearer(auto_error=False)
 
 
 class RegisterIn(BaseModel):

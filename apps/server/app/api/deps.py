@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.util import now_iso, parse_iso
+from app.models import Paper
 from app.models import Session as DbSession
 from app.models import User
 
@@ -31,3 +32,18 @@ def get_current_user(
     if user is None:
         raise HTTPException(status_code=401, detail="用户不存在")
     return user
+
+
+def owned_paper(db: Session, user: User, paper_id: int) -> Paper:
+    p = db.get(Paper, paper_id)
+    if p is None or p.user_id != user.id:
+        raise HTTPException(status_code=404, detail="论文不存在")
+    return p
+
+
+def get_owned_paper(
+    paper_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Paper:
+    return owned_paper(db, user, paper_id)

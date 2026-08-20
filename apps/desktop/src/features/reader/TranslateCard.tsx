@@ -113,16 +113,15 @@ export default function TranslateCard({
         )
         for await (const ev of gen as AsyncGenerator<TranslateEvent>) {
           if (ev.event === 'hit') {
-            const d = ev.data as Record<string, unknown>
             setHit({
               layer: ev.layer,
-              translation: (d.translation as string) ?? undefined,
-              stage: d.stage as number | undefined,
-              badge: (d.badge as string) ?? undefined,
-              term: (d.term as string) ?? undefined,
-              pos: (d.pos as string) ?? null,
-              phonetic: (d.phonetic as string) ?? null,
-              gloss: (d.gloss as string) ?? null,
+              translation: ev.data.translation,
+              stage: ev.data.stage,
+              badge: ev.data.badge,
+              term: ev.data.term,
+              pos: ev.data.pos ?? null,
+              phonetic: ev.data.phonetic ?? null,
+              gloss: ev.data.gloss ?? null,
             })
           } else if (ev.event === 'delta') {
             setStatus('streaming')
@@ -202,8 +201,7 @@ export default function TranslateCard({
         )
         for await (const ev of gen as AsyncGenerator<TranslateEvent>) {
           if (ev.event === 'hit') {
-            const d = ev.data as Record<string, unknown>
-            setSentenceText((d.translation as string) ?? '')
+            setSentenceText(ev.data.translation ?? '')
             setSentenceStatus('done')
           } else if (ev.event === 'delta') {
             setSentenceStatus('streaming')

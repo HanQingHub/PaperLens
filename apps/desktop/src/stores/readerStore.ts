@@ -97,7 +97,6 @@ interface ReaderState {
 
   highlightVersion: number
   annotations: ReaderAnnotation[]
-  annotationsVersion: number
 
   ocrBlocks: Map<number, OcrPageBlocks['blocks']>
   ocrStatus: 'none' | 'pending' | 'running' | 'done' | 'failed'
@@ -161,7 +160,6 @@ export const useReader = create<ReaderState>((set) => ({
 
   highlightVersion: 0,
   annotations: [],
-  annotationsVersion: 0,
 
   ocrBlocks: new Map(),
   ocrStatus: 'none',
@@ -191,16 +189,14 @@ export const useReader = create<ReaderState>((set) => ({
   setSelection: (s) => set({ selection: s, toolbarVisible: !!s }),
   setToolbarVisible: (v) => set({ toolbarVisible: v }),
   bumpHighlight: () => set((s) => ({ highlightVersion: s.highlightVersion + 1 })),
-  setAnnotations: (list) => set((s) => ({ annotations: list, annotationsVersion: s.annotationsVersion + 1 })),
+  setAnnotations: (list) => set({ annotations: list }),
   upsertAnnotation: (a) =>
     set((s) => ({
       annotations: [...s.annotations.filter((x) => x.id !== a.id), a],
-      annotationsVersion: s.annotationsVersion + 1,
     })),
   removeAnnotation: (id) =>
     set((s) => ({
       annotations: s.annotations.filter((x) => x.id !== id),
-      annotationsVersion: s.annotationsVersion + 1,
     })),
   setOcr: (status, blocks) =>
     set((s) => ({ ocrStatus: status, ocrBlocks: blocks ?? s.ocrBlocks, ocrProgress: null })),

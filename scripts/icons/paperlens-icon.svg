@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a3f4a"/>
+      <stop offset="0.5" stop-color="#23262d"/>
+      <stop offset="1" stop-color="#14161a"/>
+    </linearGradient>
+    <linearGradient id="pageGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d8dce2"/>
+    </linearGradient>
+    <linearGradient id="hlGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#000000"/>
+      <stop offset="1" stop-color="#1f242c"/>
+    </linearGradient>
+    <filter id="softShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="10" stdDeviation="9" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- 圆角基底（深灰近黑） -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bgGrad)"/>
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="2"/>
+
+  <!-- 书本投影 -->
+  <g filter="url(#softShadow)" opacity="0.55">
+    <path d="M256 404 L140 360 Q110 346 108 320 L108 212 Q110 188 140 178 L256 208 Z" fill="#000000"/>
+    <path d="M256 404 L372 360 Q402 346 404 320 L404 212 Q402 188 372 178 L256 208 Z" fill="#000000"/>
+  </g>
+
+  <!-- 展开的书页（纯白圆角页缘） -->
+  <path d="M256 404 L140 360 Q110 346 108 320 L108 212 Q110 188 140 178 L256 208 Z" fill="url(#pageGrad)"/>
+  <path d="M256 404 L372 360 Q402 346 404 320 L404 212 Q402 188 372 178 L256 208 Z" fill="url(#pageGrad)"/>
+
+  <!-- 书页层叠厚度（灰阶） -->
+  <path d="M404 212 Q402 188 372 178 L368 186 Q394 196 396 216 Z" fill="#aab0ba"/>
+  <path d="M140 360 L256 404 L372 360 L374 368 L256 412 L138 368 Z" fill="#9aa1ac"/>
+
+  <!-- 书页中缝（浅灰） -->
+  <line x1="256" y1="208" x2="256" y2="402" stroke="#b6bcc6" stroke-width="2.5" opacity="0.9"/>
+
+  <!-- 左页纸纹线（浅灰） -->
+  <line x1="130" y1="300" x2="238" y2="310" stroke="#b6bcc6" stroke-width="2" opacity="0.6" stroke-linecap="round"/>
+  <line x1="130" y1="332" x2="236" y2="342" stroke="#b6bcc6" stroke-width="2" opacity="0.45" stroke-linecap="round"/>
+
+  <!-- 右页高亮带（纯黑，白书上的强对比） -->
+  <path d="M256 268 L400 258 L400 280 L256 290 Z" fill="url(#hlGrad)" stroke="#ffffff" stroke-width="2.5" stroke-linejoin="round"/>
+
+  <!-- 放大镜：白环 + 深灰镜片 + 白高光 -->
+  <circle cx="334" cy="168" r="97" fill="#16181d"/>
+  <circle cx="334" cy="168" r="97" fill="none" stroke="#ffffff" stroke-width="25"/>
+  <circle cx="334" cy="168" r="97" fill="none" stroke="#9aa1ac" stroke-width="6" opacity="0.5"/>
+  <circle cx="334" cy="168" r="76" fill="#16181d"/>
+  <circle cx="334" cy="168" r="76" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="2.5"/>
+  <path d="M282 130 A76 76 0 0 1 356 104" fill="none" stroke="#ffffff" stroke-opacity="0.8" stroke-width="10" stroke-linecap="round"/>
+  <ellipse cx="306" cy="128" rx="25" ry="13" fill="#ffffff" opacity="0.4" transform="rotate(-35 306 128)"/>
+
+  <!-- 放大镜手柄（白粗线 + 黑衬） -->
+  <line x1="414" y1="248" x2="488" y2="326" stroke="#000000" stroke-width="28" stroke-linecap="round" opacity="0.35" transform="translate(3 5)"/>
+  <line x1="412" y1="246" x2="486" y2="324" stroke="#ffffff" stroke-width="23" stroke-linecap="round"/>
+</svg>

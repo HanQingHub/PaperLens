@@ -1,4 +1,5 @@
 // 文库主页：搜索/排序/视图切换 + 项目栏 + 论文卡片网格 + 上传（预判扫描版）
+// + 卡片拖拽排序/跨组移动 + PDF 拖到分组（dnd/useLibraryDnd 装配）
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../../api/client'
@@ -9,7 +10,8 @@ import ProjectRail from './ProjectRail'
 import PaperCard, { type OcrProgress } from './PaperCard'
 import EditPaperModal from './EditPaperModal'
 import { detectScanned } from './detectScanned'
-import '../../styles/panels.css'
+import { useLibraryDnd, type DndGroup } from './dnd/useLibraryDnd'
+import type { GroupKey } from './dnd/types'
 
 type ViewMode = 'all' | 'favorite' | 'recent' | 'project'
 
@@ -31,14 +33,12 @@ export default function LibraryPage() {
   const [sort, setSort] = useState<'created' | 'title' | 'last_opened'>('created')
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
-  const [dragOver, setDragOver] = useState(false)
   const [editing, setEditing] = useState<Paper | null>(null)
   const [editBusy, setEditBusy] = useState(false)
   const [deleting, setDeleting] = useState<Paper | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [ocrProgress, setOcrProgress] = useState<Record<number, OcrProgress>>({})
   const fileInput = useRef<HTMLInputElement>(null)
-  const dragDepth = useRef(0)
 
   // 首启动向导未完成 → 跳向导
   useEffect(() => {
@@ -51,11 +51,12 @@ export default function LibraryPage() {
     return () => clearTimeout(t)
   }, [qInput])
 
-  const refreshPapers = useCallback(async () => {
+  // 原始拉取：项目视图（含单项目）强制 sort=manual（P0-1：手动顺序不被系统排序覆盖）
+  const fetchPapers = useCallback(async () => {
     try {
       const list = await api.papers({
         q: q || undefined,
-        sort: view === 'recent' ? 'last_opened' : sort,
+        sort: view === 'recent' ? 'last_opened' : view === 'project' ? 'manual' : sort,
         favorite: view === 'favorite' ? true : undefined,
         project_id: selectedProjectId ?? undefined,
       })
@@ -75,10 +76,64 @@ export default function LibraryPage() {
     }
   }, [])
 
+  // 按项目分组（D2：恒渲染全部项目（含空项目）+ 恒定"未分组"区，空分组始终可投放）
+  const grouped = useMemo<DndGroup[]>(() => {
+    const byKey = new Map<GroupKey, Paper[]>()
+    for (const p of papers) {
+      const key: GroupKey = p.project_id ?? null
+      if (!byKey.has(key)) byKey.set(key, [])
+      byKey.get(key)!.push(p)
+    }
+    const itemsOf = (key: GroupKey) =>
+      (byKey.get(key) ?? []).slice().sort((a, b) => a.sort_order - b.sort_order || a.id - b.id)
+    const groups: DndGroup[] = projects.map((project) => ({
+      key: project.id,
+      project,
+      items: itemsOf(project.id),
+    }))
+    groups.push({ key: null, project: null, items: itemsOf(null) })
+    return groups
+  }, [papers, projects])
+
+  // 单项目视图伪组（客户端按 project_id 过滤，乐观跨组移动后即时消失）
+  const singleGroupItems = useMemo(
+    () =>
+      selectedProjectId == null
+        ? []
+        : papers
+            .filter((p) => p.project_id === selectedProjectId)
+            .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id),
+    [papers, selectedProjectId],
+  )
+
+  const dndGroups = useMemo<DndGroup[]>(() => {
+    if (view !== 'project') return []
+    if (selectedProjectId == null) return grouped
+    return [
+      {
+        key: selectedProjectId,
+        project: projects.find((p) => p.id === selectedProjectId) ?? null,
+        items: singleGroupItems,
+      },
+    ]
+  }, [view, selectedProjectId, grouped, projects, singleGroupItems])
+
+  const dnd = useLibraryDnd({
+    papers,
+    groups: dndGroups,
+    enabled: view === 'project' && q === '', // 搜索过滤态禁用重排，避免破坏全组手动顺序
+    pageUploadProjectId: selectedProjectId,
+    onPapersChange: setPapers,
+    onUpload: (files, projectId) => handleFiles(files, projectId),
+    onRefresh: fetchPapers,
+  })
+  // 受控刷新入口：持久化在途时抑制（P0-1），结束后补一次收敛
+  const refreshPapers = dnd.refresh
+
   useEffect(() => {
     setLoading(true)
     refreshPapers()
-  }, [refreshPapers])
+  }, [q, sort, view, selectedProjectId, refreshPapers])
   useEffect(() => {
     refreshProjects()
   }, [refreshProjects])
@@ -102,7 +157,7 @@ export default function LibraryPage() {
   }, [papers, refreshPapers])
 
   // ── 上传 ──
-  const handleFiles = async (files: File[]) => {
+  const handleFiles = async (files: File[], projectId: number | null = selectedProjectId) => {
     const pdfs = files.filter((f) => f.name.toLowerCase().endsWith('.pdf'))
     if (pdfs.length === 0) {
       toast('仅支持 PDF 文件', 'error')
@@ -112,7 +167,7 @@ export default function LibraryPage() {
     try {
       for (const f of pdfs) {
         const scanned = await detectScanned(f).catch(() => false)
-        const r = await api.uploadPaper(f, selectedProjectId, scanned)
+        const r = await api.uploadPaper(f, projectId, scanned)
         toast(`已上传：${r.paper.title}${scanned ? '（扫描版，已自动进入 OCR 队列）' : ''}`, 'ok')
       }
       refreshPapers()
@@ -176,22 +231,8 @@ export default function LibraryPage() {
     }
   }
 
-  // 按项目分组
-  const grouped = useMemo(() => {
-    const groups = new Map<string, { project: Project | null; items: Paper[] }>()
-    for (const p of papers) {
-      const key = p.project_id == null ? '__none' : String(p.project_id)
-      if (!groups.has(key)) groups.set(key, { project: projects.find((x) => x.id === p.project_id) ?? null, items: [] })
-      groups.get(key)!.items.push(p)
-    }
-    return [...groups.values()].sort((a, b) => {
-      if (a.project == null) return 1
-      if (b.project == null) return -1
-      return a.project.sort_order - b.project.sort_order
-    })
-  }, [papers, projects])
-
-  const cardList = (list: Paper[]) =>
+  /** groupKey 传入时（project 视图）卡片启用拖拽；其他视图纯展示 */
+  const cardList = (list: Paper[], groupKey?: GroupKey) =>
     list.map((p) => (
       <PaperCard
         key={p.id}
@@ -202,33 +243,24 @@ export default function LibraryPage() {
         onToggleFav={toggleFav}
         onDelete={setDeleting}
         onRetryOcr={retryOcr}
+        dragProps={groupKey !== undefined ? dnd.cardDragProps(p.id, groupKey) : undefined}
+        isDragging={dnd.draggingId === p.id}
+        insertSide={dnd.insertMark?.id === p.id ? dnd.insertMark.side : null}
       />
     ))
+
+  const pd = dnd.pageDropProps()
 
   return (
     <div
       className="relative flex h-full min-h-0 flex-col"
-      onDragEnter={(e) => {
-        if (!e.dataTransfer.types.includes('Files')) return
-        dragDepth.current++
-        setDragOver(true)
-      }}
-      onDragOver={(e) => {
-        if (e.dataTransfer.types.includes('Files')) e.preventDefault()
-      }}
-      onDragLeave={() => {
-        dragDepth.current = Math.max(0, dragDepth.current - 1)
-        if (dragDepth.current === 0) setDragOver(false)
-      }}
-      onDrop={(e) => {
-        e.preventDefault()
-        dragDepth.current = 0
-        setDragOver(false)
-        if (e.dataTransfer.files.length) handleFiles([...e.dataTransfer.files])
-      }}
+      onDragEnter={pd.onDragEnter}
+      onDragOver={pd.onDragOver}
+      onDragLeave={pd.onDragLeave}
+      onDrop={pd.onDrop}
     >
-      {/* 拖放遮罩 */}
-      {dragOver && (
+      {/* 拖放遮罩（仅文件未命中分组/侧栏时弹出，见 useLibraryDnd.pageDropProps） */}
+      {pd.isOver && (
         <div className="pl-drop pointer-events-none absolute inset-3 z-40 flex items-center justify-center rounded-xl border-2 border-dashed border-accent bg-[var(--accent-soft)] backdrop-blur-[2px]">
           <div className="text-center">
             <div className="pl-drop-icon mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-white shadow-[var(--shadow-2)]">
@@ -276,7 +308,8 @@ export default function LibraryPage() {
           className="input w-auto py-1 text-[12.5px]"
           value={sort}
           onChange={(e) => setSort(e.target.value as typeof sort)}
-          title="排序"
+          disabled={view === 'project'}
+          title={view === 'project' ? '项目视图固定为手动排序' : '排序'}
         >
           <option value="created">按上传时间</option>
           <option value="title">按标题</option>
@@ -317,6 +350,8 @@ export default function LibraryPage() {
           activeProjectId={selectedProjectId}
           onSelect={setSelectedProjectId}
           onChanged={refreshProjects}
+          onPaperDrop={dnd.railPaperDrop}
+          onFileDrop={dnd.railFileDrop}
         />
 
         <div className="min-w-0 flex-1 overflow-y-auto">
@@ -324,21 +359,62 @@ export default function LibraryPage() {
             <div className="flex h-full items-center justify-center">
               <div className="spinner spinner-lg" />
             </div>
-          ) : papers.length === 0 ? (
+          ) : papers.length === 0 && view !== 'project' ? (
             <EmptyState hasQuery={!!q || selectedProjectId != null || view === 'favorite'} onUpload={() => fileInput.current?.click()} />
           ) : view === 'project' && selectedProjectId == null ? (
+            // 项目多组视图：分组恒渲染（含空项目 + 未分组，D2），分组 = drop target
             <div className="flex flex-col gap-5">
-              {grouped.map((g) => (
-                <section key={g.project?.id ?? '__none'}>
-                  <h2 className="mb-2 flex items-center gap-2 text-xs font-medium text-text-soft">
-                    <span className="inline-block h-3 w-0.5 rounded bg-accent" />
-                    {g.project?.name ?? '未分组'}
-                    <span className="text-text-faint">{g.items.length} 篇</span>
-                  </h2>
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">{cardList(g.items)}</div>
-                </section>
-              ))}
+              {grouped.map((g) => {
+                const gp = dnd.groupDropProps(g.key)
+                return (
+                  <section
+                    key={g.key ?? '__none'}
+                    data-group-drop
+                    data-project-id={g.key ?? ''}
+                    className={gp.isOver ? 'pl-group-over' : undefined}
+                    onDragEnter={gp.onDragEnter}
+                    onDragOver={gp.onDragOver}
+                    onDragLeave={gp.onDragLeave}
+                    onDrop={gp.onDrop}
+                  >
+                    <h2 className="mb-2 flex items-center gap-2 text-xs font-medium text-text-soft">
+                      <span className="inline-block h-3 w-0.5 rounded bg-accent" />
+                      {g.project?.name ?? '未分组'}
+                      <span className="text-text-faint">{g.items.length} 篇</span>
+                    </h2>
+                    {g.items.length === 0 ? (
+                      <p className="px-1 py-2 text-[11.5px] leading-5 text-text-faint">拖拽 PDF 或卡片到此分组</p>
+                    ) : (
+                      <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">{cardList(g.items, g.key)}</div>
+                    )}
+                  </section>
+                )
+              })}
             </div>
+          ) : view === 'project' ? (
+            // 单项目视图：整块网格为伪组 drop 容器（组内排序 + 文件拖入当前项目）
+            (() => {
+              const gp = dnd.groupDropProps(selectedProjectId)
+              return (
+                <section
+                  data-group-drop
+                  data-project-id={selectedProjectId ?? ''}
+                  className={gp.isOver ? 'pl-group-over' : undefined}
+                  onDragEnter={gp.onDragEnter}
+                  onDragOver={gp.onDragOver}
+                  onDragLeave={gp.onDragLeave}
+                  onDrop={gp.onDrop}
+                >
+                  {singleGroupItems.length === 0 ? (
+                    <p className="px-1 py-2 text-[11.5px] leading-5 text-text-faint">拖拽 PDF 或卡片到此分组</p>
+                  ) : (
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">
+                      {cardList(singleGroupItems, selectedProjectId)}
+                    </div>
+                  )}
+                </section>
+              )
+            })()
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">{cardList(papers)}</div>
           )}

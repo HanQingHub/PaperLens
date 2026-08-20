@@ -4,7 +4,6 @@ import { api } from '../../api/client'
 import type { GlossaryTerm } from '../../api/types'
 import { useReaderBus } from '../../stores/readerBus'
 import { toast } from '../shared/Toast'
-import '../../styles/panels.css'
 
 export function GlossaryPanel() {
   const paperId = useReaderBus((s) => s.paperId)

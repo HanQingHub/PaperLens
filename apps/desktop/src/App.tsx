@@ -3,6 +3,8 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useAuth, applyTheme } from './stores/auth'
+import { setUnauthorizedHandler } from './api/client'
+import { toast } from './features/shared/Toast'
 import AppShell from './components/layout/AppShell'
 import AuthPage from './features/auth/AuthPage'
 import WizardPage from './features/wizard/WizardPage'
@@ -17,6 +19,15 @@ export default function App() {
   useEffect(() => {
     boot()
   }, [boot])
+
+  // 401 统一处理：会话失效 → 登出 + 提示（api/client 的 request() 触发）
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      useAuth.getState().logout()
+      toast('登录已过期，请重新登录', 'error')
+    })
+    return () => setUnauthorizedHandler(null)
+  }, [])
 
   useEffect(() => {
     applyTheme(settings.theme)

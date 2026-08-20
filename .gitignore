@@ -44,6 +44,8 @@ vite-dev*
 
 # 本地工具会话状态（不入库）
 .trae/
+# opencode 会话状态与日志（不入库）
+.opencode/
 # 本地工作文档（仅本地，不入库）
 docs/AGENT-REPORT-*.md
 docs/DECISION-*.md

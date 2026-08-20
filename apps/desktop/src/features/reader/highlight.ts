@@ -38,7 +38,7 @@ function splitFragments(text: string): Fragment[] {
  * 原始文本保存在 dataset.orig，可重复调用（词库/搜索变更时刷新）。
  */
 export function applyHighlights(container: HTMLElement, opts: HighlightOptions) {
-  const spans = container.querySelectorAll<HTMLElement>('.textLayer > span, .ocr-block')
+  const spans = container.querySelectorAll<HTMLElement>('.textLayer > span, .ocr-block, .ocr-line')
   for (const span of spans) {
     if (span.classList.contains('endOfContent')) continue
     if (!span.dataset.orig) span.dataset.orig = span.textContent ?? ''

@@ -6,8 +6,14 @@ import { create } from 'zustand'
 import {
   updaterAvailable, checkForUpdate, downloadUpdate, installUpdate, runStartupCheck,
   type RemoteUpdate, type StartupCheckResult,
-} from '../features/updater/updaterCore'
-import { toast } from '../features/shared/Toast'
+} from '../api/updaterCore'
+
+// 通知回调由 features 层注入（UpdaterBoot 注册 toast），store 不反向依赖 features
+type NotifyFn = (message: string, type: 'info' | 'ok' | 'error') => void
+let notify: NotifyFn = () => {}
+export function setUpdaterNotify(fn: NotifyFn) {
+  notify = fn
+}
 
 export type UpdatePolicy = 'ask' | 'auto' | 'off'
 export type UpdaterPhase = 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error'
@@ -67,7 +73,7 @@ export const useUpdater = create<UpdaterState>((set, get) => ({
 
   check: async ({ manual }) => {
     if (!updaterAvailable()) {
-      if (manual) toast('更新功能仅限桌面应用内使用', 'error')
+      if (manual) notify('更新功能仅限桌面应用内使用', 'error')
       return
     }
     if (['checking', 'downloading'].includes(get().phase)) return
@@ -79,7 +85,7 @@ export const useUpdater = create<UpdaterState>((set, get) => ({
       set({ lastCheckAt: Date.now() })
       if (!u) {
         set({ phase: 'idle', update: null })
-        if (manual) toast('已是最新版本', 'ok')
+        if (manual) notify('已是最新版本', 'ok')
         return
       }
       set({ phase: 'available', update: u })
@@ -92,7 +98,7 @@ export const useUpdater = create<UpdaterState>((set, get) => ({
     } catch (e) {
       // 自动/后台检查失败静默（不阻塞启动），手动检查提示
       set({ phase: 'error', error: errMsg(e) })
-      if (manual) toast(`检查更新失败：${errMsg(e)}`, 'error')
+      if (manual) notify(`检查更新失败：${errMsg(e)}`, 'error')
     }
   },
 
@@ -120,7 +126,7 @@ export const useUpdater = create<UpdaterState>((set, get) => ({
       // Windows 下插件 exit(0) 交由 NSIS 静默安装并拉起新版本，流程不返回
     } catch (e) {
       set({ phase: 'error', error: errMsg(e) })
-      toast(`安装失败：${errMsg(e)}`, 'error')
+      notify(`安装失败：${errMsg(e)}`, 'error')
     }
   },
 }))

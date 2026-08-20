@@ -1,13 +1,13 @@
 // 设置页：外观 / 生词高亮 / 批注 / LLM 模型管理 / 词典 / 数据 / 应用更新 / 快捷键
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, downloadBlob } from '../../api/client'
+import { invoke } from '@tauri-apps/api/core'
+import { api, saveBlobWithDialog } from '../../api/client'
 import type { LLMModelInfo, LLMStatus } from '../../api/types'
 import { useAuth } from '../../stores/auth'
 import { useUpdater, type UpdatePolicy } from '../../stores/updater'
-import { updaterAvailable } from '../updater/updaterCore'
+import { updaterAvailable } from '../../api/updaterCore'
 import Modal, { ConfirmModal } from '../shared/Modal'
 import { toast } from '../shared/Toast'
-import '../../styles/panels.css'
 
 const THEMES: { key: 'warm' | 'light' | 'dark' | 'system'; label: string; colors: [string, string, string] }[] = [
   { key: 'warm', label: '暖纸', colors: ['#faf7f0', '#ffffff', '#33658a'] },
@@ -200,7 +200,8 @@ export default function SettingsPage() {
     setExporting(true)
     try {
       const blob = await api.backupExport()
-      downloadBlob(blob, `paperlens-backup-${new Date().toISOString().slice(0, 10)}.zip`)
+      const saved = await saveBlobWithDialog(blob, `paperlens-backup-${new Date().toISOString().slice(0, 10)}.zip`)
+      if (!saved) return
       toast('备份已导出', 'ok')
     } catch (e) {
       toast(e instanceof Error ? e.message : '导出失败', 'error')
@@ -212,6 +213,35 @@ export default function SettingsPage() {
   const zipInput = useRef<HTMLInputElement>(null)
   const [pendingZip, setPendingZip] = useState<File | null>(null)
   const [importBusy, setImportBusy] = useState(false)
+
+  // ── 数据目录：显示真实路径 + 迁移 ──
+  const [dataDir, setDataDir] = useState<string | null>(null)
+  const [migrating, setMigrating] = useState(false)
+  useEffect(() => {
+    let mounted = true
+    invoke<string>('get_data_dir')
+      .then((p) => mounted && setDataDir(p))
+      .catch(() => {})
+    return () => {
+      mounted = false
+    }
+  }, [])
+  const migrateDataDir = async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const dir = await open({ directory: true, title: '选择新的数据目录（论文、数据库与模型将整体复制过去）' })
+    if (typeof dir !== 'string' || !dir) return
+    if (!confirm(`将把数据目录（论文、数据库与模型）迁移到：\n${dir}\n\n迁移完成后需要重启应用生效。旧目录不会被删除，确认后可手动清理。`)) return
+    setMigrating(true)
+    try {
+      const res = await api.migrateDataDir(dir)
+      setDataDir(res.path)
+      toast('迁移完成，请重启应用生效', 'ok')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '迁移失败', 'error')
+    } finally {
+      setMigrating(false)
+    }
+  }
   const [importReport, setImportReport] = useState<string[] | null>(null)
   const doImport = async () => {
     if (!pendingZip) return
@@ -459,8 +489,13 @@ export default function SettingsPage() {
 
         {/* 数据 */}
         <Section title="数据">
-          <Row label="数据目录" hint="论文、数据库与模型文件的存放位置（默认 D:\PaperLens，安装时自动选择）">
-            <span className="text-[12px] text-text-faint">由后端管理</span>
+          <Row label="数据目录" hint="论文、数据库与模型文件的存放位置；可迁移到其他磁盘">
+            <span className="max-w-[240px] truncate text-[12px] text-text-faint" title={dataDir ?? undefined}>
+              {dataDir ?? '由后端管理'}
+            </span>
+            <button className="btn px-2.5 py-1 text-xs" onClick={migrateDataDir} disabled={migrating}>
+              {migrating ? '迁移中…' : '迁移'}
+            </button>
           </Row>
           <div className="my-2 border-t border-border" />
           <Row label="备份导出" hint="导出 zip（全部账号数据 + PDF 文件），可在新装机导入恢复">

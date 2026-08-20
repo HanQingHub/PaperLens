@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.util import ensure_within, now_iso
-from app.models import Annotation, Paper, User
-from app.api.deps import get_current_user
+from app.models import Annotation, User
+from app.api.deps import get_current_user, owned_paper
 from app.services import pdf_writeback
 
 router = APIRouter(tags=["annotations"])
@@ -21,13 +21,6 @@ def annotation_dict(a: Annotation) -> dict:
         "anchor_json": a.anchor_json, "card_json": a.card_json, "color": a.color,
         "text": a.text, "created_at": a.created_at, "updated_at": a.updated_at,
     }
-
-
-def _owned_paper(db: Session, user: User, paper_id: int) -> Paper:
-    p = db.get(Paper, paper_id)
-    if p is None or p.user_id != user.id:
-        raise HTTPException(status_code=404, detail="论文不存在")
-    return p
 
 
 class AnnotationIn(BaseModel):
@@ -48,7 +41,7 @@ class AnnotationPatch(BaseModel):
 
 @router.get("/papers/{paper_id}/annotations")
 def list_annotations(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    _owned_paper(db, user, paper_id)
+    owned_paper(db, user, paper_id)
     rows = (
         db.query(Annotation)
         .filter(Annotation.paper_id == paper_id)
@@ -61,7 +54,7 @@ def list_annotations(paper_id: int, user: User = Depends(get_current_user), db: 
 @router.post("/papers/{paper_id}/annotations", status_code=201)
 def create_annotation(paper_id: int, body: AnnotationIn, user: User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
-    _owned_paper(db, user, paper_id)
+    owned_paper(db, user, paper_id)
     if body.type not in ("word_note", "sentence"):
         raise HTTPException(status_code=400, detail="type 取值 word_note|sentence")
     try:
@@ -112,7 +105,7 @@ def delete_annotation(annotation_id: int, user: User = Depends(get_current_user)
 
 @router.post("/papers/{paper_id}/export-annotations-pdf")
 def export_pdf(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    paper = _owned_paper(db, user, paper_id)
+    paper = owned_paper(db, user, paper_id)
     rows = db.query(Annotation).filter(Annotation.paper_id == paper_id).order_by(Annotation.page_no).all()
     settings = get_settings()
     src = ensure_within(settings.files_dir, settings.files_dir / f"{paper.file_hash}.pdf")
@@ -133,7 +126,7 @@ def export_pdf(paper_id: int, user: User = Depends(get_current_user), db: Sessio
 
 @router.post("/papers/{paper_id}/export-annotations-md")
 def export_md(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    paper = _owned_paper(db, user, paper_id)
+    paper = owned_paper(db, user, paper_id)
     rows = db.query(Annotation).filter(Annotation.paper_id == paper_id).order_by(Annotation.page_no).all()
     lines = [f"# {paper.title or '论文'} 批注", ""]
     for a in rows:

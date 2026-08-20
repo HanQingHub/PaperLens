@@ -29,6 +29,10 @@ def init_engine(db_path: Path):
         cur.close()
 
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    from app.services import llm_service as _llm_mod, tfidf_service as _tfidf_mod
+
+    _llm_mod.llm_service.session_factory = SessionLocal
+    _tfidf_mod.session_factory = SessionLocal
     return engine
 
 
@@ -36,7 +40,8 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
-        db.commit()
+        if db.dirty or db.new or db.deleted:
+            db.commit()
     except Exception:
         db.rollback()
         raise

@@ -16,7 +16,7 @@ from app.models import (
     Annotation, AppSetting, Excerpt, FileRef, GlossaryTerm, OcrDoc, Paper,
     Project, ReadingProgress, ReadingSession, TranslationCache, User, WordOccurrence,
 )
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_owned_paper
 from app.services import file_tokens, tfidf_service
 
 router = APIRouter(prefix="/papers", tags=["papers"])
@@ -30,15 +30,9 @@ def paper_dict(p: Paper) -> dict:
         "is_scanned": bool(p.is_scanned), "ocr_status": p.ocr_status,
         "tags": json.loads(p.tags) if p.tags else [],
         "note": p.note, "is_favorite": bool(p.is_favorite),
+        "sort_order": p.sort_order,
         "created_at": p.created_at, "last_opened_at": p.last_opened_at,
     }
-
-
-def get_owned_paper(db: Session, user: User, paper_id: int) -> Paper:
-    p = db.get(Paper, paper_id)
-    if p is None or p.user_id != user.id:
-        raise HTTPException(status_code=404, detail="论文不存在")
-    return p
 
 
 def extract_pdf_meta(path: Path) -> tuple[int, str | None, str | None]:
@@ -113,13 +107,18 @@ async def upload(
     else:
         tmp.rename(dest)
 
+    page_count, title, authors = await asyncio.to_thread(extract_pdf_meta, dest)
+
     with write_lock:
         ref = db.get(FileRef, digest)
         if ref is None:
             db.add(FileRef(file_hash=digest, ref_count=1))
         else:
             ref.ref_count += 1
-        page_count, title, authors = await asyncio.to_thread(extract_pdf_meta, dest)
+        # 组内（同 user + 同 project，含未分组）追加到末尾
+        max_order = db.query(func.max(Paper.sort_order)).filter(
+            Paper.user_id == user.id, Paper.project_id == project_id
+        ).scalar()
         paper = Paper(
             user_id=user.id, project_id=project_id,
             title=title or Path(file.filename).stem,
@@ -127,6 +126,7 @@ async def upload(
             is_scanned=int(is_scanned),
             ocr_status="pending" if is_scanned else "none",
             tags="[]", created_at=now_iso(),
+            sort_order=0 if max_order is None else max_order + 1,
         )
         db.add(paper)
         db.commit()
@@ -165,14 +165,16 @@ def list_papers(
         query = query.order_by(func.lower(Paper.title).asc())
     elif sort == "last_opened":
         query = query.order_by(Paper.last_opened_at.is_(None), Paper.last_opened_at.desc())
+    elif sort == "manual":
+        query = query.order_by(Paper.sort_order.asc(), Paper.id.asc())
     else:
         query = query.order_by(Paper.created_at.desc(), Paper.id.desc())
     return [paper_dict(p) for p in query.all()]
 
 
 @router.get("/{paper_id}")
-def get_paper(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return paper_dict(get_owned_paper(db, user, paper_id))
+def get_paper(paper: Paper = Depends(get_owned_paper)):
+    return paper_dict(paper)
 
 
 class PaperPatch(BaseModel):
@@ -185,13 +187,13 @@ class PaperPatch(BaseModel):
     note: str | None = None
     is_favorite: bool | None = None
     project_id: int | None = None
+    sort_order: int | None = None
     is_scanned: bool | None = None
 
 
 @router.patch("/{paper_id}")
 def patch_paper(paper_id: int, body: PaperPatch, user: User = Depends(get_current_user),
-                db: Session = Depends(get_db)):
-    paper = get_owned_paper(db, user, paper_id)
+                db: Session = Depends(get_db), paper: Paper = Depends(get_owned_paper)):
     updates = body.model_dump(exclude_unset=True)
     if "title" in updates and updates["title"] is not None:
         paper.title = updates["title"]
@@ -215,6 +217,8 @@ def patch_paper(paper_id: int, body: PaperPatch, user: User = Depends(get_curren
             if proj is None or proj.user_id != user.id:
                 raise HTTPException(status_code=404, detail="项目不存在")
         paper.project_id = updates["project_id"]
+    if "sort_order" in updates and updates["sort_order"] is not None:
+        paper.sort_order = updates["sort_order"]
     if "is_scanned" in updates and updates["is_scanned"] is not None:
         new_val = int(updates["is_scanned"])
         if new_val and not paper.is_scanned:
@@ -248,8 +252,7 @@ def _skip_ocr(db: Session, paper: Paper) -> None:
 
 
 @router.delete("/{paper_id}", status_code=204)
-def delete_paper(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    paper = get_owned_paper(db, user, paper_id)
+def delete_paper(paper: Paper = Depends(get_owned_paper), db: Session = Depends(get_db)):
     from app.main import app
 
     with write_lock:
@@ -275,10 +278,9 @@ def delete_paper(paper_id: int, user: User = Depends(get_current_user), db: Sess
 # ---- 文件访问（唯一免 Bearer 端点：一次性 token 查询参数）----
 
 @router.post("/{paper_id}/file-token")
-def issue_file_token(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    paper = get_owned_paper(db, user, paper_id)
-    token = file_tokens.issue(paper.id, user.id)
-    return {"token": token, "expires_in": file_tokens.TTL_SECONDS}
+def issue_file_token(paper: Paper = Depends(get_owned_paper)):
+    token = file_tokens.issue(paper.id, paper.user_id)
+    return {"token": token, "expires_in": get_settings().file_token_ttl}
 
 
 def _range_file(path: Path, request: Request, consume_token: bool, token: str, paper_id: int):

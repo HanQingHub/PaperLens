@@ -25,6 +25,16 @@
           "args": true
         }
       ]
+    },
+    "dialog:default",
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$DESKTOP/**" },
+        { "path": "$APPDATA/PaperLens/**" },
+        { "path": "$LOCALAPPDATA/PaperLens/**" }
+      ]
     }
   ]
 }

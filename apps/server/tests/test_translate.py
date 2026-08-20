@@ -163,15 +163,15 @@ def test_llm_timeout_error(client, tmp_path, monkeypatch):
 def test_first_token_deadline_raises_llm_timeout(client, tmp_path, monkeypatch):
     import asyncio
 
-    monkeypatch.setattr("app.services.translate_service.PING_INTERVAL", 0.1)
-    monkeypatch.setattr("app.services.translate_service.FIRST_TOKEN_TIMEOUT", 0.25)
+    monkeypatch.setattr("app.services.translate_service.PING_INTERVAL", 0.05)
+    monkeypatch.setattr("app.services.translate_service.FIRST_TOKEN_TIMEOUT", 0.15)
 
     class SlowFirst:
         state = "ready"
         model_id = "slow"
 
         async def chat_stream(self, messages, max_tokens=300):
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.4)
             yield {"type": "delta", "text": "late"}
 
     monkeypatch.setattr("app.services.translate_service.llm_service", SlowFirst())
@@ -186,7 +186,7 @@ def test_first_token_deadline_raises_llm_timeout(client, tmp_path, monkeypatch):
 def test_ping_keepalive(client, tmp_path, monkeypatch):
     import asyncio
 
-    monkeypatch.setattr("app.services.translate_service.PING_INTERVAL", 0.1)
+    monkeypatch.setattr("app.services.translate_service.PING_INTERVAL", 0.05)
 
     class SlowFake:
         state = "ready"
@@ -194,7 +194,7 @@ def test_ping_keepalive(client, tmp_path, monkeypatch):
 
         async def chat_stream(self, messages, max_tokens=300):
             yield {"type": "delta", "text": "a"}
-            await asyncio.sleep(0.35)
+            await asyncio.sleep(0.25)
             yield {"type": "delta", "text": "b"}
 
     monkeypatch.setattr("app.services.translate_service.llm_service", SlowFake())

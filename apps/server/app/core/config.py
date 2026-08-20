@@ -3,6 +3,14 @@ from functools import lru_cache
 from pathlib import Path
 
 DEFAULT_DATA_DIR = r"D:\PaperLens"
+DEFAULT_PORT = 8737
+DEFAULT_BCRYPT_COST = 12
+DEFAULT_FILE_TOKEN_TTL = 300
+CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://tauri.localhost",
+]
 
 
 class Settings:
@@ -21,6 +29,11 @@ class Settings:
         ecdict_env = os.environ.get("PAPERLENS_ECDICT_PATH")
         self.bundled_ecdict_path = Path(ecdict_env) if ecdict_env else None
         self.skip_migrate = os.environ.get("PAPERLENS_SKIP_MIGRATE") == "1"
+        self.port = int(os.environ.get("PAPERLENS_PORT", str(DEFAULT_PORT)))
+        self.bcrypt_cost = int(os.environ.get("PAPERLENS_BCRYPT_COST", str(DEFAULT_BCRYPT_COST)))
+        self.file_token_ttl = int(os.environ.get("PAPERLENS_FILE_TOKEN_TTL", str(DEFAULT_FILE_TOKEN_TTL)))
+        raw_origins = os.environ.get("PAPERLENS_CORS_ORIGINS")
+        self.cors_origins = [o.strip() for o in raw_origins.split(",") if o.strip()] if raw_origins else CORS_ORIGINS
 
     @property
     def db_path(self) -> Path:

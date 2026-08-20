@@ -3,22 +3,15 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.models import GlossaryTerm, Paper, User
-from app.api.deps import get_current_user
+from app.models import GlossaryTerm, User
+from app.api.deps import get_current_user, owned_paper
 
 router = APIRouter(tags=["glossary"])
 
 
-def _owned_paper(db: Session, user: User, paper_id: int) -> Paper:
-    p = db.get(Paper, paper_id)
-    if p is None or p.user_id != user.id:
-        raise HTTPException(status_code=404, detail="论文不存在")
-    return p
-
-
 @router.get("/papers/{paper_id}/glossary")
 def list_glossary(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    _owned_paper(db, user, paper_id)
+    owned_paper(db, user, paper_id)
     rows = (
         db.query(GlossaryTerm)
         .filter(GlossaryTerm.paper_id == paper_id)
@@ -40,7 +33,7 @@ class TermIn(BaseModel):
 
 @router.post("/glossary/terms", status_code=201)
 def upsert_term(body: TermIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    _owned_paper(db, user, body.paper_id)
+    owned_paper(db, user, body.paper_id)
     term = body.term.strip()
     if not term:
         raise HTTPException(status_code=400, detail="术语不能为空")

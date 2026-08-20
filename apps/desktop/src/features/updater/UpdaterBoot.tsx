@@ -5,9 +5,13 @@
 // 浏览器 dev 模式（isTauri=false）下全部 no-op。
 import { useEffect, useState } from 'react'
 import Modal from '../shared/Modal'
-import { updaterAvailable, type StartupCheckResult } from './updaterCore'
-import { bootStartupCheck, useUpdater } from '../../stores/updater'
+import { toast } from '../shared/Toast'
+import { updaterAvailable, type StartupCheckResult } from '../../api/updaterCore'
+import { bootStartupCheck, setUpdaterNotify, useUpdater } from '../../stores/updater'
 import UpdateDialog from './UpdateDialog'
+
+// store 内提示回调统一接 toast（保持 store 不反向依赖 features）
+setUpdaterNotify(toast)
 
 function StartupWarning({ result, onClose }: { result: StartupCheckResult; onClose: () => void }) {
   return (

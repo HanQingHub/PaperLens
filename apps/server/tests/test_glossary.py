@@ -97,3 +97,54 @@ def test_tfidf_does_not_overwrite_user_rows(client, tmp_path):
         assert row.domain_translation == "用户修正"
     finally:
         db.close()
+
+
+def test_tfidf_schedule_with_loop_from_thread(client, tmp_path):
+    """B01：schedule(paper_id, loop) 从工作线程调度到事件循环，任务完成后清理 _tasks。"""
+    import asyncio
+
+    token = register(client)
+    pages = tuple((f"attention network gradient {i}" for i in range(3)),)
+    upload_pdf(client, token, tmp_path, pages=pages)
+    from app.core.db import SessionLocal
+    from app.models import GlossaryTerm
+    from app.services import tfidf_service
+
+    async def driver():
+        await asyncio.to_thread(tfidf_service.schedule, 1, asyncio.get_running_loop())
+        deadline = asyncio.get_event_loop().time() + 5
+        while 1 in tfidf_service._tasks and not tfidf_service._tasks[1].done():
+            assert asyncio.get_event_loop().time() < deadline, "tfidf 任务超时未完成"
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.1)
+
+    asyncio.run(driver())
+    assert 1 not in tfidf_service._tasks
+    db = SessionLocal()
+    try:
+        terms = {r.term for r in db.query(GlossaryTerm).all()}
+        assert any("attention" == t for t in terms)
+    finally:
+        db.close()
+
+
+def test_tfidf_schedule_no_loop_from_plain_thread_swallows(client, tmp_path):
+    """B01：无事件循环的普通线程调用 schedule 不应抛异常（静默跳过）。"""
+    import threading
+
+    token = register(client)
+    upload_pdf(client, token, tmp_path)
+    from app.services import tfidf_service
+
+    errors = []
+
+    def go():
+        try:
+            tfidf_service.schedule(1)
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    t = threading.Thread(target=go)
+    t.start()
+    t.join(timeout=5)
+    assert errors == []

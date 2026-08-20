@@ -26,6 +26,7 @@ STOPWORDS = set(
 
 _TOKEN_RE = re.compile(r"[a-z][a-z'-]+")
 _tasks: dict[int, asyncio.Task] = {}
+session_factory = None
 
 
 def tokenize(text: str) -> list[str]:
@@ -162,9 +163,13 @@ async def _pre_translate(db: Session, paper_id: int) -> None:
 
 async def _run(paper_id: int) -> None:
     from app.core.config import get_settings
-    from app.core.db import SessionLocal
 
-    db = SessionLocal()
+    factory = session_factory
+    if factory is None:
+        from app.core.db import SessionLocal
+
+        factory = SessionLocal
+    db = factory()
     try:
         paper = db.get(Paper, paper_id)
         if paper is None:
@@ -187,12 +192,16 @@ async def _run(paper_id: int) -> None:
         db.close()
 
 
-def schedule(paper_id: int) -> None:
+def schedule(paper_id: int, loop: asyncio.AbstractEventLoop | None = None) -> None:
     cancel(paper_id)
-    try:
-        task = asyncio.get_running_loop().create_task(_run(paper_id))
-    except RuntimeError:
-        return
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(_run(paper_id))
+    else:
+        task = asyncio.run_coroutine_threadsafe(_run(paper_id), loop)
     _tasks[paper_id] = task
     task.add_done_callback(lambda _t: _tasks.pop(paper_id, None))
 

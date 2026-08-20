@@ -1,14 +1,23 @@
 """端到端冒烟测试：全链路验证（注册→上传→翻译四层→生词→批注→OCR→统计→备份）。
 
-用法：.venv\\Scripts\\python.exe scripts\\e2e_smoke.py [--port 8737] [--skip-llm] [--skip-ocr]
+用法：.venv\\Scripts\\python.exe scripts\\e2e_smoke.py [--port 8737] [--skip-llm] [--skip-ocr] [--spawn]
+
+--spawn：脚本自行拉起独立后端（唯一数据目录 .dev-data/e2e-<pid>-<时间戳>，
+结束后杀整棵进程树并清理数据目录；失败时保留目录供排查）。
 """
 import argparse
 import json
+import os
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 import httpx
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sse_utils import parse_sse  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 RESULTS: list[tuple[str, bool, str]] = []
@@ -19,33 +28,84 @@ def step(name: str, ok: bool, detail: str = ""):
     print(f"[{'PASS' if ok else 'FAIL'}] {name}" + (f" — {detail}" if detail else ""), flush=True)
 
 
-def parse_sse(text: str) -> list[tuple[str, dict]]:
-    events = []
-    for block in text.split("\n\n"):
-        ev, data_lines = "message", []
-        for line in block.split("\n"):
-            if line.startswith("event:"):
-                ev = line[6:].strip()
-            elif line.startswith("data:"):
-                data_lines.append(line[5:].strip())
-        if not data_lines:
-            continue
+def spawn_server(port: int) -> tuple[subprocess.Popen, Path]:
+    """拉起 uvicorn（唯一数据目录），返回 (proc, data_dir)。端口被占则退出。"""
+    try:
+        # trust_env=False：本地环回不走系统代理（否则代理会伪造"占用"假象）
+        httpx.get(f"http://127.0.0.1:{port}/api/health", timeout=2, trust_env=False)
+        print(f"[e2e] 端口 {port} 已被占用（手工服务器？），--spawn 需要空闲端口，换 --port 重试")
+        sys.exit(2)
+    except httpx.HTTPError:
+        pass
+
+    data_dir = REPO / ".dev-data" / f"e2e-{os.getpid()}-{int(time.time())}"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    # 全新数据目录无 ecdict.db → 复用 dev_check 的迷你词典（ECDICT 层兜底 + lemma 还原断言）
+    sys.path.insert(0, str(REPO / "apps" / "server"))
+    from dev_check import make_mini_ecdict
+    make_mini_ecdict(data_dir / "ecdict.db")
+    env = os.environ.copy()
+    env["PAPERLENS_DATA_DIR"] = str(data_dir)
+    env["PAPERLENS_MODELS_DIR"] = str(REPO / "assets" / "models")
+    env["PYTHONIOENCODING"] = "utf-8"
+    py = REPO / ".venv" / "Scripts" / "python.exe"
+    proc = subprocess.Popen(
+        [str(py), "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
+        cwd=str(REPO / "apps" / "server"),
+        env=env,
+    )
+    print(f"[e2e] 已拉起后端 pid={proc.pid} data_dir={data_dir}")
+
+    t0 = time.time()
+    while time.time() - t0 < 60:
+        if proc.poll() is not None:
+            print(f"[e2e] 后端进程提前退出 (code={proc.returncode})")
+            sys.exit(2)
         try:
-            data = json.loads("\n".join(data_lines))
-        except json.JSONDecodeError:
-            data = {"raw": "\n".join(data_lines)}
-        events.append((ev, data))
-    return events
+            if httpx.get(f"http://127.0.0.1:{port}/api/health", timeout=2, trust_env=False).status_code == 200:
+                print(f"[e2e] 后端就绪（{time.time() - t0:.1f}s）")
+                return proc, data_dir
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.5)
+    print("[e2e] 后端 60s 内未就绪")
+    kill_tree(proc)
+    sys.exit(2)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8737)
-    ap.add_argument("--skip-llm", action="store_true")
-    ap.add_argument("--skip-ocr", action="store_true")
-    args = ap.parse_args()
+def kill_tree(proc: subprocess.Popen):
+    """杀整棵进程树（server 自行拉起的 OCR worker 是其子进程）。"""
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+    else:
+        proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def ensure_demo_pdf():
+    """demo-text.pdf 缺失时用 make_text_pdf.py 生成（摆脱手工准备依赖）。"""
+    demo = REPO / ".dev-data" / "samples" / "demo-text.pdf"
+    if demo.is_file():
+        return
+    demo.parent.mkdir(parents=True, exist_ok=True)
+    py = REPO / ".venv" / "Scripts" / "python.exe"
+    r = subprocess.run([str(py), str(REPO / "scripts" / "make_text_pdf.py"),
+                        "--out", str(demo), "--pages", "3"], capture_output=True)
+    if r.returncode != 0 or not demo.is_file():
+        print(f"[e2e] demo-text.pdf 生成失败：{r.stderr.decode(errors='replace')[-300:]}")
+        sys.exit(2)
+
+
+def run_tests(args, data_dir: Path) -> int:
     base = f"http://127.0.0.1:{args.port}/api"
-    c = httpx.Client(timeout=120)
+    # trust_env=False：本地环回不走系统代理
+    c = httpx.Client(timeout=120, trust_env=False)
 
     suffix = str(int(time.time()))[-6:]
     user, pwd = f"e2e_{suffix}", "Passw0rd!e2e"
@@ -270,7 +330,7 @@ def main():
             lines = [ln for ln in r.text.split("\n") if ln.strip()]
             first = json.loads(lines[0]) if lines else {}
             blocks_n = sum(len(p.get("blocks", [])) for p in (json.loads(l) for l in lines))
-            nd = REPO / ".dev-data" / "ocr" / str(spid) / "blocks.ndjson"
+            nd = data_dir / "ocr" / str(spid) / "blocks.ndjson"
             step("OCR 结果拉取", len(lines) == st.get("pages_total"), f"{len(lines)} 页 NDJSON, {blocks_n} 块, 文件保留={nd.exists()}")
             # OCR 后划词翻译（叠加层场景等价于普通划词）
             with c.stream(
@@ -292,7 +352,38 @@ def main():
     print(f"\n===== E2E 汇总：{len(RESULTS) - len(fails)}/{len(RESULTS)} 通过 =====", flush=True)
     for name, _, detail in fails:
         print(f"  ✗ {name}: {detail}", flush=True)
-    sys.exit(1 if fails else 0)
+    return 1 if fails else 0
+
+
+def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--port", type=int, default=8737)
+    ap.add_argument("--skip-llm", action="store_true")
+    ap.add_argument("--skip-ocr", action="store_true")
+    ap.add_argument("--spawn", action="store_true",
+                    help="自动拉起独立后端（唯一数据目录，结束后清理；不指定则连接已运行的服务器）")
+    args = ap.parse_args()
+
+    ensure_demo_pdf()
+    proc = None
+    data_dir = REPO / ".dev-data"
+    rc = 1
+    if args.spawn:
+        proc, data_dir = spawn_server(args.port)
+    try:
+        rc = run_tests(args, data_dir)
+    finally:
+        if proc is not None:
+            kill_tree(proc)
+    if proc is not None:
+        if rc == 0:
+            shutil.rmtree(data_dir, ignore_errors=True)
+            print(f"[e2e] 已清理数据目录 {data_dir}")
+        else:
+            print(f"[e2e] 数据目录保留供排查：{data_dir}")
+    sys.exit(rc)
 
 
 if __name__ == "__main__":

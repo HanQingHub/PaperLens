@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useAuth } from '../../stores/auth'
-import '../../styles/panels.css'
 
 export default function AuthPage() {
   const { login, register } = useAuth()

@@ -2,13 +2,15 @@
 
 用法：PAPERLENS_DATA_DIR 指向 .dev-data，服务器已在 127.0.0.1:8737 运行后执行。
 """
-import json
 import sqlite3
 import sys
 import time
 from pathlib import Path
 
 import httpx
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from sse_utils import parse_sse  # noqa: E402
 
 BASE = "http://127.0.0.1:8737"
 DATA_DIR = Path(__file__).parent / ".dev-data"
@@ -39,6 +41,12 @@ def make_mini_ecdict(path: Path):
     con.executemany("INSERT INTO dictionary VALUES (?,?,?,?,?,?,?)", [
         ("attention", "n.", "əˈtenʃn", "注意;关注\n注意力", 3, "", ""),
         ("world", "n.", "wɜːld", "世界", 2, "", ""),
+        ("study", "n./v.", "ˈstʌdi", "学习;研究", 2, "", ""),
+        ("heat", "n.", "hiːt", "热;热量\n高温", 2, "", ""),
+    ])
+    con.executemany("INSERT INTO lemmas VALUES (?,?)", [
+        ("studies", "study"),
+        ("studied", "study"),
     ])
     con.commit()
     con.close()
@@ -82,22 +90,14 @@ def main():
         step("论文列表", len(r.json()) >= 1)
 
         # 翻译 SSE：无模型 → ECDICT 层兜底 + error(llm_loading_timeout)
-        events = []
         with c.stream("POST", "/api/translate/word",
                       json={"paper_id": paper["id"], "word": "attention", "sentence": "the attention is high"},
                       headers=h) as resp:
             text = "".join(resp.iter_text())
-        cur = {}
-        for line in text.splitlines():
-            if line.startswith("event: "):
-                cur["event"] = line[7:]
-            elif line.startswith("data: "):
-                cur["data"] = json.loads(line[6:])
-                events.append(cur)
-                cur = {}
-        kinds = [e["event"] for e in events]
-        ecdict_hit = any(e["event"] == "hit" and e["data"].get("layer") == "ecdict" for e in events)
-        has_error = any(e["event"] == "error" and e["data"]["code"] == "llm_loading_timeout" for e in events)
+        events = parse_sse(text)
+        kinds = [e for e, _ in events]
+        ecdict_hit = any(e == "hit" and d.get("layer") == "ecdict" for e, d in events)
+        has_error = any(e == "error" and d.get("code") == "llm_loading_timeout" for e, d in events)
         step("翻译 SSE（ECDICT 兜底）", ecdict_hit and has_error, f"events={kinds}")
 
         # OCR 入队（若 worker 已运行会立即认领，状态可能推进到 running/done）

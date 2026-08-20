@@ -1,16 +1,13 @@
-from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import Float, ForeignKey, Index, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from app.core.util import now_iso
+
 
 class Base(DeclarativeBase):
     pass
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 class User(Base):
@@ -32,6 +29,7 @@ class Session(Base):
 
 class Project(Base):
     __tablename__ = "projects"
+    __table_args__ = (Index("ix_projects_user_id", "user_id"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -41,6 +39,7 @@ class Project(Base):
 
 class Paper(Base):
     __tablename__ = "papers"
+    __table_args__ = (Index("ix_papers_user_id", "user_id"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"))
@@ -57,6 +56,7 @@ class Paper(Base):
     tags: Mapped[Optional[str]] = mapped_column(Text)  # JSON 数组
     note: Mapped[Optional[str]] = mapped_column(Text)
     is_favorite: Mapped[int] = mapped_column(Integer, default=0)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[str] = mapped_column(Text, default=now_iso)
     last_opened_at: Mapped[Optional[str]] = mapped_column(Text)
 
@@ -112,6 +112,7 @@ class Word(Base):
 
 class ReviewLog(Base):
     __tablename__ = "review_logs"
+    __table_args__ = (Index("ix_review_logs_word_id", "word_id"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     word_id: Mapped[int] = mapped_column(ForeignKey("words.id", ondelete="CASCADE"), nullable=False)

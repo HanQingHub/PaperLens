@@ -1,0 +1,6 @@
+# PaperLens dev 工具链依赖（测试/构建辅助，非运行时依赖）
+# 安装：.venv\Scripts\python.exe -m pip install -r scripts/requirements-dev.txt
+pytest>=8,<10
+httpx>=0.25
+pypdf>=6
+reportlab>=4

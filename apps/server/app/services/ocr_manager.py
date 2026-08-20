@@ -6,6 +6,7 @@
 """
 import asyncio
 import json
+import logging
 import shutil
 import subprocess
 import sys
@@ -15,13 +16,17 @@ from app.core.config import Settings
 from app.core.util import now_iso
 from app.models import OcrDoc, Paper
 
+logger = logging.getLogger(__name__)
+
 
 class OCRManager:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, session_factory) -> None:
         self.settings = settings
+        self._session_factory = session_factory
         self.worker_proc: subprocess.Popen | None = None
         self._poll_task: asyncio.Task | None = None
         self._spawned_at = 0.0
+        self._poll_failures = 0
 
     # ---- 任务入队 ----
     def enqueue(self, paper_id: int, pdf_abs: Path, pages_total: int, pages_todo: list[int] | None = None) -> None:
@@ -100,12 +105,18 @@ class OCRManager:
                 pass
 
     async def _poll_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        self._poll_failures = 0
         while True:
             await asyncio.sleep(1)
             try:
-                await asyncio.to_thread(self.poll_once)
+                await asyncio.to_thread(self.poll_once, loop)
+                self._poll_failures = 0
             except Exception:
-                pass
+                self._poll_failures += 1
+                logger.exception("OCR poll_once 失败（连续 %d 次）", self._poll_failures)
+                if self._poll_failures >= 5:
+                    logger.warning("OCR poll_once 连续失败 %d 次，请检查数据目录与数据库", self._poll_failures)
 
     @staticmethod
     def _done_pages(d: Path) -> set[int]:
@@ -124,14 +135,13 @@ class OCRManager:
                     continue
         return done
 
-    def poll_once(self) -> None:
-        from app.core.db import SessionLocal
+    def poll_once(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         from app.services import tfidf_service
 
         root = self.settings.ocr_dir
         if not root.exists():
             return
-        db = SessionLocal()
+        db = self._session_factory()
         try:
             for d in sorted(root.iterdir()):
                 if not d.is_dir() or not d.name.isdigit():
@@ -155,10 +165,14 @@ class OCRManager:
                     for f in (task, claimed, result):
                         f.unlink(missing_ok=True)
                     if status == "done":
-                        tfidf_service.schedule(paper_id)
+                        tfidf_service.schedule(paper_id, loop)
                 elif claimed.exists():
                     self._set_status(paper_id, "running", pages_done=pages_done)
                     if not self.worker_alive():
+                        logger.warning(
+                            "OCR worker 已退出但 paper_id=%s 任务仍被认领（claimed 无 result），标记 failed",
+                            paper_id,
+                        )
                         self._finalize_db(paper_id, "failed", pages_done=pages_done,
                                            engine=None, error="worker 进程异常退出")
                         for f in (task, claimed, result):
@@ -167,15 +181,15 @@ class OCRManager:
                     paper = db.get(Paper, paper_id)
                     if paper is not None and paper.ocr_status == "none":
                         self._set_status(paper_id, "pending", pages_done=pages_done)
+                    if not self.worker_alive():
+                        self.spawn_worker()
             db.commit()
         finally:
             db.close()
 
     # ---- 库内状态（papers.ocr_status 为权威源，ocr_docs 同值双写）----
     def _set_status(self, paper_id: int, status: str, pages_total: int | None = None, pages_done: int | None = None) -> None:
-        from app.core.db import SessionLocal
-
-        db = SessionLocal()
+        db = self._session_factory()
         try:
             paper = db.get(Paper, paper_id)
             if paper is not None:
@@ -201,9 +215,7 @@ class OCRManager:
             db.close()
 
     def _finalize_db(self, paper_id: int, status: str, pages_done: int, engine: str | None, error: str | None) -> None:
-        from app.core.db import SessionLocal
-
-        db = SessionLocal()
+        db = self._session_factory()
         try:
             paper = db.get(Paper, paper_id)
             if paper is not None:
@@ -227,9 +239,7 @@ class OCRManager:
     # ---- 恢复 / 取消 ----
     def recover(self) -> None:
         """启动恢复：ocr_status=running 残留 → 重置 pending 重新入队（跳过已完成页）。"""
-        from app.core.db import SessionLocal
-
-        db = SessionLocal()
+        db = self._session_factory()
         try:
             papers = db.query(Paper).filter(Paper.ocr_status == "running").all()
             for paper in papers:
@@ -254,13 +264,30 @@ class OCRManager:
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
 
+    def stop_worker(self, timeout: float = 10.0) -> None:
+        """终止 worker 进程并等待退出（超时强杀）。"""
+        proc = self.worker_proc
+        self.worker_proc = None
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+
+    def pause(self) -> None:
+        """暂停轮询与 worker（数据目录迁移前调用，避免拷贝到半写状态）。"""
+        if self._poll_task is not None:
+            self._poll_task.cancel()
+            self._poll_task = None
+        self.stop_worker(timeout=10.0)
+
     async def stop(self) -> None:
         if self._poll_task is not None:
             self._poll_task.cancel()
             self._poll_task = None
-        if self.worker_proc is not None and self.worker_proc.poll() is None:
-            self.worker_proc.terminate()
-            try:
-                self.worker_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.worker_proc.kill()
+        await asyncio.to_thread(self.stop_worker)

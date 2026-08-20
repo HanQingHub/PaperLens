@@ -2,11 +2,11 @@ import secrets
 
 import bcrypt
 
-BCRYPT_COST = 12
+from app.core.config import get_settings
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=BCRYPT_COST)).decode("ascii")
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=get_settings().bcrypt_cost)).decode("ascii")
 
 
 def verify_password(password: str, password_hash: str) -> bool:

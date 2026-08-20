@@ -1,3 +1,4 @@
+import asyncio
 import shutil
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,13 +13,16 @@ router = APIRouter(prefix="/cache", tags=["cache"])
 
 
 @router.delete("/{cache_type}")
-def clear_cache(cache_type: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def clear_cache(cache_type: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     settings = get_settings()
     if cache_type == "translate":
         n = db.query(TranslationCache).filter(TranslationCache.user_id == user.id).delete()
         db.commit()
         return {"freed_bytes": 0, "rows_deleted": n}
     if cache_type == "ocr":
+        from app.main import app
+
+        manager = app.state.ocr_manager
         papers = db.query(Paper).filter(Paper.user_id == user.id).all()
         freed = 0
         for paper in papers:
@@ -27,6 +31,13 @@ def clear_cache(cache_type: str, user: User = Depends(get_current_user), db: Ses
                 for f in d.iterdir():
                     if f.is_file():
                         freed += f.stat().st_size
+        # 先移除任务文件并等 worker 退出（Windows 句柄占用下 rmtree 会失败），再删目录
+        for paper in papers:
+            manager.cancel(paper.id)
+        await asyncio.to_thread(manager.stop_worker, 10.0)
+        for paper in papers:
+            d = settings.ocr_dir / str(paper.id)
+            if d.exists():
                 shutil.rmtree(d, ignore_errors=True)
             paper.ocr_status = "none"
             doc = db.get(OcrDoc, paper.id)

@@ -1,10 +1,9 @@
 // 右面板·批注与摘录：Tab 切换、过滤、定位、删除、导出 Markdown
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, downloadBlob } from '../../api/client'
+import { api, saveBlobWithDialog } from '../../api/client'
 import { parseAnchor, type Annotation, type Excerpt } from '../../api/types'
 import { useReaderBus } from '../../stores/readerBus'
 import { toast } from '../shared/Toast'
-import '../../styles/panels.css'
 
 const COLOR_HEX: Record<string, string> = {
   yellow: '#ffe08a',
@@ -79,7 +78,8 @@ export function AnnotationsPanel() {
     if (paperId == null) return
     try {
       const blob = await api.exportExcerpts(paperId)
-      downloadBlob(blob, 'excerpts.md')
+      const saved = await saveBlobWithDialog(blob, 'excerpts.md')
+      if (!saved) return
       toast('摘录已导出为 Markdown', 'ok')
     } catch (e) {
       toast(e instanceof Error ? e.message : '导出失败', 'error')
@@ -130,7 +130,7 @@ export function AnnotationsPanel() {
           <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3 py-2">
             <select className="input w-auto py-0.5 text-[11.5px]" value={colorFilter} onChange={(e) => setColorFilter(e.target.value)}>
               <option value="all">全部颜色</option>
-              {Object.entries(COLOR_HEX).map(([k, hex]) => (
+              {Object.entries(COLOR_HEX).map(([k]) => (
                 <option key={k} value={k}>
                   {['黄', '绿', '蓝', '粉', '紫'][Object.keys(COLOR_HEX).indexOf(k)]}
                 </option>

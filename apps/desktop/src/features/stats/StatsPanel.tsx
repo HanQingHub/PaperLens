@@ -2,7 +2,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import type { StatsOverview } from '../../api/types'
-import '../../styles/panels.css'
 
 function fmtDur(seconds: number) {
   const s = Math.max(0, Math.round(seconds))

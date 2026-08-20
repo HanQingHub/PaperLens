@@ -211,6 +211,43 @@ def test_projects_crud_and_delete_conflict(client, tmp_path):
     assert r.status_code == 204
 
 
+def test_patch_sort_order(client, tmp_path):
+    token = register(client)
+    paper = upload_pdf(client, token, tmp_path)
+    r = client.patch(f"/api/papers/{paper['id']}", json={"sort_order": 5}, headers=auth(token))
+    assert r.status_code == 200
+    assert r.json()["sort_order"] == 5
+    p = client.get(f"/api/papers/{paper['id']}", headers=auth(token)).json()
+    assert p["sort_order"] == 5
+
+
+def test_list_sort_manual(client, tmp_path):
+    token = register(client)
+    p1 = upload_pdf(client, token, tmp_path, name="a.pdf", title="Alpha")
+    p2 = upload_pdf(client, token, tmp_path, name="b.pdf", pages=(("Other content here",),), title="Beta")
+    p3 = upload_pdf(client, token, tmp_path, name="c.pdf", pages=(("Third paper text",),), title="Gamma")
+    # 乱序设置 sort_order：p3=0, p1=1, p2=2
+    client.patch(f"/api/papers/{p3['id']}", json={"sort_order": 0}, headers=auth(token))
+    client.patch(f"/api/papers/{p1['id']}", json={"sort_order": 1}, headers=auth(token))
+    client.patch(f"/api/papers/{p2['id']}", json={"sort_order": 2}, headers=auth(token))
+    r = client.get("/api/papers", params={"sort": "manual"}, headers=auth(token))
+    assert [p["id"] for p in r.json()] == [p3["id"], p1["id"], p2["id"]]
+
+
+def test_upload_sort_order_init(client, tmp_path):
+    token = register(client)
+    r = client.post("/api/projects", json={"name": "P"}, headers=auth(token))
+    proj_id = r.json()["id"]
+    p1 = upload_pdf(client, token, tmp_path, name="a.pdf", project_id=proj_id)
+    p2 = upload_pdf(client, token, tmp_path, name="b.pdf",
+                    pages=(("Other content here",),), project_id=proj_id)
+    assert p1["sort_order"] == 0
+    assert p2["sort_order"] == 1
+    # 未分组独立计数，从 0 起
+    p3 = upload_pdf(client, token, tmp_path, name="c.pdf", pages=(("Third paper text",),))
+    assert p3["sort_order"] == 0
+
+
 def test_path_traversal_rejected(client, tmp_path, data_dir):
     from app.core.util import ensure_within
     import pytest

@@ -1,4 +1,9 @@
-"""备份导出/导入：zip = data.json（按用户过滤的全表 dump）+ files/（PDF）。"""
+"""备份导出/导入：zip = data.json（按用户过滤的全表 dump）+ files/（PDF）。
+
+设计取舍：不打包 OCR 缓存目录（ocr/）。原因：1) 缓存可能远大于 PDF 本体（每页多份
+高分辨率渲染图）；2) 缓存块的屏幕坐标与页面渲染几何强相关，换端/换版本后复用价值低；
+3) 导入后 ocr_status 重置为 none，用户按需重新发起 OCR 即可得到干净结果。
+"""
 import json
 import shutil
 import zipfile

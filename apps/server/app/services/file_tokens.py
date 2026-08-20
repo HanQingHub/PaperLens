@@ -11,15 +11,18 @@ _tokens: dict[str, dict] = {}
 
 
 def issue(paper_id: int, user_id: int) -> str:
+    from app.core.config import get_settings
+
     import secrets
 
+    ttl = get_settings().file_token_ttl
     token = secrets.token_urlsafe(32)
     with _lock:
         _purge()
         _tokens[token] = {
             "paper_id": paper_id,
             "user_id": user_id,
-            "expires_at": time.monotonic() + TTL_SECONDS,
+            "expires_at": time.monotonic() + ttl,
         }
     return token
 

@@ -10,10 +10,6 @@ import { parseAnnotation } from '../../stores/readerStore'
 import { citationSuffix, wordCount } from './readerUtils'
 import { lemmaCandidates, resolveLemma } from './lemma'
 
-export interface ToolbarAction {
-  type: 'translate' | 'dict' | 'word' | 'note' | 'highlight' | 'excerpt' | 'copy'
-}
-
 /** 工具条动作句柄：ReaderPage 快捷键（T/B/W/H）通过 actionsRef 复用 */
 export interface SelectionActions {
   translate: () => void

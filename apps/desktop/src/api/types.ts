@@ -36,6 +36,7 @@ export interface Paper {
   tags: string[]
   note: string | null
   is_favorite: boolean
+  sort_order: number
   created_at: string
   last_opened_at: string | null
 }
@@ -165,8 +166,19 @@ export interface OcrPageBlocks {
 }
 
 // ── SSE 翻译事件 ────────────────────────────────────────
+/** hit 事件负载（后端词典/词库/术语命中字段，均为可选） */
+export interface TranslateHitData {
+  translation?: string
+  stage?: number
+  badge?: string
+  term?: string
+  pos?: string | null
+  phonetic?: string | null
+  gloss?: string | null
+}
+
 export type TranslateEvent =
-  | { event: 'hit'; layer: 'wordbook' | 'glossary' | 'cache' | 'ecdict'; data: Record<string, unknown> }
+  | { event: 'hit'; layer: 'wordbook' | 'glossary' | 'cache' | 'ecdict'; data: TranslateHitData }
   | { event: 'delta'; text: string }
   | { event: 'done'; engine: string; cached: boolean }
   | { event: 'error'; code: 'llm_loading_timeout' | 'llm_timeout' | 'internal' | 'text_too_long'; detail: string }
@@ -182,7 +194,6 @@ export interface AppSettings {
   llm_model_id: string | null
   llm_unload_policy: number // 分钟；0=用完即卸 -1=常驻
   animations: boolean
-  [key: string]: unknown
 }
 
 // ── LLM 模型下载 SSE 事件（llm.py /download：progress|done|error）──

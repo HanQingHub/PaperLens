@@ -1,6 +1,5 @@
 // 手写 Modal 对话框（不用原生 confirm）
 import { useEffect } from 'react'
-import '../../styles/panels.css'
 
 interface ModalProps {
   open: boolean

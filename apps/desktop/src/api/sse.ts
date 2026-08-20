@@ -1,6 +1,8 @@
-// SSE 客户端：fetch ReadableStream 实现（支持 POST + Bearer 头 + 取消 + 心跳看门狗）
+// SSE 客户端：fetch ReadableStream 实现（支持 POST + Bearer 头 + 取消 + 心跳看门狗）。
+// 帧读取与事件解析见 stream.ts（与 NDJSON 共用帧读取器，协议解析各自独立）。
 import type { TranslateEvent } from './types'
 import { BASE, getToken } from './client'
+import { parseSseEvent, readFrames, type SseFrame } from './stream'
 
 export interface SseOptions {
   /** 15s 无任何事件视为死链，抛 SseTimeoutError */
@@ -36,14 +38,7 @@ export async function* ssePost(
     body: JSON.stringify(body),
     signal: controller.signal,
   })
-  if (!res.ok || !res.body) {
-    const detail = await res.text().catch(() => '')
-    throw new Error(detail || `HTTP ${res.status}`)
-  }
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
   let lastEventAt = Date.now()
   const watchdogMs = opts.watchdogMs ?? 15000
 
@@ -51,24 +46,11 @@ export async function* ssePost(
     if (Date.now() - lastEventAt > watchdogMs) controller.abort(new SseTimeoutError())
   }, 1000)
 
-  const touch = () => {
-    lastEventAt = Date.now()
-  }
-
   try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      touch()
-      buf += decoder.decode(value, { stream: true })
-      // SSE 事件以空行分隔
-      let sep: number
-      while ((sep = buf.indexOf('\n\n')) >= 0) {
-        const raw = buf.slice(0, sep)
-        buf = buf.slice(sep + 2)
-        const ev = parseEvent(raw)
-        if (ev) yield ev
-      }
+    for await (const raw of readFrames(res, '\n\n')) {
+      lastEventAt = Date.now()
+      const ev = toTranslateEvent(raw)
+      if (ev) yield ev
     }
   } finally {
     clearInterval(watchdog)
@@ -76,36 +58,41 @@ export async function* ssePost(
   }
 }
 
-function parseEvent(raw: string): TranslateEvent | null {
-  let event = 'message'
-  const dataLines: string[] = []
-  for (const line of raw.split('\n')) {
-    if (line.startsWith(':')) continue // 注释/心跳
-    if (line.startsWith('event:')) event = line.slice(6).trim()
-    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
-  }
-  if (event === 'message' && dataLines.length === 0) return null
-  const dataStr = dataLines.join('\n')
-  let data: Record<string, unknown> = {}
-  try {
-    data = dataStr ? JSON.parse(dataStr) : {}
-  } catch {
-    data = { text: dataStr }
-  }
-  switch (event) {
+/** SSE 帧 → 翻译事件联合类型（hit 的 data 为强类型负载，不再透传 Record） */
+function toTranslateEvent(raw: string): TranslateEvent | null {
+  const frame = parseSseEvent(raw)
+  if (!frame) return null
+  switch (frame.event) {
     case 'hit': {
       const layers = ['wordbook', 'glossary', 'cache', 'ecdict'] as const
-      const layer = layers.includes(data.layer as never) ? (data.layer as (typeof layers)[number]) : 'ecdict'
-      return { event: 'hit', layer, data }
+      const layer = layers.includes(frame.data.layer as never)
+        ? (frame.data.layer as (typeof layers)[number])
+        : 'ecdict'
+      const d = frame.data as SseFrame['data']
+      return {
+        event: 'hit',
+        layer,
+        data: {
+          translation: typeof d.translation === 'string' ? d.translation : undefined,
+          stage: typeof d.stage === 'number' ? d.stage : undefined,
+          badge: typeof d.badge === 'string' ? d.badge : undefined,
+          term: typeof d.term === 'string' ? d.term : undefined,
+          pos: typeof d.pos === 'string' ? d.pos : null,
+          phonetic: typeof d.phonetic === 'string' ? d.phonetic : null,
+          gloss: typeof d.gloss === 'string' ? d.gloss : null,
+        },
+      }
     }
     case 'delta':
-      return { event: 'delta', text: (data.text as string) ?? '' }
+      return { event: 'delta', text: (frame.data.text as string) ?? '' }
     case 'done':
-      return { event: 'done', engine: (data.engine as string) ?? '', cached: Boolean(data.cached) }
+      return { event: 'done', engine: (frame.data.engine as string) ?? '', cached: Boolean(frame.data.cached) }
     case 'error': {
       const codes = ['llm_loading_timeout', 'llm_timeout', 'internal', 'text_too_long'] as const
-      const code = codes.includes(data.code as never) ? (data.code as (typeof codes)[number]) : 'internal'
-      return { event: 'error', code, detail: (data.detail as string) ?? '' }
+      const code = codes.includes(frame.data.code as never)
+        ? (frame.data.code as (typeof codes)[number])
+        : 'internal'
+      return { event: 'error', code, detail: (frame.data.detail as string) ?? '' }
     }
     case 'ping':
       return { event: 'ping' }

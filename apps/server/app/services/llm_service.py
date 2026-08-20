@@ -10,6 +10,7 @@ import ctypes
 import os
 import subprocess
 import threading
+import time
 from datetime import timezone
 from pathlib import Path
 
@@ -105,7 +106,7 @@ def _next_chunk(it):
 
 
 class LLMService:
-    def __init__(self) -> None:
+    def __init__(self, session_factory=None) -> None:
         self._llm = None
         self.state = "unloaded"  # unloaded | loading | ready
         self.model_id: str | None = None
@@ -115,14 +116,23 @@ class LLMService:
         self._gen_lock = asyncio.Lock()
         self._idle_task: asyncio.Task | None = None
         self._n_threads = _physical_cores()
+        self.session_factory = session_factory
+        self._stopping = threading.Event()
+        self._generating = threading.Event()
 
     # ---- 模型解析 ----
+    def _new_session(self):
+        if self.session_factory is not None:
+            return self.session_factory()
+        from app.core.db import SessionLocal
+
+        return SessionLocal()
+
     def configured_model_id(self) -> str:
         try:
-            from app.core.db import SessionLocal
             from app.models import AppSetting
 
-            db = SessionLocal()
+            db = self._new_session()
             try:
                 row = (
                     db.query(AppSetting)
@@ -224,6 +234,11 @@ class LLMService:
             llm = self._llm
             self._llm = None
             self.state = "unloaded"
+        if self._generating.is_set():
+            self._stopping.set()
+            deadline = time.monotonic() + 10.0
+            while self._generating.is_set() and time.monotonic() < deadline:
+                time.sleep(0.05)
         if llm is not None:
             try:
                 llm.close()
@@ -249,10 +264,9 @@ class LLMService:
 
     def _unload_policy(self) -> int:
         try:
-            from app.core.db import SessionLocal
             from app.models import AppSetting
 
-            db = SessionLocal()
+            db = self._new_session()
             try:
                 row = (
                     db.query(AppSetting)
@@ -283,8 +297,12 @@ class LLMService:
                 temperature=0.3, top_p=0.8, top_k=20,
             )
             fut: asyncio.Future | None = None
+            self._stopping.clear()
+            self._generating.set()
             try:
                 while True:
+                    if self._stopping.is_set():
+                        break
                     if fut is None:
                         fut = asyncio.ensure_future(asyncio.to_thread(_next_chunk, it))
                     chunk = await asyncio.shield(fut)
@@ -301,6 +319,7 @@ class LLMService:
                         await asyncio.shield(fut)
                     except Exception:
                         pass
+                self._generating.clear()
                 self.last_used_at = now_iso()
                 if self._unload_policy() == 0:
                     await asyncio.to_thread(self.unload_sync)

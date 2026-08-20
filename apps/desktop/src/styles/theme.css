@@ -271,13 +271,23 @@ h1, h2, h3, h4, button, input, textarea, select {
   }
 }
 
-/* ── 生词三档高亮（FR-6）────────────────────────────────── */
+/* ── 生词三档高亮（FR-6）──────────────────────────────────
+   inline-block + line-height 收紧背景到字形高度：
+   pdfjs 文本层行高 = ascent-descent+lineGap ≈ 1.22×字号，
+   inline 背景会铺满整行盒导致高亮比字高约半字。
+   0.85em 对齐批注高亮基准（选区 rect 高度 ≈ 0.8-0.9×字号，
+   实测 LoRA PDF：正文 10pt，批注 rect 高 8-10pt），
+   且覆盖降部字母（g/y/p）不被截断。baseline 对齐不漂移。 */
 .hl-stage-0 {
+  display: inline-block;
+  line-height: 0.85em;
   background: rgba(245, 167, 66, 0.35);
   border-radius: 2px;
   cursor: pointer;
 }
 .hl-stage-1 {
+  display: inline-block;
+  line-height: 0.85em;
   background: rgba(243, 213, 91, 0.35);
   border-radius: 2px;
   cursor: pointer;
@@ -550,6 +560,17 @@ h1, h2, h3, h4, button, input, textarea, select {
   z-index: 2;
   overflow: hidden;
 }
+/* 逐行 span（主路径）：nowrap + overflow visible，禁止块内二次换行/裁切 */
+.ocr-line {
+  position: absolute;
+  color: transparent;
+  user-select: text;
+  cursor: text;
+  white-space: nowrap;
+  overflow: visible;
+  line-height: 1;
+}
+/* 块级 fallback（旧数据缺 lines 字段的防御路径） */
 .ocr-block {
   position: absolute;
   color: transparent;
@@ -563,12 +584,16 @@ h1, h2, h3, h4, button, input, textarea, select {
   background: rgba(51, 101, 138, 0.35);
 }
 
-/* 页内搜索命中 */
+/* 页内搜索命中（同为文本层内嵌，背景同样收紧到字形高度） */
 .search-hit {
+  display: inline-block;
+  line-height: 0.85em;
   background: rgba(245, 197, 92, 0.5);
   border-radius: 2px;
 }
 .search-hit-current {
+  display: inline-block;
+  line-height: 0.85em;
   background: rgba(51, 101, 138, 0.55);
   outline: 1px solid var(--accent);
 }

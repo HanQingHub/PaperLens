@@ -5,23 +5,16 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.util import ensure_within
-from app.models import OcrDoc, Paper, User
-from app.api.deps import get_current_user
+from app.models import OcrDoc, User
+from app.api.deps import get_current_user, owned_paper
 
 router = APIRouter(tags=["ocr"])
-
-
-def _owned_paper(db: Session, user: User, paper_id: int) -> Paper:
-    p = db.get(Paper, paper_id)
-    if p is None or p.user_id != user.id:
-        raise HTTPException(status_code=404, detail="论文不存在")
-    return p
 
 
 def _enqueue(db: Session, user: User, paper_id: int) -> dict:
     from app.main import app
 
-    paper = _owned_paper(db, user, paper_id)
+    paper = owned_paper(db, user, paper_id)
     settings = get_settings()
     task_dir = settings.ocr_dir / str(paper_id)
     if (task_dir / "task.json").exists() or (task_dir / "task.claimed.json").exists():
@@ -43,7 +36,7 @@ def start_ocr(paper_id: int, user: User = Depends(get_current_user), db: Session
 
 @router.post("/papers/{paper_id}/ocr/retry", status_code=202)
 def retry_ocr(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    paper = _owned_paper(db, user, paper_id)
+    paper = owned_paper(db, user, paper_id)
     if paper.ocr_status in ("pending", "running"):
         raise HTTPException(status_code=409, detail="任务进行中，无需重试")
     return _enqueue(db, user, paper_id)
@@ -51,7 +44,7 @@ def retry_ocr(paper_id: int, user: User = Depends(get_current_user), db: Session
 
 @router.get("/papers/{paper_id}/ocr-status")
 def ocr_status(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    paper = _owned_paper(db, user, paper_id)
+    paper = owned_paper(db, user, paper_id)
     doc = db.get(OcrDoc, paper.id)
     return {
         "status": paper.ocr_status,
@@ -63,7 +56,7 @@ def ocr_status(paper_id: int, user: User = Depends(get_current_user), db: Sessio
 
 @router.get("/papers/{paper_id}/ocr-result")
 def ocr_result(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    _owned_paper(db, user, paper_id)
+    owned_paper(db, user, paper_id)
     settings = get_settings()
     path = ensure_within(settings.ocr_dir, settings.ocr_dir / str(paper_id) / "blocks.ndjson")
     if not path.exists():

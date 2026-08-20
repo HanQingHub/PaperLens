@@ -1,8 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PaperLens OCR worker 打包 spec（PyInstaller 6.x，onedir）→ dist/paperlens-ocr/
+r"""PaperLens OCR worker 打包 spec（PyInstaller 6.x，onedir）→ dist/paperlens-ocr/
 
 用法（仓库根目录）：
-  .venv\Scripts\pyinstaller --noconfirm scripts\package_ocr_worker.spec --distpath dist --workpath dist\.work-ocr
+  .venv\Scripts\pyinstaller --noconfirm scripts\package_ocr_worker.spec --distpath dist --workpath build/.work-ocr
+
+spec 末尾自动对产物执行冻结冒烟（paperlens-ocr.exe --smoke），失败即构建失败。
+PyInstaller 版本锁定见 apps/ocr-worker/pyproject.toml。
 """
 from pathlib import Path
 
@@ -68,3 +71,15 @@ coll = COLLECT(
     upx=False,
     name="paperlens-ocr",
 )
+
+# 冻结后冒烟：构建环境内运行产物，import 全部核心模块并跑一次最小推理
+import subprocess
+import sys
+
+smoke_exe = Path(DISTPATH) / "paperlens-ocr" / "paperlens-ocr.exe"
+if not smoke_exe.is_file():
+    raise SystemExit(f"冒烟失败：未找到产物 {smoke_exe}")
+rc = subprocess.run([str(smoke_exe), "--smoke"], timeout=600).returncode
+if rc != 0:
+    raise SystemExit(f"冒烟失败：paperlens-ocr --smoke 退出码 {rc}")
+print(f"冒烟通过：{smoke_exe}")

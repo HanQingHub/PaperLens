@@ -1,8 +1,37 @@
 import json
 import sqlite3
 
+import httpx
 import pytest
+import anyio
 from fastapi.testclient import TestClient
+
+# 兼容垫片：starlette TestClient 的 super().__init__(app=...) 与 httpx>=0.26 不兼容
+# （httpx 从 0.26 起移除 Client 的 app 参数）。把 app 拦截并转成内部 transport，
+# 使 TestClient 语义（自动 lifespan）保持原样，测试代码零改动。
+_orig_httpx_init = httpx.Client.__init__
+
+if not httpx.__version__.startswith("0.28"):
+    raise RuntimeError(
+        f"tests/conftest.py 的 httpx 兼容垫片只验证过 httpx 0.28.x（当前 {httpx.__version__}）。"
+        f"升级 httpx 前请先验证 TestClient/lifespan 行为，否则可能静默破坏全部测试。"
+    )
+
+
+def _patched_httpx_init(self, *args, app=None, **kwargs):
+    if app is not None:
+        from starlette.testclient import _TestClientTransport
+
+        kwargs["transport"] = _TestClientTransport(
+            app,
+            lambda: anyio.from_thread.start_blocking_portal(),
+            raise_server_exceptions=kwargs.pop("raise_server_exceptions", True),
+            app_state={},
+        )
+    _orig_httpx_init(self, *args, **kwargs)
+
+
+httpx.Client.__init__ = _patched_httpx_init
 
 from pdfgen import make_pdf_bytes
 

@@ -1,12 +1,13 @@
 // 连线批注卡片：可拖动 / 右下缩放 / 编辑（失焦保存）/ 删除；点击锚点互跳
 import { useEffect, useRef, useState } from 'react'
 import { createAnnotation, patchAnnotation, type AnnotationRaw } from '../../api/client'
-import { useReader, type ReaderAnnotation, type PdfRect } from '../../stores/readerStore'
-import { cssPointToPdf, pdfPointToCss, type PageGeom } from './readerUtils'
-import { parseAnnotation } from '../../stores/readerStore'
+import { useReader, parseAnnotation, type ReaderAnnotation, type PdfRect } from '../../stores/readerStore'
+import { cssPointToPdf, pdfPointToCss, type PageGeom } from '../../shared/coords'
+import { FLASH_ANIM_MS } from '../../shared/constants'
+import { toast } from '../shared/Toast'
 
 interface NoteCardProps {
-  anno: ReaderAnnotation
+  anno: ReaderAnnotation & { card: NonNullable<ReaderAnnotation['card']> }
   geom: PageGeom
   onDelete: () => void
   onSaved: (raw: AnnotationRaw) => void
@@ -15,12 +16,11 @@ interface NoteCardProps {
 export default function NoteCard({ anno, geom, onDelete, onSaved }: NoteCardProps) {
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(anno.text)
-  const [card, setCard] = useState(anno.card!)
+  const [card, setCard] = useState(anno.card)
   const cardRef = useRef<HTMLDivElement>(null)
-  const setLinking = useReader((s) => s.setLinking)
 
   useEffect(() => {
-    setCard(anno.card!)
+    setCard(anno.card)
     setText(anno.text)
   }, [anno.card, anno.text, anno.id])
 
@@ -32,13 +32,13 @@ export default function NoteCard({ anno, geom, onDelete, onSaved }: NoteCardProp
     setCard(next)
     patchAnnotation(anno.id, { card_json: JSON.stringify(next) })
       .then(onSaved)
-      .catch(() => {})
+      .catch(() => toast('批注保存失败', 'error'))
   }
 
   const saveText = () => {
     setEditing(false)
     if (text !== anno.text) {
-      patchAnnotation(anno.id, { text }).then(onSaved).catch(() => {})
+      patchAnnotation(anno.id, { text }).then(onSaved).catch(() => toast('批注保存失败', 'error'))
     }
   }
 
@@ -145,7 +145,7 @@ export default function NoteCard({ anno, geom, onDelete, onSaved }: NoteCardProp
             // 卡片 → 锚点互跳闪烁
             const anchor = document.querySelector(`[data-anno-id="${anno.id}"].anno-anchor`)
             anchor?.classList.add('flash-anim')
-            setTimeout(() => anchor?.classList.remove('flash-anim'), 1600)
+            setTimeout(() => anchor?.classList.remove('flash-anim'), FLASH_ANIM_MS)
           }}
           title="双击编辑"
         >

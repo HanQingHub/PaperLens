@@ -1,6 +1,6 @@
 [package]
 name = "paperlens-desktop"
-version = "0.1.0"
+version = "0.3.0"
 description = "PaperLens desktop shell (Tauri v2 thin shell)"
 authors = ["筝青寒"]
 edition = "2021"
@@ -16,14 +16,23 @@ crate-type = ["rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[dev-dependencies]
+# Tests set directory mtimes on Windows (std::fs cannot open directories;
+# set_file_mtime uses FILE_FLAG_BACKUP_SEMANTICS under the hood).
+filetime = "0.2"
+
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
+# Required by tauri::generate_context! (build-time macro reference), even
+# though the crate code never names it directly.
 serde_json = "1"
 # CSPRNG for the boot handshake token (backed by BCryptGenRandom on Windows).
 getrandom = "0.2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
@@ -31,12 +40,13 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Threading",
     "Win32_System_Registry",
     "Win32_Foundation",
+    # Required by the JobObjects API signatures (SECURITY_ATTRIBUTES in
+    # CreateJobObjectW), even though the crate code never names it directly.
     "Win32_Security",
 ] }
 
 [profile.release]
-panic = "abort"   # Cascade abort the whole process on panic
 codegen-units = 1 # Better optimizations
 lto = true        # Link-time optimization
 opt-level = "s"   # Optimize for binary size
-strip = true      # Strip debug symbols
+strip = true      # Strip debug symbols; panics are recorded to {data dir}\crash.log (see lib.rs)

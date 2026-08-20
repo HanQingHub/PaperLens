@@ -1,7 +1,7 @@
 // 论文卡片：标题/作者/年份/标签/收藏/页数/OCR 状态/打开计数 + ⋯ 菜单
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { Paper } from '../../api/types'
-import '../../styles/panels.css'
+import type { CardDragProps } from './dnd/types'
 
 // 按文件 hash 生成稳定色相（0-359），用于卡片封面渐变装饰
 function hueOf(paper: Paper): number {
@@ -23,6 +23,11 @@ interface Props {
   onToggleFav: (p: Paper) => void
   onDelete: (p: Paper) => void
   onRetryOcr: (p: Paper) => void
+  /** 拖拽注入（useLibraryDnd.cardDragProps）；未传 = 不可拖拽 */
+  dragProps?: CardDragProps
+  isDragging?: boolean
+  /** 插入指示线：悬停卡片前/后缘 */
+  insertSide?: 'before' | 'after' | null
 }
 
 function OcrBadge({ paper, progress }: { paper: Paper; progress: OcrProgress | null }) {
@@ -55,7 +60,10 @@ function OcrBadge({ paper, progress }: { paper: Paper; progress: OcrProgress | n
   return <span className="badge">扫描版</span>
 }
 
-export default function PaperCard({ paper, ocrProgress, onOpen, onEdit, onToggleFav, onDelete, onRetryOcr }: Props) {
+export default function PaperCard({
+  paper, ocrProgress, onOpen, onEdit, onToggleFav, onDelete, onRetryOcr,
+  dragProps, isDragging, insertSide,
+}: Props) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -70,9 +78,12 @@ export default function PaperCard({ paper, ocrProgress, onOpen, onEdit, onToggle
 
   return (
     <div
-      className="panel group relative flex cursor-pointer flex-col gap-2 p-3.5 pl-paper-card"
+      className={`panel group relative flex cursor-pointer flex-col gap-2 p-3.5 pl-paper-card ${
+        isDragging ? 'pl-card-dragging' : ''
+      } ${insertSide ? `pl-dnd-indicator--${insertSide}` : ''}`}
       style={{ '--pl-hue': String(hueOf(paper)) } as CSSProperties}
       onClick={() => onOpen(paper)}
+      {...dragProps}
     >
       <div className="pl-card-glow" aria-hidden />
       <div className="flex items-start justify-between gap-2">

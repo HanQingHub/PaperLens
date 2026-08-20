@@ -6,7 +6,6 @@ import { api } from '../../api/client'
 import type { DictionaryEntry, Word } from '../../api/types'
 import { useReaderBus } from '../../stores/readerBus'
 import { toast } from '../shared/Toast'
-import '../../styles/panels.css'
 
 const STAGES = [
   { v: 0, label: '陌生', cls: 'hl-stage-0' },

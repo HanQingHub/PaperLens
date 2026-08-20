@@ -438,3 +438,34 @@
 .pl-field-label {
   transition: color var(--dur-1) var(--ease);
 }
+
+/* ══ 14. 文库拖拽（分组投放高亮 / 卡片插入指示线 / 拖拽中卡片） ═══ */
+.pl-group-over {
+  outline: 1px dashed var(--accent);
+  outline-offset: 4px;
+  border-radius: 12px;
+}
+.pl-card-dragging {
+  opacity: 0.5;
+  cursor: grabbing !important;
+}
+.pl-dnd-indicator--before::before,
+.pl-dnd-indicator--after::before {
+  /* 插入指示线：3px accent 竖线 + 柔光，画在悬停卡片左/右内缘 */
+  content: "";
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  z-index: 3;
+  pointer-events: none;
+}
+.pl-dnd-indicator--before::before {
+  left: 0;
+}
+.pl-dnd-indicator--after::before {
+  right: 0;
+}
