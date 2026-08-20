@@ -27,7 +27,9 @@ $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 $releaseDir = if ([System.IO.Path]::IsPathRooted($ReleaseDir)) { $ReleaseDir } else { Join-Path $repo $ReleaseDir }
 
-$update = Get-ChildItem "$releaseDir\PaperLens_*_x64-setup-update.exe" -ErrorAction Stop | Select-Object -First 1
+# 多版本产物共存时按 LastWriteTime 取最新（字母序会误选旧版本，如 0.2.7 < 0.3.0）
+$update = Get-ChildItem "$releaseDir\PaperLens_*_x64-setup-update.exe" -ErrorAction Stop |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 1
 $version = $Version
 if (-not $version) {
   $version = ($update.BaseName -replace '^PaperLens_|_x64-setup-update$', '')
