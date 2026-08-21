@@ -48,6 +48,19 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // 全局兜底：阻止 WebView2 对拖入文件的默认导航（文库页有自己的 drop 处理，
+  // 阅读器/设置等页面无 drop 处理，不兜底会整页跳走丢失会话）
+  useEffect(() => {
+    if (!isTauri()) return
+    const prevent = (e: DragEvent) => e.preventDefault()
+    window.addEventListener('dragover', prevent)
+    window.addEventListener('drop', prevent)
+    return () => {
+      window.removeEventListener('dragover', prevent)
+      window.removeEventListener('drop', prevent)
+    }
+  }, [])
+
   if (!booted) {
     return (
       <div className="flex h-full items-center justify-center bg-bg">

@@ -22,7 +22,7 @@ mod updater_check;
 
 use std::path::Path;
 
-use tauri::RunEvent;
+use tauri::{Manager, RunEvent};
 
 /// Expose the resolved data directory to the settings UI.
 #[tauri::command]
@@ -61,7 +61,28 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![updater_check::startup_check, get_data_dir])
-        .setup(sidecar::setup_sidecar)
+        .setup(|app| {
+            // 撤销 tao 在顶层窗口注册的 OLE FileDropHandler。tao 默认 drag_and_drop=true
+            // 且 tauri 未暴露关闭入口（dragDropEnabled 仅控制 wry 的 webview 层 handler），
+            // 该 handler 会吞掉一切 OLE 拖拽，导致 WebView2 内 HTML5 drag-and-drop
+            // （文库卡片排序 / PDF 文件投放）在 Windows 打包版中完全失效。
+            // 副作用：tauri://drag-* 原生事件不再触发——本项目未使用。
+            #[cfg(windows)]
+            {
+                if let Some(w) = app.get_webview_window("main") {
+                    if let Ok(h) = w.hwnd() {
+                        unsafe {
+                            #[link(name = "ole32")]
+                            extern "system" {
+                                fn RevokeDragDrop(hwnd: *mut core::ffi::c_void) -> i32;
+                            }
+                            let _ = RevokeDragDrop(h.0);
+                        }
+                    }
+                }
+            }
+            sidecar::setup_sidecar(app)
+        })
         .build(tauri::generate_context!())
         .expect("error while building PaperLens window")
         .run(|app_handle, event| {

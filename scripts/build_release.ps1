@@ -59,6 +59,18 @@ Set-Location $repo
 $confPath = 'apps/desktop/src-tauri/tauri.conf.json'
 $conf = Get-Content $confPath -Raw | ConvertFrom-Json
 
+# ── 发布红线前置校验（手册 §1.1，违反即中止）──
+$dirty = git status --porcelain | Where-Object { $_ -notmatch '^\?\?' }
+if ($dirty) { throw "发布红线：工作区存在未提交改动，先 commit 并 push 再发布：`n$($dirty -join "`n")" }
+try { git fetch origin master 2>$null | Out-Null } catch { Write-Warning "git fetch 失败（离线？），按本地缓存的 origin/master 比较" }
+$ahead = [int](git rev-list --count origin/master..HEAD)
+if ($ahead -gt 0) { throw "发布红线：本地领先 origin/master $ahead 个提交，先 git push 再发布" }
+$pkgVer = (Get-Content 'apps/desktop/package.json' -Raw | ConvertFrom-Json).version
+$tomlVer = ([regex]::Match((Get-Content 'apps/desktop/src-tauri/Cargo.toml' -Raw), '(?m)^version\s*=\s*"([^"]+)"')).Groups[1].Value
+if ($Version -and ($conf.version -ne $Version -or $pkgVer -ne $Version -or $tomlVer -ne $Version)) {
+  throw "发布红线：版本号三处不一致 conf=$($conf.version) pkg=$pkgVer toml=$tomlVer 期望=$Version"
+}
+
 # ── 1. 版本号（可选写入 tauri.conf.json，仅替换唯一的顶层 version 字段）──
 if ($Version -and $Version -notmatch '^v?\d+\.\d+\.\d+$') {
   throw "版本号格式非法：$Version（应为 v?\d+.\d+.\d+）"
