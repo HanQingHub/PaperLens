@@ -212,9 +212,29 @@ if ($LASTEXITCODE -ne 0) { throw '产物验证失败，中止发布' }
 # ── 11. 上传 GitHub Releases（gh CLI；镜像需另行上传）──
 if (-not $SkipUpload) {
   if (Get-Command gh -ErrorAction SilentlyContinue) {
+    # 新用户指引：发 full 指向自身；仅更新包时指向最近一个带全量包的 release（手册 §1.1 规则 7）
+    if (-not $SkipFull) {
+      $fullHint = "**新用户安装**：下载本页下方的 ``PaperLens_${Version}_x64-setup-full.exe`` 全量安装包安装；首次启动后在「设置 → 检查更新」保持最新。"
+    } else {
+      $relObj = (gh api "repos/HanQingHub/PaperLens/releases?per_page=50") | ConvertFrom-Json
+      $src = $null
+      foreach ($r in @($relObj)) {
+        if ($r.tag_name -eq "v$Version") { continue }
+        $f = $r.assets | Where-Object { $_.name -match '^PaperLens_.+_x64-setup(-full)?\.exe$' } | Select-Object -First 1
+        if ($f) { $src = @{ tag = $r.tag_name; file = $f.name }; break }
+      }
+      if ($src) {
+        $fullHint = "**新用户安装**：本版本仅提供更新包。请先到 [$($src.tag)](https://github.com/HanQingHub/PaperLens/releases/tag/$($src.tag)) 下载全量安装包 ``$($src.file)`` 安装，然后在「设置 → 检查更新」一键升级到当前版本。"
+      } else {
+        Write-Warning '未找到任何含全量安装包的 release，新用户指引留空。'
+        $fullHint = ''
+      }
+    }
+    $nl = [char]10
+    $releaseNotes = ((@($Notes, $fullHint) | Where-Object { $_ }) -join ($nl + $nl + '---' + $nl + $nl))
     Write-Host "==> gh release create v$Version"
     $assets = @(Get-ChildItem "$releaseDir\PaperLens_${Version}_x64-setup-*.exe*") + @("$releaseDir\latest.json")
-    & gh release create "v$Version" @($assets | ForEach-Object FullName) --title "PaperLens v$Version" --notes $Notes
+    & gh release create "v$Version" @($assets | ForEach-Object FullName) --title "v$Version" --notes $releaseNotes
     if ($LASTEXITCODE -ne 0) { throw 'gh release create 失败' }
     Write-Host '    GitHub Release 已创建。请手动将 latest.mirror.json（如有）与更新包上传至国内镜像。'
   } else {
