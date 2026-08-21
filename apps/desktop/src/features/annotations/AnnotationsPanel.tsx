@@ -1,6 +1,6 @@
 // 右面板·批注与摘录：Tab 切换、过滤、定位、删除、导出 Markdown
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, saveBlobWithDialog } from '../../api/client'
+import { api, patchAnnotation, saveBlobWithDialog } from '../../api/client'
 import { parseAnchor, type Annotation, type Excerpt } from '../../api/types'
 import { useReaderBus } from '../../stores/readerBus'
 import { toast } from '../shared/Toast'
@@ -69,6 +69,37 @@ export function AnnotationsPanel() {
       await api.deleteExcerpt(id)
       setExcerpts((list) => list.filter((e) => e.id !== id))
       toast('摘录已删除', 'ok')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '删除失败', 'error')
+    }
+  }
+
+  // 批注 inline 编辑 / 删除（§高亮删除功能 G2）
+  const [editingAnnoId, setEditingAnnoId] = useState<number | null>(null)
+  const [annoEditText, setAnnoEditText] = useState('')
+  const bumpAnnotations = useReaderBus((s) => s.bumpAnnotations)
+
+  const startEditAnno = (a: Annotation) => {
+    setEditingAnnoId(a.id)
+    setAnnoEditText(a.text ?? '')
+  }
+  const saveEditAnno = async (id: number) => {
+    setEditingAnnoId(null)
+    try {
+      const raw = await patchAnnotation(id, { text: annoEditText })
+      setAnnotations((list) => list.map((x) => (x.id === id ? raw : x)))
+      bumpAnnotations()
+      toast('批注已保存', 'ok')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '保存失败', 'error')
+    }
+  }
+  const removeAnno = async (id: number) => {
+    try {
+      await api.deleteAnnotation(id)
+      setAnnotations((list) => list.filter((x) => x.id !== id))
+      bumpAnnotations()
+      toast('批注已删除', 'ok')
     } catch (e) {
       toast(e instanceof Error ? e.message : '删除失败', 'error')
     }
@@ -157,11 +188,17 @@ export function AnnotationsPanel() {
               <div className="flex flex-col gap-2">
                 {filtered.map((a) => {
                   const anchorText = parseAnchor(a)?.text ?? ''
+                  const editing = editingAnnoId === a.id
                   return (
-                    <button
+                    <div
                       key={a.id}
-                      className="panel pl-list-item w-full p-2.5 text-left"
+                      role="button"
+                      tabIndex={0}
+                      className="panel pl-list-item group w-full cursor-pointer p-2.5 text-left"
                       onClick={() => locateAnnotation(a.id, a.page_no)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') locateAnnotation(a.id, a.page_no)
+                      }}
                       title="点击定位到原文"
                     >
                       <div className="flex items-center gap-1.5 text-[10.5px] text-text-faint">
@@ -169,6 +206,26 @@ export function AnnotationsPanel() {
                         <span>p.{a.page_no}</span>
                         <span>{a.type === 'word_note' ? '笔记' : '高亮'}</span>
                         <span className="ml-auto">{fmtTime(a.updated_at || a.created_at)}</span>
+                        <button
+                          className="hidden shrink-0 rounded px-1 hover:text-accent group-hover:block"
+                          title="编辑笔记"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            startEditAnno(a)
+                          }}
+                        >
+                          ✎
+                        </button>
+                        <button
+                          className="hidden shrink-0 rounded px-1 text-danger hover:opacity-75 group-hover:block"
+                          title="删除批注"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            removeAnno(a.id)
+                          }}
+                        >
+                          ✕
+                        </button>
                       </div>
                       {anchorText && (
                         <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-text-soft">
@@ -177,8 +234,25 @@ export function AnnotationsPanel() {
                           </span>
                         </p>
                       )}
-                      {a.text && <p className="mt-1 line-clamp-2 text-[12px] leading-5">{a.text}</p>}
-                    </button>
+                      {editing ? (
+                        <textarea
+                          autoFocus
+                          className="input mt-1 w-full text-[12px] leading-5"
+                          value={annoEditText}
+                          style={{ height: 64 }}
+                          placeholder="写点笔记…"
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => setAnnoEditText(e.target.value)}
+                          onBlur={() => saveEditAnno(a.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') setEditingAnnoId(null)
+                            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveEditAnno(a.id)
+                          }}
+                        />
+                      ) : (
+                        a.text && <p className="mt-1 line-clamp-2 text-[12px] leading-5">{a.text}</p>
+                      )}
+                    </div>
                   )
                 })}
               </div>

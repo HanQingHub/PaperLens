@@ -1,4 +1,4 @@
-// 批注渲染层（句子高亮 + 连线锚点 + 已保存卡片 + 编辑/删除闪烁）。
+// 批注渲染层（句子高亮 + 连线锚点 + 已保存卡片 + 信息操作条 + 编辑/删除闪烁）。
 // 独立于 reader 模块（坐标工具走 shared/coords，避免 reader↔annotations 循环依赖）。
 import { memo, useEffect, useMemo, useState } from 'react'
 import { api, patchAnnotation } from '../../api/client'
@@ -8,6 +8,7 @@ import { cardEdgeX, linkPath, pdfPointToCss, pdfRectToCss, rectCenter } from '..
 import { FLASH_ANIM_MS } from '../../shared/constants'
 import { toast } from '../shared/Toast'
 import NoteCard from './NoteCard'
+import HighlightPopover from './HighlightPopover'
 
 // memo：缩放 wheel 期间父组件逐帧重渲染时，批注层（props 不变）整体跳过
 const AnnotationOverlay = memo(function AnnotationOverlay({
@@ -16,12 +17,17 @@ const AnnotationOverlay = memo(function AnnotationOverlay({
   cssW,
   cssH,
   locateId,
+  popoverId,
+  onClosePopover,
 }: {
   pageIndex: number
   geom: { baseW: number; baseH: number; scale: number }
   cssW: number
   cssH: number
   locateId: number | null
+  /** 当前打开信息条的 sentence 批注 id（PageView 命中判定写入） */
+  popoverId: number | null
+  onClosePopover: () => void
 }) {
   const annotations = useReader((s) => s.annotations)
   const removeAnnotation = useReader((s) => s.removeAnnotation)
@@ -72,14 +78,25 @@ const AnnotationOverlay = memo(function AnnotationOverlay({
       await api.deleteAnnotation(annoId)
       removeAnnotation(annoId)
       bumpAnnotations()
+      onClosePopover()
     } catch {
       toast('批注删除失败', 'error')
     }
   }
 
+  const setColor = async (annoId: number, color: string) => {
+    try {
+      const raw = await patchAnnotation(annoId, { color })
+      upsertAnnotation(parseAnnotation(raw))
+      bumpAnnotations()
+    } catch {
+      toast('换色失败', 'error')
+    }
+  }
+
   return (
     <>
-      {/* 句子五色高亮 */}
+      {/* 句子五色高亮（点击命中判定在 PageView stage 层，rect 不再接收事件） */}
       {sentences.map((a) =>
         a.rects.map((r, i) => {
           const css = pdfRectToCss(r, geom)
@@ -90,17 +107,32 @@ const AnnotationOverlay = memo(function AnnotationOverlay({
               className={`anno-rect anno-${a.color}`}
               style={{ left: css.left, top: css.top, width: css.width, height: css.height }}
               title={a.text || a.anchorText}
-              onClick={(e) => {
-                e.stopPropagation()
-                if (editingId !== a.id) {
-                  setEditingId(a.id)
-                  setEditText(a.text)
-                }
-              }}
             />
           )
         }),
       )}
+
+      {/* 高亮信息操作条（点击高亮块浮现） */}
+      {popoverId != null && (() => {
+        const anno = pageAnnos.find((a) => a.id === popoverId && a.type === 'sentence')
+        if (!anno) return null
+        return (
+          <HighlightPopover
+            anno={anno}
+            pageIndex={pageIndex}
+            geom={geom}
+            containerW={cssW}
+            onClose={onClosePopover}
+            onEdit={() => {
+              setEditingId(anno.id)
+              setEditText(anno.text)
+              onClosePopover()
+            }}
+            onColor={(c) => setColor(anno.id, c)}
+            onDelete={() => del(anno.id)}
+          />
+        )
+      })()}
 
       {/* 高亮编辑小卡片 */}
       {editingId != null && (() => {

@@ -52,6 +52,13 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
   const linking = useReader((s) => s.linking)
   const updateLinking = useReader((s) => s.updateLinking)
   const locateAnnotationId = useReader((s) => s.locateAnnotationId)
+  const annotations = useReader((s) => s.annotations)
+  const [popoverId, setPopoverId] = useState<number | null>(null)
+
+  // 高亮批注被删除后自动收起浮条
+  useEffect(() => {
+    if (popoverId != null && !annotations.some((a) => a.id === popoverId)) setPopoverId(null)
+  }, [annotations, popoverId])
 
   const { settings } = useAuth()
   const stageMap = useWords((s) => s.stageMap)
@@ -190,6 +197,21 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
     }
   }, [rendered, layerVersion, highlightVersion, applyHl, ocrBlocks])
 
+  // ── 高亮命中判定（选区折叠时）：点击点 → PDF 坐标 → sentence rects 包含测试 ──
+  const onStageClick = (e: React.MouseEvent) => {
+    if (!window.getSelection()?.isCollapsed) return // 划词流程不触发
+    if (!pageRef.current) return
+    const box = pageRef.current.getBoundingClientRect()
+    const p = cssPointToPdf(e.clientX - box.left, e.clientY - box.top, geom)
+    const hit = annotations.find(
+      (a) =>
+        a.type === 'sentence' &&
+        a.page_no === pageIndex + 1 &&
+        a.rects.some((r) => p.x >= r[0] && p.x <= r[2] && p.y >= r[1] && p.y <= r[3]),
+    )
+    setPopoverId(hit ? (hit.id === popoverId ? null : hit.id) : null)
+  }
+
   // ── 连线拖拽（word_note）──
   const isLinkingPage = linking != null && linking.pageIndex === pageIndex
   const anchorCss = useMemo(() => {
@@ -249,6 +271,7 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
       className="page-wrapper relative mx-auto mb-4 shrink-0"
       style={{ width: cssW, height: cssH, visibility: visible ? 'visible' : 'hidden' }}
       onMouseDown={onStageMouseDown}
+      onClick={onStageClick}
     >
       {/* 白底纸张（未渲染时做骨架占位） */}
       <div
@@ -290,9 +313,17 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
           </div>
         )}
 
-        {/* 批注层：句子高亮 + word_note 锚点/连线/卡片 */}
+        {/* 批注层：句子高亮 + 信息操作条 + word_note 锚点/连线/卡片 */}
         {rendered && (
-          <AnnotationOverlay pageIndex={pageIndex} geom={stageGeom} cssW={stageW} cssH={stageH} locateId={locateAnnotationId} />
+          <AnnotationOverlay
+            pageIndex={pageIndex}
+            geom={stageGeom}
+            cssW={stageW}
+            cssH={stageH}
+            locateId={locateAnnotationId}
+            popoverId={popoverId}
+            onClosePopover={() => setPopoverId(null)}
+          />
         )}
 
         {/* 连线拖拽预览（drag 为可视坐标，除以 stretch 换算到舞台坐标） */}

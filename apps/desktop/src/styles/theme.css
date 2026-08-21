@@ -607,14 +607,10 @@ h1, h2, h3, h4, button, input, textarea, select {
 }
 .anno-rect {
   position: absolute;
-  pointer-events: auto;
-  cursor: pointer;
+  /* 点击命中由 PageView stage 层判定（见高亮删除功能），rect 不再接收事件，
+     避免被 z-index:2 的 textLayer 压制导致点击时好时坏，同时不干扰划词 */
+  pointer-events: none;
   border-radius: 2px;
-  transition: box-shadow var(--dur-1) var(--ease);
-}
-.anno-rect:hover,
-.anno-rect.flash {
-  box-shadow: 0 0 0 2px var(--accent);
 }
 .anno-anchor {
   position: absolute;
