@@ -50,3 +50,5 @@ vite-dev*
 docs/AGENT-REPORT-*.md
 docs/DECISION-*.md
 docs/DISCOVERY-*.md
+
+docs/
