@@ -275,7 +275,8 @@ export default function LibraryPage() {
       )}
 
       {/* 顶区工具条 */}
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
+      {/* 工具条（无边框：顶部区域不留横线，与侧栏竖线不再形成错位交角） */}
+      <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 py-2.5">
         <div className="relative w-60">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-faint" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <circle cx="11" cy="11" r="7" />
