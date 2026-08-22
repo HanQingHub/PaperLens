@@ -18,6 +18,7 @@
         "center": true,
         "resizable": true,
         "fullscreen": true,
+        "decorations": false,
         "dragDropEnabled": false
       }
     ],

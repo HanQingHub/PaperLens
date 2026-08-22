@@ -6,6 +6,7 @@ import { useAuth, applyTheme } from './stores/auth'
 import { setUnauthorizedHandler } from './api/client'
 import { toast } from './features/shared/Toast'
 import AppShell from './components/layout/AppShell'
+import WindowControls from './components/layout/WindowControls'
 import AuthPage from './features/auth/AuthPage'
 import WizardPage from './features/wizard/WizardPage'
 import LibraryPage from './features/library/LibraryPage'
@@ -75,6 +76,7 @@ export default function App() {
   if (!user)
     return (
       <>
+        <WindowControls />
         <AuthPage />
         <UpdaterBoot />
       </>
@@ -82,6 +84,7 @@ export default function App() {
 
   return (
     <>
+      <WindowControls />
       <Routes>
         <Route path="/wizard" element={<WizardPage />} />
         <Route element={<AppShell />}>

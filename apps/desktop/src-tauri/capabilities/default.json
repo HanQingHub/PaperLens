@@ -5,6 +5,8 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-close",
     "updater:default",
     {
       "identifier": "shell:allow-spawn",
