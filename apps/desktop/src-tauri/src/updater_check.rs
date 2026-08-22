@@ -26,28 +26,42 @@ pub(crate) struct StartupCheck {
 pub(crate) fn startup_check(app: tauri::AppHandle) -> StartupCheck {
     let app_version = app.package_info().version.to_string();
 
-    #[cfg(windows)]
-    let installed_version = read_installed_version();
-    #[cfg(not(windows))]
-    let installed_version: Option<String> = None;
-
-    let installed = installed_version.is_some();
-    let version_mismatch = installed_version.as_deref().is_some_and(|v| v != app_version);
-
-    // Skip the resources check in dev mode: resource_dir() points at
-    // target/debug there and never contains the bundled resources.
-    let missing_resources = if installed {
-        check_resources(&app)
-    } else {
-        Vec::new()
+    // debug/debugger 构建跳过自检：其运行版本与注册表安装版本天然脱钩
+    // （注册表跟随正式安装器走），mismatch 属预期噪音而非真实故障。
+    #[cfg(debug_assertions)]
+    return StartupCheck {
+        installed: false,
+        installed_version: None,
+        app_version,
+        version_mismatch: false,
+        missing_resources: Vec::new(),
     };
 
-    StartupCheck {
-        installed,
-        installed_version,
-        app_version,
-        version_mismatch,
-        missing_resources,
+    #[cfg(not(debug_assertions))]
+    {
+        #[cfg(windows)]
+        let installed_version = read_installed_version();
+        #[cfg(not(windows))]
+        let installed_version: Option<String> = None;
+
+        let installed = installed_version.is_some();
+        let version_mismatch = installed_version.as_deref().is_some_and(|v| v != app_version);
+
+        // Skip the resources check in dev mode: resource_dir() points at
+        // target/debug there and never contains the bundled resources.
+        let missing_resources = if installed {
+            check_resources(&app)
+        } else {
+            Vec::new()
+        };
+
+        StartupCheck {
+            installed,
+            installed_version,
+            app_version,
+            version_mismatch,
+            missing_resources,
+        }
     }
 }
 
