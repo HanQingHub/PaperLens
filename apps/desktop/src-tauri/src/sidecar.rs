@@ -37,6 +37,15 @@ struct SidecarGuard {
     child: Option<CommandChild>,
 }
 
+/// Boot contract shared with the exit path: absent when there is no backend
+/// to shut down gracefully (spawn failed / token generation failed).
+pub(crate) struct BootInfo {
+    pub token: String,
+    pub port: u16,
+    /// Set by the command-event drain task once the sidecar process exits.
+    pub terminated: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
 /// Generate the 32-byte boot handshake token as 64 hex chars (CSPRNG-backed).
 fn generate_boot_token() -> Result<String, getrandom::Error> {
     let mut bytes = [0u8; 32];
@@ -111,6 +120,15 @@ pub(crate) fn setup_sidecar(app: &mut tauri::App) -> Result<(), Box<dyn std::err
             let pid = child.pid();
             println!("[info] sidecar '{SIDECAR_BIN}' spawned (pid {pid})");
 
+            // 退出时序标志：drain 任务在 sidecar 进程退出时置位，
+            // try_graceful_shutdown 据此等待优雅退出完成（而非仅 200 响应）。
+            let terminated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            app.manage(crate::sidecar::BootInfo {
+                token: token.clone(),
+                port: DEFAULT_PORT.parse().unwrap_or(8737),
+                terminated: std::sync::Arc::clone(&terminated),
+            });
+
             // Drain the command-event channel (bounded, capacity 1): without a
             // consumer the sidecar's stdout/stderr pipes would fill up and
             // block the backend. Forward output to the shell console.
@@ -125,6 +143,7 @@ pub(crate) fn setup_sidecar(app: &mut tauri::App) -> Result<(), Box<dyn std::err
                         }
                         CommandEvent::Terminated(status) => {
                             println!("[info] sidecar terminated: {status:?}");
+                            terminated.store(true, std::sync::atomic::Ordering::SeqCst);
                             // Notify the frontend so it can surface a
                             // "backend exited" banner (event name is the
                             // consumer contract; payload is exit code/signal).
@@ -238,6 +257,76 @@ fn create_kill_on_close_job(pid: u32) -> isize {
 fn create_kill_on_close_job(_pid: u32) -> isize {
     // PaperLens targets Windows only; other platforms keep the direct-child kill path.
     0
+}
+
+/// Best-effort graceful shutdown: POST /api/shutdown with the boot token,
+/// then wait for the sidecar process to actually exit (HTTP 200 only means
+/// the exit *started*; lifespan cleanup can take seconds). Any failure
+/// (connect refused / non-200 / timeout) returns immediately so the caller
+/// falls back to the Job Object kill. Budget: connect 500ms + read 1.5s +
+/// exit-poll 5s worst case.
+pub(crate) fn try_graceful_shutdown(info: &BootInfo) {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    let Ok(mut stream) = TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], info.port)),
+        Duration::from_millis(500),
+    ) else {
+        println!("[info] graceful shutdown: backend not reachable, falling back");
+        return;
+    };
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
+    let req = format!(
+        "POST /api/shutdown HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Boot-Token: {token}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        port = info.port,
+        token = info.token,
+    );
+    if stream.write_all(req.as_bytes()).is_err() {
+        println!("[info] graceful shutdown: write failed, falling back");
+        return;
+    }
+    let _ = stream.flush();
+
+    // 读到响应头结束即可；解析状态行，非 200（403/503）不等待
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        match stream.read(&mut byte) {
+            Ok(0) => break,
+            Ok(_) => {
+                head.push(byte[0]);
+                if head.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+                if head.len() > 8192 {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    let head_str = String::from_utf8_lossy(&head);
+    if !head_str.starts_with("HTTP/1.1 200") && !head_str.starts_with("HTTP/1.0 200") {
+        println!("[info] graceful shutdown: non-200 response, falling back");
+        return;
+    }
+
+    // 等 sidecar 进程真正退出（lifespan 清理完成后 uvicorn 自行结束）
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if info.terminated.load(Ordering::SeqCst) {
+            println!("[info] graceful shutdown: backend exited cleanly");
+            // 稍候片刻让句柄释放，再由调用方做兜底清理
+            std::thread::sleep(Duration::from_millis(200));
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    println!("[warn] graceful shutdown: timed out waiting for backend exit, falling back");
 }
 
 /// Exit cleanup: kill the direct child, then close the Job Object handle so

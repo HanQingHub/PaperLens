@@ -12,8 +12,8 @@ export default function AppShell() {
     <div className="flex h-full overflow-hidden bg-bg text-text">
       <Sidebar />
       <main className="relative flex min-w-0 flex-1 flex-col">
-        {/* 顶栏 */}
-        <header className="glass sticky top-0 z-30 flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
+        {/* 顶栏（无边框：与侧栏竖线的 T 交角不对齐，按"删线"方案移除 border-b，glass 背景保留分层观感） */}
+        <header className="glass sticky top-0 z-30 flex h-11 shrink-0 items-center justify-between px-3">
           <div className="flex items-center gap-2 text-xs text-text-faint">
             <span className="font-serif text-sm font-semibold tracking-wide text-accent">PaperLens</span>
             <span className="opacity-40">·</span>

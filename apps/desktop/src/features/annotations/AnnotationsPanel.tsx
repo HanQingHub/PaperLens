@@ -159,7 +159,7 @@ export function AnnotationsPanel() {
         <>
           {/* 过滤器 */}
           <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3 py-2">
-            <select className="input w-auto py-0.5 text-[11.5px]" value={colorFilter} onChange={(e) => setColorFilter(e.target.value)}>
+            <select className="input w-auto! py-0.5 text-[11.5px]" value={colorFilter} onChange={(e) => setColorFilter(e.target.value)}>
               <option value="all">全部颜色</option>
               {Object.entries(COLOR_HEX).map(([k]) => (
                 <option key={k} value={k}>
@@ -167,7 +167,7 @@ export function AnnotationsPanel() {
                 </option>
               ))}
             </select>
-            <select className="input w-auto py-0.5 text-[11.5px]" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}>
+            <select className="input w-auto! py-0.5 text-[11.5px]" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}>
               <option value="all">全部类型</option>
               <option value="word_note">词句笔记</option>
               <option value="sentence">句子高亮</option>

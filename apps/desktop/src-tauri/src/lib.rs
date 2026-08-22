@@ -86,10 +86,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building PaperLens window")
         .run(|app_handle, event| {
-            // Two-step exit policy: the graceful HTTP shutdown step
-            // is skipped because the backend has no shutdown endpoint; closing
-            // the Job Object handle cascade-kills the whole sidecar tree.
+            // Two-step exit: try graceful HTTP shutdown first (DESIGN-004),
+            // then the Job Object kill as the backstop — closing the job
+            // handle cascade-kills whatever survived graceful shutdown.
             if let RunEvent::ExitRequested { .. } = event {
+                if let Some(info) = app_handle.try_state::<sidecar::BootInfo>() {
+                    sidecar::try_graceful_shutdown(&info);
+                }
                 sidecar::shutdown_sidecar(app_handle);
             }
         });

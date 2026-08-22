@@ -2,7 +2,7 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -60,6 +60,9 @@ async def lifespan(app: FastAPI):
 
     await app.state.ocr_manager.stop()
     await llm_service.stop()
+    # 收敛连接池：SQLite WAL/-shm 随连接关闭落盘合并（优雅退出验收项）
+    if db_mod.engine is not None:
+        db_mod.engine.dispose()
 
 
 app = FastAPI(title="PaperLens Server", version="1.0.0", lifespan=lifespan)
@@ -98,6 +101,33 @@ for router in (
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/api/shutdown")
+async def shutdown_endpoint(request: Request, x_boot_token: str = Header(default="")):
+    """壳层退出时的优雅关闭入口（DESIGN-004）。
+
+    鉴权：X-Boot-Token 必须与 sidecar 启动注入的 env 一致；仅绑 127.0.0.1。
+    返回 200 后延迟置 should_exit，让响应先落、lifespan 清理段后跑。
+    """
+    import asyncio
+    import hmac
+    import os
+
+    expected = os.environ.get("PAPERLENS_BOOT_TOKEN", "")
+    if not expected or not hmac.compare_digest(x_boot_token, expected):
+        raise HTTPException(status_code=403, detail="forbidden")
+    server = getattr(app.state, "uvicorn_server", None)
+    if server is None:
+        # dev 下 uvicorn CLI 直跑无实例引用；壳层会走强杀兜底
+        raise HTTPException(status_code=503, detail="server handle unavailable")
+
+    async def _delayed_exit():
+        await asyncio.sleep(0.2)
+        server.should_exit = True
+
+    asyncio.create_task(_delayed_exit())
+    return {"ok": True}
 
 
 _settings = get_settings()

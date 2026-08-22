@@ -29,10 +29,14 @@ def main() -> None:
 
     import uvicorn
 
-    from app.main import app  # 确保整个 app 包在 run 之前完成导入
+    from app.main import app  # 确保应用对象在 run 之前完成构造
 
     port = int(os.environ.get("PAPERLENS_PORT", "8737"))
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
+    server = uvicorn.Server(config)
+    # 暴露 Server 实例：POST /api/shutdown 经 should_exit 触发优雅退出
+    app.state.uvicorn_server = server
+    server.run()
 
 
 if __name__ == "__main__":

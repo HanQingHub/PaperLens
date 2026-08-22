@@ -282,7 +282,7 @@ export default function LibraryPage() {
             <path d="m20 20-3.5-3.5" />
           </svg>
           <input
-            className="input pl-7"
+            className="input pl-7!"
             placeholder="搜索标题 / 作者…"
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
@@ -305,7 +305,7 @@ export default function LibraryPage() {
         </div>
 
         <select
-          className="input w-auto py-1 text-[12.5px]"
+          className="input w-auto! py-1 text-[12.5px]"
           value={sort}
           onChange={(e) => setSort(e.target.value as typeof sort)}
           disabled={view === 'project'}
