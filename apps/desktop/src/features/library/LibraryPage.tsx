@@ -13,20 +13,23 @@ import { detectScanned } from './detectScanned'
 import { useLibraryDnd, type DndGroup } from './dnd/useLibraryDnd'
 import type { GroupKey } from './dnd/types'
 
-type ViewMode = 'all' | 'favorite' | 'recent' | 'project'
+type ViewMode = 'favorite' | 'recent' | 'project'
 
 const VIEW_TABS: { key: ViewMode; label: string }[] = [
   { key: 'recent', label: '最近打开' },
   { key: 'favorite', label: '收藏' },
-  { key: 'all', label: '全部' },
-  { key: 'project', label: '按项目' },
+  { key: 'project', label: '全部分类' },
 ]
 
 export default function LibraryPage() {
   const navigate = useNavigate()
   const [papers, setPapers] = useState<Paper[]>([])
   const [projects, setProjects] = useState<Project[]>([])
-  const [view, setView] = useState<ViewMode>('all')
+  const [view, setView] = useState<ViewMode>(() => {
+    const raw = localStorage.getItem('pl_view')
+    if (raw === 'all') return 'project'
+    return raw && ['recent', 'favorite', 'project'].includes(raw) ? (raw as ViewMode) : 'project'
+  })
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
   const [qInput, setQInput] = useState('')
   const [q, setQ] = useState('')
@@ -38,12 +41,48 @@ export default function LibraryPage() {
   const [deleting, setDeleting] = useState<Paper | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [ocrProgress, setOcrProgress] = useState<Record<number, OcrProgress>>({})
+  const [cols, setCols] = useState(4)
+  const [expanded, setExpanded] = useState<Set<GroupKey>>(new Set())
+  const contentRef = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
   // 首启动向导未完成 → 跳向导
   useEffect(() => {
     if (localStorage.getItem('pl_wizard_done') !== '1') navigate('/wizard', { replace: true })
   }, [navigate])
+
+  useEffect(() => {
+    localStorage.setItem('pl_view', view)
+  }, [view])
+
+  // 列数自适应（内容区宽度 → cols，供分组折叠切片）
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    let raf = 0
+    let lastCols = cols
+    const calc = (w: number) => Math.max(1, Math.floor((w + 12) / (230 + 12)))
+    const ro = new ResizeObserver((entries) => {
+      const w = Math.round(entries[0]?.contentRect.width ?? el.clientWidth)
+      const c = calc(w)
+      if (c !== lastCols) {
+        lastCols = c
+        cancelAnimationFrame(raf)
+        raf = requestAnimationFrame(() => setCols(c))
+      }
+    })
+    ro.observe(el)
+    const initW = Math.round(el.clientWidth)
+    if (initW) {
+      const c = calc(initW)
+      if (c !== cols) setCols(c)
+    }
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 搜索防抖
   useEffect(() => {
@@ -249,6 +288,20 @@ export default function LibraryPage() {
       />
     ))
 
+  const toggleExpanded = (key: GroupKey) => {
+    setExpanded((s) => {
+      const n = new Set(s)
+      if (n.has(key)) n.delete(key)
+      else n.add(key)
+      return n
+    })
+  }
+  const visibleItems = (items: Paper[], key: GroupKey) => {
+    if (q !== '' || selectedProjectId != null) return items
+    if (expanded.has(key) || items.length <= cols) return items
+    return items.slice(0, cols)
+  }
+
   const pd = dnd.pageDropProps()
 
   return (
@@ -355,7 +408,7 @@ export default function LibraryPage() {
           onFileDrop={dnd.railFileDrop}
         />
 
-        <div className="min-w-0 flex-1 overflow-y-auto">
+        <div ref={contentRef} className="min-w-0 flex-1 overflow-y-auto">
           {loading ? (
             <div className="flex h-full items-center justify-center">
               <div className="spinner spinner-lg" />
@@ -363,10 +416,12 @@ export default function LibraryPage() {
           ) : papers.length === 0 && view !== 'project' ? (
             <EmptyState hasQuery={!!q || selectedProjectId != null || view === 'favorite'} onUpload={() => fileInput.current?.click()} />
           ) : view === 'project' && selectedProjectId == null ? (
-            // 项目多组视图：分组恒渲染（含空项目 + 未分组，D2），分组 = drop target
+            // 项目多组视图：分组恒渲染（含空项目 + 未分组，D2），分组 = drop target；默认仅展示一行
             <div className="flex flex-col gap-5">
               {grouped.map((g) => {
                 const gp = dnd.groupDropProps(g.key)
+                const vis = visibleItems(g.items, g.key)
+                const collapsed = !expanded.has(g.key) && g.items.length > cols && q === ''
                 return (
                   <section
                     key={g.key ?? '__none'}
@@ -386,7 +441,14 @@ export default function LibraryPage() {
                     {g.items.length === 0 ? (
                       <p className="px-1 py-2 text-[11.5px] leading-5 text-text-faint">拖拽 PDF 或卡片到此分组</p>
                     ) : (
-                      <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">{cardList(g.items, g.key)}</div>
+                      <>
+                        <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">{cardList(vis, g.key)}</div>
+                        {g.items.length > cols && q === '' && (
+                          <button className="mt-2 text-xs text-accent hover:underline" onClick={() => toggleExpanded(g.key)}>
+                            {collapsed ? `展开其余 ${g.items.length - cols} 篇` : '收起'}
+                          </button>
+                        )}
+                      </>
                     )}
                   </section>
                 )

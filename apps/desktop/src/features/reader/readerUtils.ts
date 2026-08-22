@@ -78,7 +78,15 @@ export function extractSentenceContext(fullText: string, selText: string): {
   const after = flat.slice(idx + needle.length)
   const prevSentences = splitSentences(before)
   const nextSentences = splitSentences(after)
-  const startFrag = prevSentences.length ? prevSentences[prevSentences.length - 1] : ''
+  let startFrag = prevSentences.length ? prevSentences[prevSentences.length - 1] : ''
+  // 首句页头污染判定：before 无句边界时 startFrag 会吞入标题/作者/Abstract
+  if (prevSentences.length === 1 && before.length > 300 && startFrag.length > 200) {
+    startFrag = ''
+  } else if (startFrag.length > 240) {
+    const cut = startFrag.slice(-240)
+    const sp = cut.indexOf(' ')
+    startFrag = sp >= 0 ? cut.slice(sp + 1) : cut
+  }
   const endFrag = nextSentences.length ? nextSentences[0] : ''
   const sentence = `${startFrag} ${needle} ${endFrag}`.replace(/\s+/g, ' ').trim()
   const prev = prevSentences.length > 1 ? prevSentences[prevSentences.length - 2] : ''

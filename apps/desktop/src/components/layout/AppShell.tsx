@@ -21,8 +21,6 @@ export default function AppShell() {
         >
           <div className="flex items-center gap-2 text-xs text-text-faint">
             <span className="font-serif text-sm font-semibold tracking-wide text-accent">PaperLens</span>
-            <span className="opacity-40">·</span>
-            <span>论文精读 · 翻译 · 生词 · 批注</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-text-soft">{user?.display_name ?? user?.username}</span>

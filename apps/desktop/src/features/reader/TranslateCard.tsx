@@ -68,6 +68,9 @@ export default function TranslateCard({
 }) {
   const [pinned, setPinned] = useState(false)
   const [pos, setPos] = useState({ x: 0, y: 0, below: true })
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+  const dragOffset = useRef({ x: 0, y: 0 })
   const [hit, setHit] = useState<HitInfo | null>(null)
   const [streamText, setStreamText] = useState('')
   const [status, setStatus] = useState<CardStatus>('loading')
@@ -87,10 +90,35 @@ export default function TranslateCard({
   const stageMap = useWords((s) => s.stageMap)
   const bumpHighlight = useReader((s) => s.bumpHighlight)
 
-  // 位置跟随请求（钉住后不动）
+  // 位置跟随请求（钉住/拖动后不动）
   useEffect(() => {
-    if (request && !pinned) setPos({ x: request.x, y: request.y, below: request.below })
-  }, [request, pinned])
+    if (request && !pinned && !dragPos && !isDragging) {
+      setPos({ x: request.x, y: request.y, below: request.below })
+    } else if (request && !pinned && dragPos) {
+      // 新请求且未钉住但有拖动位置时，重置为新锚点
+      setDragPos(null)
+      setPos({ x: request.x, y: request.y, below: request.below })
+    }
+  }, [request, pinned, dragPos, isDragging])
+
+  // 拖动
+  useEffect(() => {
+    if (!isDragging) return
+    const onMove = (e: MouseEvent) => {
+      const x = e.clientX - dragOffset.current.x
+      const y = e.clientY - dragOffset.current.y
+      const clampedX = Math.min(Math.max(12, x), window.innerWidth - 330)
+      const clampedY = Math.min(Math.max(12, y), window.innerHeight - 100)
+      setDragPos({ x: clampedX, y: clampedY })
+    }
+    const onUp = () => setIsDragging(false)
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [isDragging])
 
   // ── 词翻译 SSE 请求（request.id 变化 / 重试时执行）──
   const runWordRequest = (req: NonNullable<TranslateRequest>) => {
@@ -171,7 +199,7 @@ export default function TranslateCard({
         })
         .catch(() => {
           setHit({ layer: 'dict' })
-          setStatus('done')
+          setStatus('error')
           setErrorDetail('词典未收录')
         })
       return
@@ -279,17 +307,30 @@ export default function TranslateCard({
     onToast('已收藏译法')
   }
 
-  const cardX = Math.min(Math.max(12, pos.x - 150), window.innerWidth - 330)
-  const cardY = pos.below ? pos.y : Math.max(60, pos.y - 40)
+  const cardX = dragPos ? dragPos.x : Math.min(Math.max(12, pos.x - 150), window.innerWidth - 330)
+  const cardY = dragPos ? dragPos.y : pos.below ? pos.y : Math.max(60, pos.y - 40)
 
   return (
     <div
-      className="fade-in fixed z-[45] flex max-h-[70vh] w-[320px] flex-col overflow-hidden rounded-lg border border-border-strong bg-panel text-[13px] shadow-[var(--shadow-2)]"
+      className={`fade-in fixed z-[45] flex max-h-[70vh] w-[320px] flex-col overflow-hidden rounded-lg border border-border-strong bg-panel text-[13px] shadow-[var(--shadow-2)] ${isDragging ? 'select-none' : ''}`}
       style={{ left: cardX, top: cardY }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      {/* 头部 */}
-      <div className="flex items-center gap-2 border-b border-border bg-panel-soft px-3 py-2">
+      {/* 头部（可拖动） */}
+      <div
+        className={`flex items-center gap-2 border-b border-border bg-panel-soft px-3 py-2 ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+        onMouseDown={(e) => {
+          if (e.button !== 0) return
+          const target = e.target as HTMLElement
+          if (target.closest('button')) return
+          e.preventDefault()
+          e.stopPropagation()
+          dragOffset.current = { x: e.clientX - cardX, y: e.clientY - cardY }
+          setIsDragging(true)
+          if (!pinned) setPinned(true)
+          if (!dragPos) setDragPos({ x: cardX, y: cardY })
+        }}
+      >
         <span className="font-serif text-sm font-semibold">{request.word}</span>
         {hit?.phonetic && <span className="text-[11px] text-text-faint">/{hit.phonetic}/</span>}
         {hit && (
@@ -356,9 +397,27 @@ export default function TranslateCard({
             <button
               className="btn px-2 py-0.5 text-[11px]"
               onClick={() => {
-                setStreamText('')
-                setErrorDetail('')
-                runWordRequest(request)
+                if (!request) return
+                if (request.mode === 'dict') {
+                  setHit(null)
+                  setStatus('loading')
+                  setErrorDetail('')
+                  api
+                    .dictionary(encodeURIComponent(request.word.trim().split(/\s+/)[0] ?? ''))
+                    .then((entry) => {
+                      setHit({ layer: 'dict', pos: entry.pos, phonetic: entry.phonetic, gloss: entry.translation })
+                      setStatus('done')
+                    })
+                    .catch(() => {
+                      setHit({ layer: 'dict' })
+                      setStatus('error')
+                      setErrorDetail('词典未收录')
+                    })
+                } else {
+                  setStreamText('')
+                  setErrorDetail('')
+                  runWordRequest(request)
+                }
               }}
             >
               重试

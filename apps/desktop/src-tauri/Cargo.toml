@@ -1,6 +1,6 @@
 [package]
 name = "paperlens-desktop"
-version = "0.4.3"
+version = "0.4.4"
 description = "PaperLens desktop shell (Tauri v2 thin shell)"
 authors = ["筝青寒"]
 edition = "2021"

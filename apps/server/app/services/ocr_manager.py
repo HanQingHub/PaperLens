@@ -7,6 +7,7 @@
 import asyncio
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -52,8 +53,22 @@ class OCRManager:
         }
         (d / "task.json").write_text(json.dumps(task, ensure_ascii=False), encoding="utf-8")
         self._set_status(paper_id, "pending", pages_total=pages_total, pages_done=len(done_pages))
-        self.spawn_worker()
         self.start_poll()
+        try:
+            self.spawn_worker()
+        except Exception:
+            logger.exception("OCR spawn_worker 失败 paper_id=%s", paper_id)
+
+    @staticmethod
+    def _strip_verbatim(p: Path) -> Path:
+        s = str(p)
+        if s.startswith("\\\\?\\"):
+            if s.startswith("\\\\?\\UNC\\"):
+                s = "\\\\" + s[8:]
+            else:
+                s = s[4:]
+            return Path(s)
+        return p
 
     def spawn_worker(self) -> None:
         import time
@@ -63,35 +78,38 @@ class OCRManager:
         if time.monotonic() - self._spawned_at < 5:
             return  # 防止 respawn 风暴
         self._spawned_at = time.monotonic()
+        try:
+            if getattr(sys, "frozen", False):
+                # 打包形态：拉起独立 paperlens-ocr.exe
+                candidates: list[Path] = []
+                env_exe = os.environ.get("PAPERLENS_OCR_EXE")
+                if env_exe:
+                    candidates.append(self._strip_verbatim(Path(env_exe)))
+                base = Path(sys.executable).resolve().parent
+                candidates += [
+                    base / "paperlens-ocr" / "paperlens-ocr.exe",
+                    base.parent / "paperlens-ocr" / "paperlens-ocr.exe",
+                    base / "paperlens-ocr.exe",
+                ]
+                exe = next((c for c in candidates if c.is_file()), None)
+                if exe is None:
+                    return  # OCR 组件未部署：任务保持 pending
+                self.worker_proc = subprocess.Popen(
+                    [str(exe), "--data-dir", str(self.settings.data_dir)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                return
 
-        if getattr(sys, "frozen", False):
-            # 打包形态：拉起独立 paperlens-ocr.exe
-            candidates: list[Path] = []
-            env_exe = os.environ.get("PAPERLENS_OCR_EXE")
-            if env_exe:
-                candidates.append(Path(env_exe))
-            base = Path(sys.executable).resolve().parent
-            candidates += [
-                base / "paperlens-ocr" / "paperlens-ocr.exe",
-                base.parent / "paperlens-ocr" / "paperlens-ocr.exe",
-                base / "paperlens-ocr.exe",
-            ]
-            exe = next((c for c in candidates if c.is_file()), None)
-            if exe is None:
-                return  # OCR 组件未部署：任务保持 pending
+            cwd = Path(__file__).resolve().parents[3] / "ocr-worker"
+            if not cwd.is_dir():
+                return  # worker 未实现：任务保持 pending
             self.worker_proc = subprocess.Popen(
-                [str(exe), "--data-dir", str(self.settings.data_dir)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                [sys.executable, "-m", "worker.run", "--data-dir", str(self.settings.data_dir)],
+                cwd=str(cwd), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-            return
-
-        cwd = Path(__file__).resolve().parents[3] / "ocr-worker"
-        if not cwd.is_dir():
-            return  # worker 未实现：任务保持 pending
-        self.worker_proc = subprocess.Popen(
-            [sys.executable, "-m", "worker.run", "--data-dir", str(self.settings.data_dir)],
-            cwd=str(cwd), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        except Exception:
+            logger.exception("OCR spawn_worker 异常")
+            raise
 
     def worker_alive(self) -> bool:
         return self.worker_proc is not None and self.worker_proc.poll() is None

@@ -1,7 +1,19 @@
 import sqlite3
 import threading
+from pathlib import Path
 
 from app.core.config import get_settings
+
+
+def _strip_verbatim(p: Path) -> Path:
+    s = str(p)
+    if s.startswith("\\\\?\\"):
+        if s.startswith("\\\\?\\UNC\\"):
+            s = "\\\\" + s[8:]
+        else:
+            s = s[4:]
+        return Path(s)
+    return p
 
 _lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
@@ -16,14 +28,19 @@ def _connect() -> sqlite3.Connection | None:
         return None
     _tried = True
     s = get_settings()
-    candidates = [s.ecdict_path]
-    if s.bundled_ecdict_path is not None and s.bundled_ecdict_path.resolve() != s.ecdict_path.resolve():
-        candidates.append(s.bundled_ecdict_path)
-    for path in candidates:
-        if not path.exists():
+    raw_candidates = [s.ecdict_path]
+    if s.bundled_ecdict_path is not None:
+        try:
+            if _strip_verbatim(s.bundled_ecdict_path).resolve() != _strip_verbatim(s.ecdict_path).resolve():
+                raw_candidates.append(s.bundled_ecdict_path)
+        except OSError:
+            raw_candidates.append(s.bundled_ecdict_path)
+    for path in raw_candidates:
+        np = _strip_verbatim(path)
+        if not np.exists():
             continue
         try:
-            _conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, check_same_thread=False)
+            _conn = sqlite3.connect(f"file:{np}?mode=ro", uri=True, check_same_thread=False)
             return _conn
         except sqlite3.Error:
             continue

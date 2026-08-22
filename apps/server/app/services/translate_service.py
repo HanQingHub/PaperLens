@@ -293,30 +293,39 @@ def _cache_put(
     db.commit()
 
 
-SYSTEM_PROMPT = "你是学术翻译助手。只输出规定内容，不要解释。"
+SYSTEM_PROMPT = "你是学术翻译助手。只输出规定内容，不要解释。上下文仅供理解，不要翻译或输出它们。"
 
 
 def word_prompt(paper: Paper, glossary: str, word: str, sentence: str, prev: str, nxt: str) -> str:
-    return f"""论文标题: {_cut_head(paper.title or "", TITLE_BUDGET_TOKENS) or "（无）"}
-本文术语表(节选): {glossary}
-当前句: {sentence or '（无）'}
-上文: {prev or '（无）'}
-下文: {nxt or '（无）'}
-
-解释单词 "{word}"，只输出两个分区：
-【基本义】该词的核心含义
-【文中意】结合上下文在本句中最贴切的中文译法（一句话）
-若上下文含公式或乱码，忽略噪声，按可辨识内容判断。"""
+    lines = [f"论文标题: {_cut_head(paper.title or '', TITLE_BUDGET_TOKENS) or '（无）'}"]
+    if glossary and glossary != "（无）":
+        lines.append(f"本文术语表(节选): {glossary}")
+    if sentence:
+        lines.append(f"当前句: {sentence}")
+    if prev:
+        lines.append(f"上文: {prev}")
+    if nxt:
+        lines.append(f"下文: {nxt}")
+    lines.append("")
+    lines.append(f'解释单词 "{word}"，只输出两个分区：')
+    lines.append("【基本义】该词的核心含义")
+    lines.append("【文中意】结合上下文在本句中最贴切的中文译法（一句话）")
+    lines.append("若上下文含公式或乱码，忽略噪声，按可辨识内容判断。")
+    return "\n".join(lines)
 
 
 def sentence_prompt(paper: Paper, glossary: str, text: str, prev: str, nxt: str) -> str:
-    return f"""论文标题: {_cut_head(paper.title or "", TITLE_BUDGET_TOKENS) or "（无）"}
-本文术语表(节选): {glossary}
-上文: {prev or '（无）'}
-下文: {nxt or '（无）'}
-
-将下面的英文翻译为中文，只输出译文，不要解释：
-{text}"""
+    lines = [f"论文标题: {_cut_head(paper.title or '', TITLE_BUDGET_TOKENS) or '（无）'}"]
+    if glossary and glossary != "（无）":
+        lines.append(f"本文术语表(节选): {glossary}")
+    if prev:
+        lines.append(f"上文: {prev}")
+    if nxt:
+        lines.append(f"下文: {nxt}")
+    lines.append("")
+    lines.append("将下面的英文翻译为中文，只输出译文，不要解释：")
+    lines.append(text)
+    return "\n".join(lines)
 
 
 WORD_FRAME_TOKENS = 120  # word 提示词固定文字 + word 本体（≤64 字符）缓冲
@@ -399,8 +408,8 @@ async def word_stream(db: Session, user_id: int, paper: Paper, body: dict, reque
         if not is_phrase:
             word_row = db.query(Word).filter(Word.user_id == user_id, Word.lemma == lemma).first()
 
-        # ① 个人词库（source=user 修正优先）
-        if word_row is not None:
+        # ① 个人词库（source=user 修正优先；FR-4 要求且带译法才短路）
+        if word_row is not None and word_row.translation:
             user_fix = glossary is not None and glossary.source == "user" and glossary.domain_translation
             translation = glossary.domain_translation if user_fix else word_row.translation
             hit = {"layer": "wordbook", "translation": translation or "", "stage": word_row.stage}
@@ -437,7 +446,7 @@ async def word_stream(db: Session, user_id: int, paper: Paper, body: dict, reque
 
         glossary_text = _glossary_hits_text(db, paper.id)
         title = _cut_head(paper.title or "", TITLE_BUDGET_TOKENS) or "（无）"
-        fixed = _fixed_tokens(glossary_text, title, WORD_FRAME_TOKENS)
+        fixed = _fixed_tokens(glossary_text if glossary_text != "（无）" else "", title, WORD_FRAME_TOKENS)
         sentence, prev, nxt = _budget_contexts(fixed=fixed, sentence=sentence, prev=prev, nxt=nxt)
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -485,7 +494,7 @@ async def sentence_stream(db: Session, user_id: int, paper: Paper, body: dict, r
     try:
         glossary_text = _glossary_hits_text(db, paper.id)
         title = _cut_head(paper.title or "", TITLE_BUDGET_TOKENS) or "（无）"
-        fixed = _fixed_tokens(glossary_text, title, SENT_FRAME_TOKENS)
+        fixed = _fixed_tokens(glossary_text if glossary_text != "（无）" else "", title, SENT_FRAME_TOKENS)
         rest = max(0, INPUT_BUDGET_TOKENS - fixed)
         if _est_tokens(text) > int(rest * 0.7):
             yield sse_event("error", {"code": "text_too_long", "detail": "文本过长，请分段选择后再翻译"})

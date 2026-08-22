@@ -96,19 +96,34 @@ pub(crate) fn setup_sidecar(app: &mut tauri::App) -> Result<(), Box<dyn std::err
     // (d) Point the backend at bundled read-only resources (install dir).
     // Resource dir layout mirrors `bundle.resources` in tauri.conf.json;
     // absent in dev mode, where scripts/dev.py provides the equivalents.
+    // Tauri v2 resource_dir() on Windows may return verbatim \\?\ paths
+    // (canonicalized); strip the prefix so consumers (SQLite URI, Popen)
+    // receive normal drive paths.
+    fn strip_verbatim(p: std::path::PathBuf) -> std::path::PathBuf {
+        let s = p.to_string_lossy();
+        if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+            std::path::PathBuf::from(format!(r"\\{}", rest))
+        } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+            std::path::PathBuf::from(rest)
+        } else {
+            p
+        }
+    }
     if let Ok(res_dir) = app.path().resource_dir() {
-        let models = res_dir.join("resources").join("models");
+        let models = strip_verbatim(res_dir.join("resources").join("models"));
         if models.is_dir() {
             command = command.env("PAPERLENS_MODELS_DIR", models);
         }
-        let ecdict = res_dir.join("resources").join("ecdict.db");
+        let ecdict = strip_verbatim(res_dir.join("resources").join("ecdict.db"));
         if ecdict.is_file() {
             command = command.env("PAPERLENS_ECDICT_PATH", ecdict);
         }
-        let ocr = res_dir
-            .join("resources")
-            .join("paperlens-ocr")
-            .join("paperlens-ocr.exe");
+        let ocr = strip_verbatim(
+            res_dir
+                .join("resources")
+                .join("paperlens-ocr")
+                .join("paperlens-ocr.exe"),
+        );
         if ocr.is_file() {
             command = command.env("PAPERLENS_OCR_EXE", ocr);
         }
