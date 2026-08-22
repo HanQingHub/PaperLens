@@ -5,6 +5,7 @@ import { useRef, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useUi } from '../../stores/ui'
 import { useUpdater } from '../../stores/updater'
+import logoUrl from '../../assets/logo.png'
 
 function Icon({ path, size = 16 }: { path: string; size?: number }) {
   return (
@@ -32,11 +33,9 @@ function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => voi
 
   return (
     <>
-      {/* 品牌区 */}
+      {/* 品牌区（使用打包图标本体，替代旧手绘 P 色块） */}
       <div className="pl-side-brand">
-        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent text-[11px] font-bold text-white">
-          P
-        </div>
+        <img src={logoUrl} alt="" className="h-6 w-6 shrink-0 rounded-md object-contain" />
         <span className="pl-side-label truncate font-serif text-sm font-semibold tracking-wide">PaperLens</span>
       </div>
 
