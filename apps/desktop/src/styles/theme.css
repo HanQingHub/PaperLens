@@ -617,13 +617,13 @@ h1, h2, h3, h4, button, input, textarea, select {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: var(--accent);
-  border: 2px solid var(--panel);
-  box-shadow: var(--shadow-1);
+  /* 空心环：中心透明不遮单词（用户反馈实心+面板色描边挡字） */
+  background: transparent;
+  border: 1.5px solid var(--accent);
+  opacity: 0.9;
   pointer-events: auto;
   cursor: pointer;
   z-index: 4;
-  transition: transform var(--dur-1) var(--ease);
 }
 .anno-anchor:hover,
 .anno-anchor.flash {
