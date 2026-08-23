@@ -234,7 +234,7 @@ def test_word_too_long_rejected(client, tmp_path, fake_llm):
     token = register(client)
     paper = make_paper(client, token, tmp_path)
     events = sse_read(client, "/api/translate/word",
-                      {"paper_id": paper["id"], "word": "x" * 200, "sentence": "s"}, token)
+                      {"paper_id": paper["id"], "word": "x" * 300, "sentence": "s"}, token)
     assert [e["event"] for e in events] == ["error"]
     assert events[0]["data"]["code"] == "text_too_long"
     assert fake_llm.calls == []  # 未触发 LLM
