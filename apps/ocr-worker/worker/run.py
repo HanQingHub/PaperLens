@@ -182,6 +182,13 @@ def process_task(claimed: Path, data_dir: Path):
                     )
                     done.add(page_no)
                     log(f"  page {page_no}: {len(blocks)} blocks, {time.perf_counter() - t0:.1f}s")
+                    if (data_dir / "ocr" / ".paused").exists():
+                        try:
+                            claimed.rename(task_dir / "task.json")
+                        except OSError:
+                            pass
+                        log(f"paper_id={paper_id} 队列已暂停，释放任务")
+                        return
                     break
                 except Exception as e:
                     error = f"page {page_no} 第 {attempt} 次失败: {e}"
@@ -214,6 +221,15 @@ def main():
 
     idle_since = None
     while True:
+        if (data_dir / "ocr" / ".paused").exists():
+            if idle_since is None:
+                idle_since = time.time()
+                log(f"队列已暂停，等待恢复（{ocr_root}）")
+            if time.time() - idle_since >= IDLE_EXIT_S:
+                log("暂停中空闲超时，退出")
+                return
+            time.sleep(POLL_S)
+            continue
         task_json = find_task(ocr_root)
         if task_json is None:
             now = time.time()

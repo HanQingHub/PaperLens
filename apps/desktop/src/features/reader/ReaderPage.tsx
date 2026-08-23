@@ -996,7 +996,7 @@ function OcrBanner({
   onStart,
   onRetry,
 }: {
-  paper: { is_scanned: boolean }
+  paper: { is_scanned: boolean; id?: number }
   status: string
   progress: { done: number; total: number } | null
   error: string | null
@@ -1012,6 +1012,23 @@ function OcrBanner({
           <span className="text-text-soft">
             OCR 解析中{progress ? ` · ${progress.done}/${progress.total} 页` : '…'}
           </span>
+          {status === 'pending' && (paper as { id?: number }).id && (
+            <button
+              className="btn px-2 py-0.5 text-[11px]"
+              onClick={async () => {
+                const id = (paper as { id?: number }).id
+                if (!id) return
+                try {
+                  await api.cancelOcr(id)
+                  toast('已取消排队', 'ok')
+                } catch {
+                  toast('取消失败', 'error')
+                }
+              }}
+            >
+              取消
+            </button>
+          )}
         </>
       )}
       {status === 'failed' && (

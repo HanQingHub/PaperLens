@@ -28,6 +28,7 @@ class OCRManager:
         self._poll_task: asyncio.Task | None = None
         self._spawned_at = 0.0
         self._poll_failures = 0
+        self._paused = (self.settings.ocr_dir / ".paused").exists()
 
     # ---- 任务入队 ----
     def enqueue(self, paper_id: int, pdf_abs: Path, pages_total: int, pages_todo: list[int] | None = None) -> None:
@@ -54,10 +55,11 @@ class OCRManager:
         (d / "task.json").write_text(json.dumps(task, ensure_ascii=False), encoding="utf-8")
         self._set_status(paper_id, "pending", pages_total=pages_total, pages_done=len(done_pages))
         self.start_poll()
-        try:
-            self.spawn_worker()
-        except Exception:
-            logger.exception("OCR spawn_worker 失败 paper_id=%s", paper_id)
+        if not self._paused:
+            try:
+                self.spawn_worker()
+            except Exception:
+                logger.exception("OCR spawn_worker 失败 paper_id=%s", paper_id)
 
     @staticmethod
     def _strip_verbatim(p: Path) -> Path:
@@ -94,8 +96,13 @@ class OCRManager:
                 exe = next((c for c in candidates if c.is_file()), None)
                 if exe is None:
                     return  # OCR 组件未部署：任务保持 pending
+                log_file = str(self.settings.logs_dir / "ocr-worker.log")
+                try:
+                    self.settings.logs_dir.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    pass
                 self.worker_proc = subprocess.Popen(
-                    [str(exe), "--data-dir", str(self.settings.data_dir)],
+                    [str(exe), "--data-dir", str(self.settings.data_dir), "--log-file", log_file],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
                 return
@@ -103,8 +110,13 @@ class OCRManager:
             cwd = Path(__file__).resolve().parents[3] / "ocr-worker"
             if not cwd.is_dir():
                 return  # worker 未实现：任务保持 pending
+            log_file = str(self.settings.logs_dir / "ocr-worker.log")
+            try:
+                self.settings.logs_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
             self.worker_proc = subprocess.Popen(
-                [sys.executable, "-m", "worker.run", "--data-dir", str(self.settings.data_dir)],
+                [sys.executable, "-m", "worker.run", "--data-dir", str(self.settings.data_dir), "--log-file", log_file],
                 cwd=str(cwd), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
         except Exception:
@@ -113,6 +125,29 @@ class OCRManager:
 
     def worker_alive(self) -> bool:
         return self.worker_proc is not None and self.worker_proc.poll() is None
+
+    def is_paused(self) -> bool:
+        return self._paused
+
+    def pause_queue(self) -> None:
+        self._paused = True
+        try:
+            self.settings.ocr_dir.mkdir(parents=True, exist_ok=True)
+            (self.settings.ocr_dir / ".paused").write_text("paused", encoding="utf-8")
+        except Exception:
+            pass
+
+    def resume_queue(self) -> None:
+        self._paused = False
+        try:
+            (self.settings.ocr_dir / ".paused").unlink(missing_ok=True)
+        except Exception:
+            pass
+        self.start_poll()
+        try:
+            self.spawn_worker()
+        except Exception:
+            logger.exception("OCR resume spawn failed")
 
     # ---- 轮询 ----
     def start_poll(self) -> None:
@@ -199,8 +234,17 @@ class OCRManager:
                     paper = db.get(Paper, paper_id)
                     if paper is not None and paper.ocr_status == "none":
                         self._set_status(paper_id, "pending", pages_done=pages_done)
-                    if not self.worker_alive():
+                    if not self._paused and not self.worker_alive():
                         self.spawn_worker()
+                elif not task.exists() and not claimed.exists() and not result.exists():
+                    paper = db.get(Paper, paper_id)
+                    doc_tmp = db.get(OcrDoc, paper_id)
+                    total = (doc_tmp.pages_total if doc_tmp and doc_tmp.pages_total else None) or (paper.page_count if paper else None) or 0
+                    if paper and paper.ocr_status == "pending" and pages_done > 0 and pages_done == total and len(self._done_pages(d)) == pages_done:
+                        self._finalize_db(paper_id, "done", pages_done=pages_done, engine=None, error=None)
+                        for f in (task, claimed, result):
+                            f.unlink(missing_ok=True)
+                        tfidf_service.schedule(paper_id, loop)
             db.commit()
         finally:
             db.close()

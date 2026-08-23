@@ -13,7 +13,7 @@ def test_add_word_with_occurrence(client, tmp_path):
     assert body["lemma"] == "attention"  # 归一化
     assert body["stage"] == 0
     from app.core.db import SessionLocal
-    from app.models import Word, WordOccurrence
+    from app.models import WordOccurrence
 
     db = SessionLocal()
     try:

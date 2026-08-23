@@ -19,8 +19,8 @@ def test_group_lines_merge_adjacent_lines():
     boxes = [_box(0, 0, 100, 20), _box(0, 20, 100, 40)]
     blocks = group_lines(boxes, ["a", "b"], [0.8, 0.6])
     assert len(blocks) == 1
-    assert [l["text"] for l in blocks[0]] == ["a", "b"]
-    ycs = [l["yc"] for l in blocks[0]]
+    assert [line["text"] for line in blocks[0]] == ["a", "b"]
+    ycs = [line["yc"] for line in blocks[0]]
     assert ycs == sorted(ycs)
 
 

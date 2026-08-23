@@ -24,75 +24,7 @@ export function ocrPageText(blocks: OcrPageBlocks['blocks']): string {
   return blocks.map((b) => b.text).join('\n')
 }
 
-// ── 断句 ──────────────────────────────────────────────────
-const SENT_BOUNDARY = /[^.?!]*[.?!]+["')\]]?\s*/g
-/** 常见缩写：句号不当作断点（占位符保护，切完还原） */
-const ABBREV_RE = /\b(?:e\.g|i\.e|et al|Fig|Eq|Sec|Tab|Ref|etc|vs|No|Mr|Mrs|Dr|St|Prof|cf|pp|vol)\./gi
-const MAX_SENTENCE_CHARS = 400
-
-function chunkLong(s: string): string[] {
-  if (s.length <= MAX_SENTENCE_CHARS) return [s]
-  const words = s.split(/\s+/)
-  const chunks: string[] = []
-  let cur = ''
-  for (const w of words) {
-    if (cur && cur.length + w.length + 1 > MAX_SENTENCE_CHARS) {
-      chunks.push(cur)
-      cur = w
-    } else {
-      cur = cur ? `${cur} ${w}` : w
-    }
-  }
-  if (cur) chunks.push(cur)
-  return chunks
-}
-
-function splitSentences(text: string): string[] {
-  const guarded = text.replace(ABBREV_RE, (m) => m.replace(/\./g, '\uE000'))
-  const out: string[] = []
-  SENT_BOUNDARY.lastIndex = 0
-  let m: RegExpExecArray | null
-  let consumed = 0 // 最后成功匹配的末尾（exec 失败会把 lastIndex 重置为 0）
-  while ((m = SENT_BOUNDARY.exec(guarded)) !== null) {
-    const s = m[0].trim()
-    if (s) out.push(...chunkLong(s))
-    consumed = m.index + m[0].length
-  }
-  const rest = guarded.slice(consumed).trim()
-  if (rest) out.push(...chunkLong(rest))
-  return out.map((s) => s.replace(/\uE000/g, '.'))
-}
-
-/** 从全文提取选区所在句 + 前后各 1 句（词/句翻译上下文注入用） */
-export function extractSentenceContext(fullText: string, selText: string): {
-  sentence: string
-  prev: string
-  next: string
-} {
-  const needle = selText.replace(/\s+/g, ' ').trim()
-  if (!needle) return { sentence: selText, prev: '', next: '' }
-  const flat = fullText.replace(/\s+/g, ' ')
-  const idx = flat.indexOf(needle)
-  if (idx < 0) return { sentence: selText, prev: '', next: '' }
-  const before = flat.slice(0, idx)
-  const after = flat.slice(idx + needle.length)
-  const prevSentences = splitSentences(before)
-  const nextSentences = splitSentences(after)
-  let startFrag = prevSentences.length ? prevSentences[prevSentences.length - 1] : ''
-  // 首句页头污染判定：before 无句边界时 startFrag 会吞入标题/作者/Abstract
-  if (prevSentences.length === 1 && before.length > 300 && startFrag.length > 200) {
-    startFrag = ''
-  } else if (startFrag.length > 240) {
-    const cut = startFrag.slice(-240)
-    const sp = cut.indexOf(' ')
-    startFrag = sp >= 0 ? cut.slice(sp + 1) : cut
-  }
-  const endFrag = nextSentences.length ? nextSentences[0] : ''
-  const sentence = `${startFrag} ${needle} ${endFrag}`.replace(/\s+/g, ' ').trim()
-  const prev = prevSentences.length > 1 ? prevSentences[prevSentences.length - 2] : ''
-  const next = nextSentences.length > 1 ? nextSentences[1] : ''
-  return { sentence, prev, next }
-}
+export { splitSentences, extractSentenceContext } from './sentence'
 
 // ── 杂项 ──────────────────────────────────────────────────
 /** 复制附引用：作者 (年), p.N；作者缺失用标题前 20 字 */

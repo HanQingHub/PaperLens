@@ -55,8 +55,12 @@ class Settings:
     def backups_dir(self) -> Path:
         return self.data_dir / "backups"
 
+    @property
+    def logs_dir(self) -> Path:
+        return self.data_dir / "logs"
+
     def ensure_dirs(self) -> None:
-        for d in (self.data_dir, self.models_dir, self.files_dir, self.ocr_dir, self.backups_dir):
+        for d in (self.data_dir, self.models_dir, self.files_dir, self.ocr_dir, self.backups_dir, self.logs_dir):
             d.mkdir(parents=True, exist_ok=True)
 
 

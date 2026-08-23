@@ -13,7 +13,7 @@ from app.core.config import get_settings
 from app.core.db import get_db, write_lock
 from app.core.util import ensure_within, now_iso
 from app.models import (
-    Annotation, AppSetting, Excerpt, FileRef, GlossaryTerm, OcrDoc, Paper,
+    Annotation, Excerpt, FileRef, GlossaryTerm, OcrDoc, Paper,
     Project, ReadingProgress, ReadingSession, TranslationCache, User, WordOccurrence,
 )
 from app.api.deps import get_current_user, get_owned_paper

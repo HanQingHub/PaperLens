@@ -52,6 +52,7 @@ hiddenimports = [
     "alembic", "mako",
     # SQLAlchemy 2.0 依赖
     "greenlet",
+    "psutil",
 ]
 hiddenimports += collect_submodules("app")
 

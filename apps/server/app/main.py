@@ -46,6 +46,20 @@ def probe_port(port: int) -> bool:
 async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.ensure_dirs()
+    # 文件日志：打包态排障不再依赖隐藏控制台
+    try:
+        import logging.handlers
+        log_file = settings.logs_dir / "server.log"
+        handler = logging.handlers.RotatingFileHandler(
+            str(log_file), maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        for name in ("", "uvicorn.error", "uvicorn"):
+            lg = logging.getLogger(name)
+            if not any(isinstance(h, logging.handlers.RotatingFileHandler) and getattr(h, "baseFilename", None) == str(log_file) for h in lg.handlers):
+                lg.addHandler(handler)
+    except Exception:
+        pass
     init_engine(settings.db_path)
     if not settings.skip_migrate:
         run_migrations()

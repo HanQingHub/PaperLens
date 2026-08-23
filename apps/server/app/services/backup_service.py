@@ -93,7 +93,6 @@ def import_zip(zip_path: Path, data_dir: Path, session_factory) -> dict:
             db.add(new_user)
             db.flush()
             uid = new_user.id
-            old_uid = user_data["id"]
 
             # 文件与引用计数
             files_dir = get_settings().files_dir

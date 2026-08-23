@@ -8,7 +8,6 @@
 import asyncio
 import ctypes
 import os
-import subprocess
 import threading
 import time
 from datetime import timezone
@@ -60,13 +59,11 @@ class LLMTimeout(LLMError):
 
 def _physical_cores() -> int:
     try:
-        out = subprocess.run(
-            ["wmic", "cpu", "get", "NumberOfCores", "/value"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout
-        for line in out.splitlines():
-            if line.strip().startswith("NumberOfCores"):
-                return max(1, int(line.split("=")[1].strip()))
+        import psutil
+
+        n = psutil.cpu_count(logical=False)
+        if n:
+            return max(1, int(n))
     except Exception:
         pass
     return max(1, (os.cpu_count() or 4) // 2)

@@ -23,6 +23,7 @@ interface Props {
   onToggleFav: (p: Paper) => void
   onDelete: (p: Paper) => void
   onRetryOcr: (p: Paper) => void
+  onCancelOcr?: (p: Paper) => void
   /** 拖拽注入（useLibraryDnd.cardDragProps）；未传 = 不可拖拽 */
   dragProps?: CardDragProps
   isDragging?: boolean
@@ -61,7 +62,7 @@ function OcrBadge({ paper, progress }: { paper: Paper; progress: OcrProgress | n
 }
 
 export default function PaperCard({
-  paper, ocrProgress, onOpen, onEdit, onToggleFav, onDelete, onRetryOcr,
+  paper, ocrProgress, onOpen, onEdit, onToggleFav, onDelete, onRetryOcr, onCancelOcr,
   dragProps, isDragging, insertSide,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -154,6 +155,18 @@ export default function PaperCard({
           }}
         >
           重试 OCR
+        </button>
+      )}
+      {paper.ocr_status === 'pending' && onCancelOcr && (
+        <button
+          className="btn btn-ghost self-start px-2 py-0.5 text-[11px]"
+          style={{ color: 'var(--text-faint)' }}
+          onClick={(e) => {
+            e.stopPropagation()
+            onCancelOcr(paper)
+          }}
+        >
+          取消排队
         </button>
       )}
     </div>

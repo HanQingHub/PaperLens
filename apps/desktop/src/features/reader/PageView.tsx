@@ -153,14 +153,14 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
       }
     }, priority)
 
+    const cVisible = canvasRef.current
     return () => {
       cancelled = true
       handle.cancel()
       renderTask?.cancel()
       textLayer?.cancel()
       // 已绘制内容入 LRU，供回滚/重挂载即时显示
-      const c = canvasRef.current
-      if (c && paintedRef.current) stashPageBitmap(pageIndex, c)
+      if (cVisible && paintedRef.current) stashPageBitmap(pageIndex, cVisible)
     }
     // hiScale 为防抖提交值：缩放过程中本 effect 不会反复触发
   }, [pdf, pageIndex, hiScale, active, ocrMode])

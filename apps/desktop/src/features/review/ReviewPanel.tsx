@@ -59,7 +59,7 @@ export function ReviewPanel() {
     return () => {
       cancelled = true
     }
-  }, [current?.id])
+  }, [current])
 
   const answer = async (q: 2 | 3 | 5) => {
     if (!current || reviewing) return

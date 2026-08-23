@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master, main]
   pull_request:
   workflow_dispatch:
 
@@ -48,4 +48,21 @@ jobs:
       - name: npm run build
         shell: pwsh
         run: npm run build
+        working-directory: apps/desktop
+
+  lint:
+    name: ruff + eslint
+    runs-on: [self-hosted, windows, x64, paperlens]
+    steps:
+      - uses: actions/checkout@v4
+      - name: ruff check
+        shell: pwsh
+        run: |
+          $pyS = "D:\paperlens-ci\server\.venv\Scripts\python.exe"
+          $pyW = "D:\paperlens-ci\ocr-worker\.venv\Scripts\python.exe"
+          if (Test-Path $pyS) { & $pyS -m pip install -q ruff==0.6.9; & $pyS -m ruff check apps/server 2>&1 | Out-String | Write-Host; if ($LASTEXITCODE -ne 0) { throw "ruff failed" } } else { Write-Host "server venv 缺失，跳过 ruff" -ForegroundColor Yellow }
+          if (Test-Path $pyW) { & $pyW -m pip install -q ruff==0.6.9; & $pyW -m ruff check apps/ocr-worker 2>&1 | Out-String | Write-Host; if ($LASTEXITCODE -ne 0) { throw "ruff failed" } } else { Write-Host "ocr-worker venv 缺失，跳过 ruff" -ForegroundColor Yellow }
+      - name: eslint
+        shell: pwsh
+        run: npm run lint
         working-directory: apps/desktop

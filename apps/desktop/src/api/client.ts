@@ -137,6 +137,9 @@ export const api = {
   retryOcr: (paperId: number) => request<OcrStatus>(`/papers/${paperId}/ocr/retry`, { method: 'POST' }),
   ocrStatus: (paperId: number) => request<OcrStatus>(`/papers/${paperId}/ocr-status`),
   ocrResult: (paperId: number) => request<OcrPageBlocks[]>(`/papers/${paperId}/ocr-result`),
+  ocrQueue: () => request<{ paused: boolean; pending: number }>('/ocr/queue'),
+  ocrQueuePause: (paused: boolean) => request<{ paused: boolean }>('/ocr/queue/pause', { method: 'POST', body: JSON.stringify({ paused }) }),
+  cancelOcr: (paperId: number) => request<{ status: string }>(`/papers/${paperId}/ocr/cancel`, { method: 'POST' }),
 
   // ── 阅读与统计 ──
   readingProgress: (paperId: number) => request<ReadingProgress | null>(`/reading-progress/${paperId}`),

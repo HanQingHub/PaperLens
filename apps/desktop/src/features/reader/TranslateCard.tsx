@@ -120,6 +120,30 @@ export default function TranslateCard({
     }
   }, [isDragging])
 
+  const [llmHint, setLlmHint] = useState('')
+  useEffect(() => {
+    if (status !== 'loading' || !request || request.mode === 'dict') {
+      setLlmHint('')
+      return
+    }
+    let cancelled = false
+    let elapsed = 0
+    const tick = async () => {
+      try {
+        const st = await api.llmStatus()
+        if (cancelled) return
+        if (st.state === 'loading') setLlmHint(`模型加载中…（已等待 ${elapsed}s）`)
+        else if (st.state === 'unloaded' && elapsed > 5) setLlmHint('模型未加载，将自动加载…')
+        else setLlmHint('')
+      } catch {
+        /* 静默 */
+      }
+    }
+    tick()
+    const t = setInterval(() => { elapsed += 2; tick() }, 2000)
+    return () => { cancelled = true; clearInterval(t); setLlmHint('') }
+  }, [status, request])
+
   // ── 词翻译 SSE 请求（request.id 变化 / 重试时执行）──
   const runWordRequest = (req: NonNullable<TranslateRequest>) => {
     abortRef.current?.abort()
@@ -312,8 +336,12 @@ export default function TranslateCard({
 
   return (
     <div
-      className={`fade-in fixed z-[45] flex max-h-[70vh] w-[320px] flex-col overflow-hidden rounded-lg border border-border-strong bg-panel text-[13px] shadow-[var(--shadow-2)] ${isDragging ? 'select-none' : ''}`}
-      style={{ left: cardX, top: cardY }}
+      className={`fade-in fixed z-[45] flex max-h-[70vh] w-[320px] flex-col overflow-hidden rounded-lg border border-border-strong bg-panel text-[13px] shadow-[var(--shadow-2)] ${pinned ? 'ring-1 ring-accent/30 shadow-md' : ''} ${isDragging ? 'select-none' : ''}`}
+      style={{
+        left: cardX,
+        top: cardY,
+        transition: !pinned && !isDragging && !dragPos ? 'left 120ms ease, top 120ms ease' : 'none',
+      }}
       onMouseDown={(e) => e.stopPropagation()}
     >
       {/* 头部（可拖动） */}
@@ -332,6 +360,7 @@ export default function TranslateCard({
         }}
       >
         <span className="font-serif text-sm font-semibold">{request.word}</span>
+        {pinned && <span className="ml-1 text-[10px] text-accent">已钉住</span>}
         {hit?.phonetic && <span className="text-[11px] text-text-faint">/{hit.phonetic}/</span>}
         {hit && (
           <span className={`badge ${hit.layer === 'glossary' ? 'badge-accent' : ''}`}>
@@ -385,7 +414,7 @@ export default function TranslateCard({
             {status === 'loading' && !streamText && (
               <span className="flex items-center gap-1.5 text-text-faint">
                 <span className="h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-                正在查询…
+                {llmHint || '正在查询…'}
               </span>
             )}
           </div>

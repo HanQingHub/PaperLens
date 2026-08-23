@@ -41,6 +41,7 @@ export default function LibraryPage() {
   const [deleting, setDeleting] = useState<Paper | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [ocrProgress, setOcrProgress] = useState<Record<number, OcrProgress>>({})
+  const [queuePaused, setQueuePaused] = useState(false)
   const [cols, setCols] = useState(4)
   const [expanded, setExpanded] = useState<Set<GroupKey>>(new Set())
   const contentRef = useRef<HTMLDivElement>(null)
@@ -270,6 +271,33 @@ export default function LibraryPage() {
     }
   }
 
+  const cancelOcr = async (p: Paper) => {
+    try {
+      await api.cancelOcr(p.id)
+      toast('已取消排队', 'ok')
+      refreshPapers()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '取消失败', 'error')
+    }
+  }
+
+  useEffect(() => {
+    const hasQueue = papers.some((p) => p.ocr_status === 'pending' || p.ocr_status === 'running')
+    if (!hasQueue) return
+    let cancelled = false
+    const tick = async () => {
+      try {
+        const q = await api.ocrQueue()
+        if (!cancelled) setQueuePaused(q.paused)
+      } catch {
+        /* 静默 */
+      }
+    }
+    tick()
+    const t = setInterval(tick, 3000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [papers])
+
   /** groupKey 传入时（project 视图）卡片启用拖拽；其他视图纯展示 */
   const cardList = (list: Paper[], groupKey?: GroupKey) =>
     list.map((p) => (
@@ -282,6 +310,7 @@ export default function LibraryPage() {
         onToggleFav={toggleFav}
         onDelete={setDeleting}
         onRetryOcr={retryOcr}
+        onCancelOcr={cancelOcr}
         dragProps={groupKey !== undefined ? dnd.cardDragProps(p.id, groupKey) : undefined}
         isDragging={dnd.draggingId === p.id}
         insertSide={dnd.insertMark?.id === p.id ? dnd.insertMark.side : null}
@@ -378,6 +407,22 @@ export default function LibraryPage() {
                 ✕
               </button>
             </span>
+          )}
+          {papers.some((p) => p.ocr_status === 'pending' || p.ocr_status === 'running') && (
+            <button
+              className="btn btn-ghost px-2 py-1 text-xs"
+              onClick={async () => {
+                try {
+                  const r = await api.ocrQueuePause(!queuePaused)
+                  setQueuePaused(r.paused)
+                  toast(r.paused ? '队列已暂停' : '队列已恢复', 'ok')
+                } catch {
+                  toast('操作失败', 'error')
+                }
+              }}
+            >
+              {queuePaused ? '▶ 恢复队列' : '⏸ 暂停队列'}
+            </button>
           )}
           <input
             ref={fileInput}

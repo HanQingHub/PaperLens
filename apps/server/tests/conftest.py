@@ -33,7 +33,7 @@ def _patched_httpx_init(self, *args, app=None, **kwargs):
 
 httpx.Client.__init__ = _patched_httpx_init
 
-from pdfgen import make_pdf_bytes
+from pdfgen import make_pdf_bytes  # noqa: E402
 
 
 def make_mini_ecdict(path):

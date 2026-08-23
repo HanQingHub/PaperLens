@@ -56,7 +56,7 @@ def test_stats_words_new_7d(client):
 
 def test_stats_review_done_and_due(client, tmp_path):
     token = register(client)
-    paper = upload_pdf(client, token, tmp_path)
+    upload_pdf(client, token, tmp_path)
     for lemma in ("aaa", "bbb"):
         client.post("/api/words", json={"lemma": lemma, "translation": "t"}, headers=auth(token))
     r = client.get("/api/words", headers=auth(token))

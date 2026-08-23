@@ -19,6 +19,7 @@ dependencies = [
     "pypdf==6.16.1",
     "pypdfium2==5.13.0",
     "httpx==0.28.1",
+    "psutil==7.2.2",
 ]
 
 [project.optional-dependencies]
@@ -33,3 +34,10 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"

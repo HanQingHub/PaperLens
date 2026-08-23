@@ -9,7 +9,7 @@ import sys
 def run_smoke() -> int:
     import numpy as np
 
-    from worker import ndjson, ocr_engine, paragraph, run
+    from worker import ndjson, ocr_engine, run
 
     try:
         engine = ocr_engine.get_engine()

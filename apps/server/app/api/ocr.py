@@ -63,3 +63,42 @@ def ocr_result(paper_id: int, user: User = Depends(get_current_user), db: Sessio
         raise HTTPException(status_code=404, detail="OCR 结果不存在")
     return FileResponse(path, media_type="application/x-ndjson",
                         headers={"Content-Disposition": f'attachment; filename="ocr_{paper_id}.ndjson"'})
+
+
+@router.get("/ocr/queue")
+def ocr_queue(user: User = Depends(get_current_user)):
+    from app.main import app
+    settings = get_settings()
+    pending = 0
+    if settings.ocr_dir.exists():
+        for d in settings.ocr_dir.iterdir():
+            if d.is_dir() and d.name.isdigit() and (d / "task.json").exists():
+                pending += 1
+    return {"paused": app.state.ocr_manager.is_paused(), "pending": pending}
+
+
+@router.post("/ocr/queue/pause")
+def ocr_queue_pause(body: dict, user: User = Depends(get_current_user)):
+    from app.main import app
+    paused = bool(body.get("paused"))
+    if paused:
+        app.state.ocr_manager.pause_queue()
+    else:
+        app.state.ocr_manager.resume_queue()
+    return {"paused": app.state.ocr_manager.is_paused()}
+
+
+@router.post("/papers/{paper_id}/ocr/cancel", status_code=200)
+def cancel_ocr(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    paper = owned_paper(db, user, paper_id)
+    if paper.ocr_status != "pending":
+        raise HTTPException(status_code=409, detail="仅排队中的任务可取消")
+    from app.main import app
+    app.state.ocr_manager.cancel(paper_id)
+    paper.ocr_status = "none"
+    doc = db.get(OcrDoc, paper_id)
+    if doc:
+        doc.status = "none"
+        doc.error = None
+    db.commit()
+    return {"status": "none"}

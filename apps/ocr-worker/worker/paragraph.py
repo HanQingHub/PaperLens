@@ -17,7 +17,7 @@ def group_lines(boxes, txts, scores):
             {"bbox": (x0, y0, x1, y1), "text": txt, "conf": score,
              "yc": (y0 + y1) / 2.0, "h": max(y1 - y0, 1.0)}
         )
-    lines.sort(key=lambda l: l["yc"])
+    lines.sort(key=lambda line: line["yc"])
 
     blocks = []
     for line in lines:
@@ -51,18 +51,18 @@ def blocks_to_pdf(blocks_px, scale, page_h_pt):
     blocks = []
     for lines_px in blocks_px:
         lines = []
-        for l in lines_px:
+        for line in lines_px:
             lines.append(
-                {"bbox": to_pdf_bbox(l["bbox"], scale, page_h_pt),
-                 "text": l["text"], "conf": round(l["conf"], 4)}
+                {"bbox": to_pdf_bbox(line["bbox"], scale, page_h_pt),
+                 "text": line["text"], "conf": round(line["conf"], 4)}
             )
-        x0 = min(l["bbox"][0] for l in lines)
-        ya = min(l["bbox"][1] for l in lines)
-        x1 = max(l["bbox"][2] for l in lines)
-        yb = max(l["bbox"][3] for l in lines)
-        conf = sum(l["conf"] for l in lines) / len(lines)
+        x0 = min(line["bbox"][0] for line in lines)
+        ya = min(line["bbox"][1] for line in lines)
+        x1 = max(line["bbox"][2] for line in lines)
+        yb = max(line["bbox"][3] for line in lines)
+        conf = sum(line["conf"] for line in lines) / len(lines)
         blocks.append(
             {"bbox": [x0, ya, x1, yb], "conf": round(conf, 4),
-             "text": " ".join(l["text"] for l in lines), "lines": lines}
+             "text": " ".join(line["text"] for line in lines), "lines": lines}
         )
     return blocks

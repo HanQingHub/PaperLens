@@ -27,7 +27,7 @@ SENT_MAX_TOKENS = 500  # 句译输出上限（词卡 300 不够长句）
 INPUT_BUDGET_TOKENS = 1000  # 提示词总输入预算（N_CTX=4096，输出占 300，留足余量）
 TITLE_BUDGET_TOKENS = 30  # 论文标题预算
 GLOSSARY_BUDGET_TOKENS = 200  # 术语表（节选）预算
-WORD_MAX_CHARS = 64  # 单词/短语上限，超长视为误选长文本
+WORD_MAX_CHARS = 256  # 单词/短语上限，超长视为误选长文本
 
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 # 零宽/双向控制/软连字符：OCR 与 PDF 提取常见不可见噪声
@@ -328,7 +328,7 @@ def sentence_prompt(paper: Paper, glossary: str, text: str, prev: str, nxt: str)
     return "\n".join(lines)
 
 
-WORD_FRAME_TOKENS = 120  # word 提示词固定文字 + word 本体（≤64 字符）缓冲
+WORD_FRAME_TOKENS = 120  # word 提示词固定文字 + word 本体（≤256 字符）缓冲
 SENT_FRAME_TOKENS = 60  # sentence 提示词固定文字缓冲
 
 
