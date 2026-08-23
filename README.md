@@ -12,6 +12,12 @@
 - **阅读统计**：累计时长、打开次数、30 天热力图、复习完成率
 - **多账号**：本地注册登录，账号间数据完全隔离
 - **完全离线**：不依赖任何云服务，断网可用，数据不出本机
+<img width="2879" height="1799" alt="image" src="https://github.com/user-attachments/assets/e2f8216a-c2e6-4748-9b8d-cccf72370555" />
+<img width="2879" height="1772" alt="image" src="https://github.com/user-attachments/assets/2b3adef4-73be-4d37-9cef-b0cc3266fa77" />
+<img width="2878" height="1798" alt="image" src="https://github.com/user-attachments/assets/30c8cb98-c07d-4002-96e8-7dfa47d1e545" />
+<img width="2879" height="1799" alt="image" src="https://github.com/user-attachments/assets/4a1669aa-a09b-4fc1-b890-b366b669218c" />
+<img width="2879" height="1799" alt="image" src="https://github.com/user-attachments/assets/067d5917-1157-40ce-b4ac-7af1666e367b" />
+<img width="2879" height="1799" alt="image" src="https://github.com/user-attachments/assets/c888d005-5905-4a64-aa80-765f6e7fb9bd" />
 
 ## 系统要求
 
