@@ -23,6 +23,10 @@ from .paragraph import blocks_to_pdf, group_lines
 IDLE_EXIT_S = 60
 POLL_S = 2
 PAGE_RETRY = 3
+# 心跳新鲜阈值（秒）。与 server 侧 apps/server/app/services/ocr_manager.py 的
+# HEARTBEAT_STALE_S 保持同值：单 worker 串行认领，活心跳 claimed 目录同时最多
+# 一个；常规页耗时秒级~数十秒（含重试），900s 为其数量级上限的保守裕度。
+HEARTBEAT_STALE_S = 900
 
 _LOG_FILE = None
 
@@ -36,6 +40,13 @@ def log(msg):
                 f.write(line + "\n")
         except OSError:
             pass
+
+
+def touch_heartbeat(task_dir: Path) -> None:
+    try:
+        (task_dir / ".heartbeat").write_text(utc_now(), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def utc_now():
@@ -61,6 +72,14 @@ def find_task(ocr_root: Path):
         if not tj.is_file():
             claimed = d / "task.claimed.json"
             if claimed.is_file() and not (d / "result.json").is_file():
+                # 心跳新鲜的认领是其他 worker 实例的活任务，不得抢占回收
+                hb = d / ".heartbeat"
+                try:
+                    fresh = time.time() - hb.stat().st_mtime < HEARTBEAT_STALE_S
+                except OSError:
+                    fresh = False
+                if fresh:
+                    continue
                 try:
                     os.rename(claimed, tj)
                 except OSError:
@@ -110,6 +129,10 @@ def write_result(task_dir: Path, status, pages_done, error=None):
     (task_dir / "result.json").write_text(
         json.dumps(result, ensure_ascii=False), encoding="utf-8"
     )
+    try:
+        (task_dir / ".heartbeat").unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def ocr_page(engine, pdf, page_no, scale):
@@ -181,10 +204,12 @@ def process_task(claimed: Path, data_dir: Path):
                         ),
                     )
                     done.add(page_no)
+                    touch_heartbeat(task_dir)
                     log(f"  page {page_no}: {len(blocks)} blocks, {time.perf_counter() - t0:.1f}s")
                     if (data_dir / "ocr" / ".paused").exists():
                         try:
                             claimed.rename(task_dir / "task.json")
+                            (task_dir / ".heartbeat").unlink(missing_ok=True)
                         except OSError:
                             pass
                         log(f"paper_id={paper_id} 队列已暂停，释放任务")
@@ -247,6 +272,7 @@ def main():
             os.rename(task_json, claimed)
         except OSError:
             continue
+        touch_heartbeat(claimed.parent)
         try:
             process_task(claimed, data_dir)
         except Exception as e:

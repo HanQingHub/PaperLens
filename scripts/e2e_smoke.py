@@ -329,7 +329,7 @@ def run_tests(args, data_dir: Path) -> int:
             r = c.get(f"{base}/papers/{spid}/ocr-result", timeout=60)
             lines = [ln for ln in r.text.split("\n") if ln.strip()]
             first = json.loads(lines[0]) if lines else {}
-            blocks_n = sum(len(p.get("blocks", [])) for p in (json.loads(l) for l in lines))
+            blocks_n = sum(len(p.get("blocks", [])) for p in (json.loads(ln) for ln in lines))
             nd = data_dir / "ocr" / str(spid) / "blocks.ndjson"
             step("OCR 结果拉取", len(lines) == st.get("pages_total"), f"{len(lines)} 页 NDJSON, {blocks_n} 块, 文件保留={nd.exists()}")
             # OCR 后划词翻译（叠加层场景等价于普通划词）

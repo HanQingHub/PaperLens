@@ -23,7 +23,7 @@ def import_dictionary(dst: sqlite3.Connection, source_db: Path):
     cur = dst.execute(
         "SELECT word, pos, NULLIF(phonetic, ''), translation, collins, tag, exchange FROM src.stardict"
     )
-    total, batch = 0, []
+    total = 0
     t0 = time.perf_counter()
     while True:
         rows = cur.fetchmany(BATCH)

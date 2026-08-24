@@ -55,11 +55,13 @@ def api(url, token, proxy, data=None, method=None, headers=None, binary=None):
 def main():
     args = parse_args()
     if not TOKEN:
-        print('缺少环境变量 GITHUB_TOKEN'); sys.exit(1)
+        print('缺少环境变量 GITHUB_TOKEN')
+        sys.exit(1)
     tag = args.tag
     ver = tag.lstrip('v')
     if not re.fullmatch(r'v?\d+\.\d+\.\d+', tag):
-        print(f'tag 格式非法：{tag}，应为 v?\\d+.\\d+.\\d+'); sys.exit(1)
+        print(f'tag 格式非法：{tag}，应为 v?\\d+.\\d+.\\d+')
+        sys.exit(1)
 
     release_dir = args.release_dir
     if not os.path.isabs(release_dir):
@@ -76,7 +78,8 @@ def main():
             'body': args.notes, 'draft': False, 'prerelease': False,
         })
         if status not in (200, 201):
-            print('release create failed:', status, body[:300]); sys.exit(1)
+            print('release create failed:', status, body[:300])
+            sys.exit(1)
         rel = json.loads(body)
         print('release created:', rel['id'])
 

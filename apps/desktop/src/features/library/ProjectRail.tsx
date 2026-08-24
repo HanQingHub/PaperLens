@@ -27,9 +27,13 @@ export default function ProjectRail({ projects, activeProjectId, onSelect, onCha
   const dragIndex = useRef<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
 
+  const creatingBusy = useRef(false)
+
   const create = async () => {
     const name = newName.trim()
-    if (!name) return
+    // 忙标志幂等：Enter 触发的 await 窗口内 blur 再调 create() 不重复建
+    if (!name || creatingBusy.current) return
+    creatingBusy.current = true
     try {
       await api.createProject(name)
       setNewName('')
@@ -38,6 +42,8 @@ export default function ProjectRail({ projects, activeProjectId, onSelect, onCha
       toast('项目已创建', 'ok')
     } catch (e) {
       toast(e instanceof Error ? e.message : '创建失败', 'error')
+    } finally {
+      creatingBusy.current = false
     }
   }
 

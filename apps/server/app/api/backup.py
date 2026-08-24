@@ -1,7 +1,7 @@
 import shutil
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -24,15 +24,22 @@ def export(user: User = Depends(get_current_user), db: Session = Depends(get_db)
 
 
 @router.post("/import")
-def import_backup(zip_file: UploadFile, user: User = Depends(get_current_user)):
+def import_backup(
+    zip_file: UploadFile | None = File(None),
+    file: UploadFile | None = File(None),
+    user: User = Depends(get_current_user),
+):
+    upload = zip_file or file
+    if upload is None:
+        raise HTTPException(status_code=422, detail="缺少备份文件（字段 zip_file/file）")
     settings = get_settings()
     settings.ensure_dirs()
-    if not zip_file.filename or not zip_file.filename.lower().endswith(".zip"):
+    if not upload.filename or not upload.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="仅支持 zip 备份文件")
     tmp = settings.backups_dir / f".import-{uuid.uuid4().hex}.zip"
     try:
         with open(tmp, "wb") as out:
-            shutil.copyfileobj(zip_file.file, out)
+            shutil.copyfileobj(upload.file, out)
         with write_lock:
             report = backup_service.import_zip(tmp, settings.data_dir, db_mod.SessionLocal)
     except HTTPException:

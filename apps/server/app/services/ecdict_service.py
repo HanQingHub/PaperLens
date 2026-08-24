@@ -17,16 +17,14 @@ def _strip_verbatim(p: Path) -> Path:
 
 _lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
-_tried = False
+# _tried 仅保留供测试兼容，实际不再作为永久锁；_connect 每次 _conn is None 时重建
+_tried = False  # deprecated: 保留变量名避免旧代码 import 失败
 
 
 def _connect() -> sqlite3.Connection | None:
-    global _conn, _tried
+    global _conn
     if _conn is not None:
         return _conn
-    if _tried:
-        return None
-    _tried = True
     s = get_settings()
     raw_candidates = [s.ecdict_path]
     if s.bundled_ecdict_path is not None:
@@ -48,12 +46,16 @@ def _connect() -> sqlite3.Connection | None:
 
 
 def reset():
-    global _conn, _tried
+    global _conn
     with _lock:
         if _conn is not None:
-            _conn.close()
+            try:
+                _conn.close()
+            except Exception:
+                pass
         _conn = None
-        _tried = False
+        # 兼容旧测试：重置 _tried 供外部读取
+        globals()["_tried"] = False
 
 
 def lookup(word: str) -> dict | None:

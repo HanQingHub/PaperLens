@@ -57,6 +57,10 @@ class LLMTimeout(LLMError):
     pass
 
 
+class LLMInterrupted(LLMError):
+    """生成被 unload/stop 打断（区别于自然完成：调用方不得将半截结果入缓存）。"""
+
+
 def _physical_cores() -> int:
     try:
         import psutil
@@ -67,6 +71,17 @@ def _physical_cores() -> int:
     except Exception:
         pass
     return max(1, (os.cpu_count() or 4) // 2)
+
+
+def _strip_verbatim(p: Path) -> Path:
+    s = str(p)
+    if s.startswith("\\\\?\\"):
+        if s.startswith("\\\\?\\UNC\\"):
+            s = "\\\\" + s[8:]
+        else:
+            s = s[4:]
+        return Path(s)
+    return p
 
 
 def get_rss_mb() -> float | None:
@@ -150,16 +165,29 @@ class LLMService:
 
         s = get_settings()
         dirs = [s.models_dir]
-        if s.bundled_models_dir is not None and s.bundled_models_dir.resolve() != s.models_dir.resolve():
-            dirs.append(s.bundled_models_dir)
+        if s.bundled_models_dir is not None:
+            try:
+                a = _strip_verbatim(s.bundled_models_dir).resolve()
+                b = _strip_verbatim(s.models_dir).resolve()
+                if a != b:
+                    dirs.append(s.bundled_models_dir)
+            except OSError:
+                dirs.append(s.bundled_models_dir)
         return dirs
 
     def scan_models(self) -> list[dict]:
         found_files: dict[str, Path] = {}
         for d in self._models_dirs():
-            if d.exists():
-                for f in sorted(d.glob("*.gguf")):
-                    found_files.setdefault(f.stem.lower(), f)
+            nd = _strip_verbatim(d)
+            if not nd.exists():
+                continue
+            # 显式大小写不敏感 + 忽略 .gguf.part 残留（suffix 必须为 .gguf）
+            for f in sorted(nd.iterdir()):
+                if not f.is_file():
+                    continue
+                if f.suffix.lower() != ".gguf":
+                    continue
+                found_files.setdefault(f.stem.lower(), f)
         result = []
         for m in BUILTIN_MODELS:
             key = Path(m["file"]).stem.lower()
@@ -179,15 +207,33 @@ class LLMService:
         return result
 
     def resolve_model_path(self, model_id: str | None = None) -> tuple[str, Path] | None:
-        mid = (model_id or self.configured_model_id()).strip()
+        raw = (model_id or self.configured_model_id()).strip()
+        mid = raw.lower()
+        # 允许传入带 .gguf 后缀的文件名（前端直传）
+        if mid.endswith(".gguf"):
+            mid = Path(mid).stem.lower()
+            raw_stem = Path(raw).stem.lower()
+        else:
+            raw_stem = mid
         for models_dir in self._models_dirs():
-            if mid in _BUILTIN_BY_ID:
-                p = models_dir / _BUILTIN_BY_ID[mid]["file"]
+            nd = _strip_verbatim(models_dir)
+            # builtin 优先：按 id 匹配文件
+            if mid in _BUILTIN_BY_ID or raw_stem in _BUILTIN_BY_ID:
+                key = mid if mid in _BUILTIN_BY_ID else raw_stem
+                p = nd / _BUILTIN_BY_ID[key]["file"]
                 if p.exists():
-                    return (mid, p)
-            if models_dir.exists():
-                for f in models_dir.glob("*.gguf"):
-                    if f.stem.lower() == mid or f.name == mid:
+                    return (key, p)
+                # 大小写不敏感回退：遍历匹配 stem
+                if nd.exists():
+                    for f in nd.iterdir():
+                        if f.is_file() and f.suffix.lower() == ".gguf" and f.stem.lower() == Path(_BUILTIN_BY_ID[key]["file"]).stem.lower():
+                            return (key, f)
+            if nd.exists():
+                for f in nd.iterdir():
+                    if not f.is_file() or f.suffix.lower() != ".gguf":
+                        continue
+                    # 支持传入 stem 或含后缀的全名，大小写不敏感
+                    if f.stem.lower() == mid or f.stem.lower() == raw_stem or f.name.lower() == raw.lower():
                         return mid, f
         return None
 
@@ -289,17 +335,19 @@ class LLMService:
             if llm is None:
                 raise LLMLoadingTimeout("模型未就绪")
             self.last_used_at = now_iso()
-            it = llm.create_chat_completion(
-                messages=messages, stream=True, max_tokens=max_tokens,
-                temperature=0.3, top_p=0.8, top_k=20,
-            )
             fut: asyncio.Future | None = None
+            # 置位必须先于迭代器创建：unload_sync 依据 _generating 决定是否等待，
+            # 若置位晚于 create_chat_completion，卸载会在窗口期 close 掉仍被引用的原生实例
             self._stopping.clear()
             self._generating.set()
             try:
+                it = llm.create_chat_completion(
+                    messages=messages, stream=True, max_tokens=max_tokens,
+                    temperature=0.3, top_p=0.8, top_k=20,
+                )
                 while True:
                     if self._stopping.is_set():
-                        break
+                        raise LLMInterrupted("生成已被中断")
                     if fut is None:
                         fut = asyncio.ensure_future(asyncio.to_thread(_next_chunk, it))
                     chunk = await asyncio.shield(fut)

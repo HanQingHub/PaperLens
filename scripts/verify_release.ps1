@@ -20,7 +20,9 @@
 #>
 param(
   [string]$Version,
-  [string]$ReleaseDir = 'dist\release'
+  [string]$ReleaseDir = 'dist\release',
+  # 缺 minisign 时显式降级为存在性检查（默认缺工具即失败，签名是唯一信任锚）
+  [switch]$AllowDegraded
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -47,12 +49,32 @@ if (-not (Test-Path $sigPath) -or (Get-Item $sigPath).Length -le 0) {
   $fail += '.sig 缺失或为空'
 } else {
   Write-Host '    .sig 存在且非空'
-  $pubKey = 'scripts\keys\paperlens-updater.key.pub'
-  if ((Get-Command minisign -ErrorAction SilentlyContinue) -and (Test-Path $pubKey)) {
-    & minisign -Vm $update.FullName -P (Get-Content $pubKey -Raw) 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { $fail += 'minisign verify 失败' } else { Write-Host '    minisign verify OK' }
+  $pubEnvelope = 'scripts\keys\paperlens-updater.key.pub'
+  if (-not (Get-Command minisign -ErrorAction SilentlyContinue)) {
+    if ($AllowDegraded) {
+      Write-Host '    minisign 不可用，已按 -AllowDegraded 降级为存在性检查' -ForegroundColor Yellow
+    } else {
+      $fail += 'minisign 不可用，无法验证签名（安装 minisign，或显式传 -AllowDegraded 降级）'
+    }
+  } elseif (-not (Test-Path $pubEnvelope)) {
+    $fail += "公钥缺失：$pubEnvelope"
   } else {
-    Write-Host '    minisign 或公钥不可用，降级为存在性检查' -ForegroundColor Yellow
+    # tauri signer 的 .pub 是单行 base64 信封；stock minisign 只认传统两行
+    # 公钥文件（注释行 + key 行），先解信封写临时文件再交给 -p
+    $tmpPub = Join-Path ([System.IO.Path]::GetTempPath()) 'paperlens-verify.pub'
+    try {
+      $raw = (Get-Content $pubEnvelope -Raw).Trim()
+      [System.IO.File]::WriteAllText(
+        $tmpPub,
+        [System.Text.Encoding]::ASCII.GetString([Convert]::FromBase64String($raw))
+      )
+      & minisign -Vm $update.FullName -p $tmpPub 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) { $fail += 'minisign verify 失败' } else { Write-Host '    minisign verify OK' }
+    } catch {
+      $fail += "公钥信封解码失败：$_"
+    } finally {
+      Remove-Item $tmpPub -Force -ErrorAction SilentlyContinue
+    }
   }
 }
 

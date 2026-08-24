@@ -17,6 +17,10 @@ REPO = Path(SPECPATH).resolve().parent
 SERVER_DIR = REPO / "apps" / "server"
 VENV_SP = REPO / ".venv" / "Lib" / "site-packages"
 
+# ── 硬门禁：必须用 .venv 环境打包，否则系统 Python 无 llama_cpp 必致 ImportError ──
+assert ".venv" in sys.executable.lower(), f"必须用 .venv\\Scripts\\pyinstaller.exe 打包，当前 {sys.executable}"
+assert (VENV_SP / "llama_cpp" / "__init__.py").exists(), "llama_cpp 未安装于 .venv（pip install -r requirements）"
+
 # ---------------- binaries ----------------
 # llama_cpp 原生库（ggml/ggml-base/ggml-cpu/llama/mtmd 等）：
 # llama_cpp 通过 Path(__file__).parent/"lib" 定位 DLL，必须保持 llama_cpp/lib/ 相对布局

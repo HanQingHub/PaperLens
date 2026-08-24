@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.models import GlossaryTerm, Paper, TranslationCache, Word
 from app.services import ecdict_service
 from app.services.llm_service import (
-    LLMLoadingTimeout, LLMTimeout, llm_service,
+    LOAD_TIMEOUT, LLMLoadingTimeout, LLMInterrupted, LLMTimeout, llm_service,
 )
 
 PING_INTERVAL = 10.0  # 10s 无事件发 ping 心跳
@@ -349,6 +349,10 @@ def _budget_contexts(*, fixed: int, sentence: str, prev: str, nxt: str) -> tuple
 async def _stream_llm(request, messages: list[dict], max_tokens: int = 300) -> AsyncGenerator[tuple[str, str], None]:
     """驱动 LLM 流：yield (kind, text)；kind ∈ delta|ping；处理 ping 心跳、首 token
     超时与客户端断开（断开即终止生成，推理队列取下一任务）。"""
+    # 冷加载等待放在首 token 计时窗之外（ensure_loaded 失败显式抛出，
+    # 避免静默落入 chat_stream 内部二次等待）
+    if not await llm_service.ensure_loaded(LOAD_TIMEOUT):
+        raise LLMLoadingTimeout("模型加载超时或不可用")
     agen = llm_service.chat_stream(messages, max_tokens=max_tokens)
     started = time.monotonic()
     first = True
@@ -478,6 +482,9 @@ async def word_stream(db: Session, user_id: int, paper: Paper, body: dict, reque
         yield sse_event("done", {"engine": engine, "cached": False})
     except LLMLoadingTimeout as e:
         yield sse_event("error", {"code": "llm_loading_timeout", "detail": str(e)})
+    except LLMInterrupted as e:
+        # 中断（卸载/停止）的半截结果不得入缓存
+        yield sse_event("error", {"code": "interrupted", "detail": str(e)})
     except LLMTimeout as e:
         yield sse_event("error", {"code": "llm_timeout", "detail": str(e)})
     except Exception as e:  # noqa: BLE001
@@ -537,6 +544,9 @@ async def sentence_stream(db: Session, user_id: int, paper: Paper, body: dict, r
         yield sse_event("done", {"engine": engine, "cached": False})
     except LLMLoadingTimeout as e:
         yield sse_event("error", {"code": "llm_loading_timeout", "detail": str(e)})
+    except LLMInterrupted as e:
+        # 中断（卸载/停止）的半截结果不得入缓存
+        yield sse_event("error", {"code": "interrupted", "detail": str(e)})
     except LLMTimeout as e:
         yield sse_event("error", {"code": "llm_timeout", "detail": str(e)})
     except Exception as e:  # noqa: BLE001

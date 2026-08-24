@@ -110,6 +110,23 @@ def test_import_rejects_non_zip(client):
     assert r.status_code == 400
 
 
+def test_backup_import_accepts_file_field(client, tmp_path):
+    token = register(client, "alice2")
+    _, content = build_backup(client, token, tmp_path)
+    # 前端实际发送字段为 file
+    files = {"file": ("backup.zip", io.BytesIO(content), "application/zip")}
+    r = client.post("/api/backup/import", files=files, headers=auth(token))
+    assert r.status_code == 200, r.text
+
+
+def test_backup_import_uppercase_zip_ext(client, tmp_path):
+    token = register(client, "alice3")
+    _, content = build_backup(client, token, tmp_path)
+    files = {"file": ("BACKUP.ZIP", io.BytesIO(content), "application/zip")}
+    r = client.post("/api/backup/import", files=files, headers=auth(token))
+    assert r.status_code == 200, r.text
+
+
 def test_excerpts_crud_and_export(client, tmp_path):
     token = register(client)
     paper = upload_pdf(client, token, tmp_path)

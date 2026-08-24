@@ -165,6 +165,10 @@ class FakeLLM:
         self.error = error
         self.calls = []
 
+    async def ensure_loaded(self, timeout):
+        # 与真实 LLMService 接口对齐：_stream_llm 在计时前显式等待加载（B8）
+        return True
+
     async def chat_stream(self, messages, max_tokens=300):
         import asyncio
 

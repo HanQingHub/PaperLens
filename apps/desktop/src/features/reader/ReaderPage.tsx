@@ -9,8 +9,8 @@ import { parseAnnotation, useReader } from '../../stores/readerStore'
 import { useReaderBus } from '../../stores/readerBus'
 import { useWords } from '../../stores/words'
 import { useUi } from '../../stores/ui'
-import { clientRectsToPdf } from '../../shared/coords'
-import { RENDER_DEBOUNCE_MS, PROGRESS_SAVE_THROTTLE_MS, ZOOM_STEP_RATIO } from './constants'
+import { clientRectsInPage, clientRectsToPdf } from '../../shared/coords'
+import { RENDER_DEBOUNCE_MS, PROGRESS_SAVE_THROTTLE_MS, ZOOM_STEP_RATIO, mapOcrPollStatus } from './constants'
 import '../../lib/pdfjsSetup'
 import PageView from './PageView'
 import { clearPageBitmaps } from './renderScheduler'
@@ -261,18 +261,20 @@ export default function ReaderPage() {
         const st = await api.ocrStatus(pid)
         if (stop) return
         const r = useReader.getState()
-        if (st.status === 'done') {
+        // done/failed/none（取消后）与未知状态一律停止轮询，避免空转死循环
+        const dec = mapOcrPollStatus(st.status)
+        if (dec.ui === 'done') {
           await loadBlocks()
           return
         }
-        if (st.status === 'failed') {
+        if (dec.ui === 'failed') {
           r.setOcr('failed')
           r.setOcrProgress(null, st.error)
           return
         }
         // 仅在值变化时写 store：轮询每秒一次，无变化不触发界面重渲染
-        const next = st.status === 'running' ? ('running' as const) : ('pending' as const)
-        if (r.ocrStatus !== next) r.setOcr(next)
+        if (r.ocrStatus !== dec.ui) r.setOcr(dec.ui)
+        if (!dec.keepPolling) return
         const prev = r.ocrProgress
         if (!prev || prev.done !== st.pages_done || prev.total !== st.pages_total) {
           r.setOcrProgress({ done: st.pages_done, total: st.pages_total })
@@ -419,8 +421,10 @@ export default function ReaderPage() {
       if (!size) return
       const geom = { baseW: size.w, baseH: size.h, scale: cur.scale }
       const range = sel.getRangeAt(0)
-      const rects = clientRectsToPdf(range.getClientRects(), pageEl, geom)
-      const first = range.getClientRects()[0]
+      // 跨页选区：只换算基准页内的矩形，相邻页部分用本页原点换算必错位
+      const visibleRects = clientRectsInPage(range.getClientRects(), pageEl.getBoundingClientRect())
+      const rects = clientRectsToPdf(visibleRects, pageEl, geom)
+      const first = visibleRects[0]
       if (!first || !rects.length) return
       const blocks = cur.ocrBlocks.get(pageIndex)
       const fullText = blocks ? ocrPageText(blocks) : cur.pdf ? await ensurePageText(cur.pdf, pageIndex) : ''
@@ -1020,6 +1024,8 @@ function OcrBanner({
                 if (!id) return
                 try {
                   await api.cancelOcr(id)
+                  // 服务端已回 none：同步本地状态并停轮询（tick 白名单亦兜底）
+                  useReader.getState().setOcr('none')
                   toast('已取消排队', 'ok')
                 } catch {
                   toast('取消失败', 'error')

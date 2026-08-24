@@ -230,7 +230,10 @@ export default function TranslateCard({
     }
     runWordRequest(request)
     if (request.autoSentence) runSentence()
-    return () => abortRef.current?.abort()
+    return () => {
+      abortRef.current?.abort()
+      sentenceAbortRef.current?.abort()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request?.id])
 

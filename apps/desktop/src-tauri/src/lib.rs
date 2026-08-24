@@ -56,6 +56,13 @@ pub fn run() {
     });
 
     tauri::Builder::default()
+        // 单实例必须最先注册（插件约定）：二次启动聚焦既有窗口，
+        // 防止第二个实例抢占固定端口 8737 并并发写同一 SQLite 数据目录
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())

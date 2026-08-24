@@ -15,7 +15,7 @@
   脚本对更新包做 <200MB 体积断言，防止合并语义回归把 1.15GB 资源打进更新包。
 
 .PARAMETER Version
-  本次发布版本号（写入 tauri.conf.json）；省略则沿用当前版本。
+  本次发布版本号（仅校验 conf/package.json/Cargo.toml 三处一致，不代写）；省略则沿用当前版本。
 
 .PARAMETER Notes
   更新日志（写入 manifest notes）。
@@ -71,24 +71,11 @@ if ($Version -and ($conf.version -ne $Version -or $pkgVer -ne $Version -or $toml
   throw "发布红线：版本号三处不一致 conf=$($conf.version) pkg=$pkgVer toml=$tomlVer 期望=$Version"
 }
 
-# ── 1. 版本号（可选写入 tauri.conf.json，仅替换唯一的顶层 version 字段）──
+# ── 1. 版本号（仅校验三处一致、不代写；conf/package.json/Cargo.toml 需预先手工改齐）──
 if ($Version -and $Version -notmatch '^v?\d+\.\d+\.\d+$') {
   throw "版本号格式非法：$Version（应为 v?\d+.\d+.\d+）"
 }
-if ($Version -and $Version -ne $conf.version) {
-  $confBackup = "$confPath.bak"
-  Copy-Item $confPath $confBackup -Force
-  try {
-    (Get-Content $confPath -Raw) -replace '"version": "[^"]*"', "`"version`": `"$Version`"" |
-      Set-Content $confPath -Encoding utf8NoBOM
-    Remove-Item $confBackup -Force
-  } catch {
-    Copy-Item $confBackup $confPath -Force
-    throw "版本写入失败，已恢复原文件：$_"
-  }
-} else {
-  $Version = $conf.version
-}
+$Version = $conf.version
 Write-Host "==> 发布版本 v$Version"
 
 # ── 2. 测试闸门（构建前：apps/server + apps/ocr-worker 全量 pytest）──

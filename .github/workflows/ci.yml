@@ -1,5 +1,8 @@
 name: CI
 
+# ⚠️ 运行环境为自托管 runner：pull_request 触发会在本机执行 PR 中的代码。
+# 当前前提：仓库私有、可开 PR 者仅协作者；转公开前必须先改用审批触发
+# （workflow_dispatch / pull_request_target 审批流）并配置分支保护。
 on:
   push:
     branches: [master, main]
@@ -36,7 +39,7 @@ jobs:
           Pop-Location
 
   frontend-build:
-    name: frontend npm build
+    name: frontend build + vitest
     runs-on: [self-hosted, windows, x64, paperlens]
     steps:
       - uses: actions/checkout@v4
@@ -44,11 +47,24 @@ jobs:
         shell: pwsh
         run: npm ci
         working-directory: apps/desktop
-        # 注：若 runner 上 node_modules 已持久化（仅依赖变更后需重建），可注释掉本步
+        # 注：checkout 默认 clean 会清掉未跟踪的 node_modules，不能靠持久化跳过本步
+      - name: npm test (vitest)
+        shell: pwsh
+        run: npm test
+        working-directory: apps/desktop
       - name: npm run build
         shell: pwsh
         run: npm run build
         working-directory: apps/desktop
+
+  rust-check:
+    name: cargo check
+    runs-on: [self-hosted, windows, x64, paperlens]
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo check
+        shell: pwsh
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 
   lint:
     name: ruff + eslint
@@ -60,8 +76,10 @@ jobs:
         run: |
           $pyS = "D:\paperlens-ci\server\.venv\Scripts\python.exe"
           $pyW = "D:\paperlens-ci\ocr-worker\.venv\Scripts\python.exe"
-          if (Test-Path $pyS) { & $pyS -m pip install -q ruff==0.6.9; & $pyS -m ruff check apps/server 2>&1 | Out-String | Write-Host; if ($LASTEXITCODE -ne 0) { throw "ruff failed" } } else { Write-Host "server venv 缺失，跳过 ruff" -ForegroundColor Yellow }
-          if (Test-Path $pyW) { & $pyW -m pip install -q ruff==0.6.9; & $pyW -m ruff check apps/ocr-worker 2>&1 | Out-String | Write-Host; if ($LASTEXITCODE -ne 0) { throw "ruff failed" } } else { Write-Host "ocr-worker venv 缺失，跳过 ruff" -ForegroundColor Yellow }
+          if (-not (Test-Path $pyS)) { throw "server venv 缺失，lint 无法执行：$pyS" }
+          if (-not (Test-Path $pyW)) { throw "ocr-worker venv 缺失，lint 无法执行：$pyW" }
+          & $pyS -m pip install -q ruff==0.6.9; & $pyS -m ruff check apps/server 2>&1 | Out-String | Write-Host; if ($LASTEXITCODE -ne 0) { throw "ruff failed" }
+          & $pyW -m pip install -q ruff==0.6.9; & $pyW -m ruff check apps/ocr-worker 2>&1 | Out-String | Write-Host; if ($LASTEXITCODE -ne 0) { throw "ruff failed" }
       - name: eslint
         shell: pwsh
         run: npm run lint

@@ -30,6 +30,21 @@ export function clientRectsToPdf(
   return rects
 }
 
+/** 跨页选区过滤：只保留垂直中点落在页盒内的矩形（其余属于相邻页，
+ * 用基准页原点换算会得到错位坐标）。 */
+export function clientRectsInPage(
+  clientRects: ArrayLike<DOMRect>,
+  pageBox: { top: number; bottom: number },
+): DOMRect[] {
+  const out: DOMRect[] = []
+  for (let i = 0; i < clientRects.length; i++) {
+    const r = clientRects[i]
+    const cy = (r.top + r.bottom) / 2
+    if (cy >= pageBox.top && cy <= pageBox.bottom) out.push(r)
+  }
+  return out
+}
+
 /** PDF 用户空间矩形 → 页内 CSS 定位 */
 export function pdfRectToCss(rect: [number, number, number, number], geom: PageGeom) {
   const [x0, y0, x1, y1] = rect

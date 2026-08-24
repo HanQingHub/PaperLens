@@ -125,6 +125,9 @@ def test_llm_loading_timeout_error(client, tmp_path, monkeypatch):
         state = "unloaded"
         model_id = None
 
+        async def ensure_loaded(self, timeout):
+            return True
+
         async def chat_stream(self, messages, max_tokens=300):
             raise LLMLoadingTimeout("加载超时")
             yield  # pragma: no cover - 使其成为异步生成器
@@ -144,6 +147,9 @@ def test_llm_timeout_error(client, tmp_path, monkeypatch):
     class Broken:
         state = "ready"
         model_id = "x"
+
+        async def ensure_loaded(self, timeout):
+            return True
 
         async def chat_stream(self, messages, max_tokens=300):
             raise LLMTimeout("首 token 超时")
@@ -170,6 +176,9 @@ def test_first_token_deadline_raises_llm_timeout(client, tmp_path, monkeypatch):
         state = "ready"
         model_id = "slow"
 
+        async def ensure_loaded(self, timeout):
+            return True
+
         async def chat_stream(self, messages, max_tokens=300):
             await asyncio.sleep(0.4)
             yield {"type": "delta", "text": "late"}
@@ -191,6 +200,9 @@ def test_ping_keepalive(client, tmp_path, monkeypatch):
     class SlowFake:
         state = "ready"
         model_id = "slow"
+
+        async def ensure_loaded(self, timeout):
+            return True
 
         async def chat_stream(self, messages, max_tokens=300):
             yield {"type": "delta", "text": "a"}
@@ -421,3 +433,92 @@ def test_max_tokens_forwarded_word_vs_sentence(client, tmp_path, monkeypatch):
     sse_read(client, "/api/translate/sentence",
              {"paper_id": paper["id"], "text": "Hello world.", "prev": "", "next": ""}, token)
     assert seen == [300, 500]
+
+
+def test_llm_interrupted_not_cached(client, tmp_path, fake_llm):
+    """B9：中断（卸载/停止）的半截结果不得写入缓存，且以 interrupted 事件收尾。"""
+    from app.services.llm_service import LLMInterrupted
+
+    fake_llm.error = LLMInterrupted("生成已被中断")
+    token = register(client)
+    paper = make_paper(client, token, tmp_path)
+    events = sse_read(client, "/api/translate/word",
+                      {"paper_id": paper["id"], "word": "attention", "sentence": "the attention mechanism"},
+                      token)
+    kinds = [e["event"] for e in events]
+    assert "done" not in kinds
+    errs = [e for e in events if e["event"] == "error"]
+    assert len(errs) == 1 and errs[0]["data"]["code"] == "interrupted"
+
+    from app.core.db import SessionLocal
+    from app.models import TranslationCache
+
+    db = SessionLocal()
+    try:
+        assert db.query(TranslationCache).filter(TranslationCache.lemma == "attention").first() is None
+    finally:
+        db.close()
+
+
+def test_first_token_timer_starts_after_load(monkeypatch):
+    """B8：冷加载等待在首 token 计时窗之外。
+
+    ensure_loaded 耗时 0.25s + 首 delta 前 0.08s；阈值压到 0.15s——
+    修复前计时自 anext 起（0.33s > 阈值）必抛 LLMTimeout，修复后正常流出。
+    """
+    import asyncio
+
+    from app.services import translate_service as ts
+
+    class SlowLoadLLM:
+        state = "ready"
+        model_id = "fake-slow"
+
+        async def ensure_loaded(self, timeout):
+            await asyncio.sleep(0.25)
+            return True
+
+        async def chat_stream(self, messages, max_tokens=300):
+            await asyncio.sleep(0.08)
+            yield {"type": "delta", "text": "ok"}
+
+    monkeypatch.setattr(ts, "llm_service", SlowLoadLLM())
+    monkeypatch.setattr(ts, "FIRST_TOKEN_TIMEOUT", 0.15)
+
+    async def run():
+        out = []
+        async for kind, text in ts._stream_llm(None, [{"role": "user", "content": "hi"}]):
+            out.append((kind, text))
+        return out
+
+    out = asyncio.run(run())
+    assert ("delta", "ok") in out
+
+
+def test_stream_llm_load_failure_raises_timeout(monkeypatch):
+    """B8/R5：ensure_loaded 失败显式抛 LLMLoadingTimeout，不落入二次等待。"""
+    import asyncio
+
+    import pytest
+
+    from app.services import translate_service as ts
+    from app.services.llm_service import LLMLoadingTimeout
+
+    class NeverReadyLLM:
+        state = "unloaded"
+        model_id = None
+
+        async def ensure_loaded(self, timeout):
+            return False
+
+        async def chat_stream(self, messages, max_tokens=300):  # pragma: no cover
+            yield {"type": "delta", "text": "should not reach"}
+
+    monkeypatch.setattr(ts, "llm_service", NeverReadyLLM())
+
+    async def run():
+        async for _ in ts._stream_llm(None, [{"role": "user", "content": "hi"}]):
+            pass
+
+    with pytest.raises(LLMLoadingTimeout):
+        asyncio.run(run())

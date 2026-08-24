@@ -118,6 +118,8 @@ def main():
         ok = ok and nchars > 200 and has_zh
     pdf.close()
     print("验证" + ("通过（每页 >200 字符且含中文）" if ok else "未通过"))
+    # e2e_smoke 按退出码采信夹具：自检失败必须非零，坏夹具不得带病进入下游
+    sys.exit(0 if ok else 1)
 
 
 if __name__ == "__main__":

@@ -67,6 +67,13 @@ async def migrate_data_dir(payload: dict) -> dict:
                 _write_registry(str(dst))
             except Exception as e:
                 raise HTTPException(500, f"数据已复制到 {dst}，但注册表写入失败（未切换）: {e}")
+            # 词典连接指向旧库：迁移成功后重置，下次 lookup 重建（重启前亦可命中新目录的 bundled 回退）
+            try:
+                from app.services import ecdict_service
+
+                ecdict_service.reset()
+            except Exception:
+                pass
     finally:
         manager.start_poll()
     return {"ok": True, "path": str(dst), "restart_required": True}

@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -128,10 +128,16 @@ def status():
 
 
 @router.post("/import")
-async def import_model(gguf: UploadFile):
+async def import_model(
+    file: UploadFile | None = File(None),
+    gguf: UploadFile | None = File(None),
+):
+    upload = gguf or file
+    if upload is None:
+        raise HTTPException(status_code=422, detail="缺少 GGUF 文件（字段 gguf/file）")
     settings = get_settings()
     settings.ensure_dirs()
-    filename = gguf.filename or ""
+    filename = upload.filename or ""
     if not filename.lower().endswith(".gguf"):
         raise HTTPException(status_code=400, detail="仅支持 GGUF 文件")
     dest = settings.models_dir / Path(filename).name
@@ -139,7 +145,7 @@ async def import_model(gguf: UploadFile):
     try:
         with open(tmp, "wb") as out:
             while True:
-                chunk = await gguf.read(1 << 20)
+                chunk = await upload.read(1 << 20)
                 if not chunk:
                     break
                 out.write(chunk)

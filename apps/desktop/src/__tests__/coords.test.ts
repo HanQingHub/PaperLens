@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cardEdgeX,
+  clientRectsInPage,
   clientRectsToPdf,
   cssPointToPdf,
   linkPath,
@@ -71,6 +72,20 @@ describe('clientRectsToPdf', () => {
     const tiny = fakeRect({ left: 1100, top: 2160, right: 1100.5, bottom: 2160.5, width: 0.5, height: 0.5 })
     const el = { getBoundingClientRect: () => pageBox } as unknown as HTMLElement
     expect(clientRectsToPdf([tiny], el, geom)).toEqual([])
+  })
+
+  it('clientRectsInPage：跨页选区只保留基准页内的矩形（B3）', () => {
+    const inPage = fakeRect({ left: 1100, top: 2100, right: 1400, bottom: 2124, width: 300, height: 24 })
+    const nextPage = fakeRect({ left: 1100, top: 3584, right: 1400, bottom: 3608, width: 300, height: 24 })
+    const straddle = fakeRect({ left: 1100, top: 3570, right: 1400, bottom: 3600, width: 300, height: 30 }) // 中点在页外
+    const out = clientRectsInPage([inPage, nextPage, straddle], pageBox)
+    expect(out).toEqual([inPage])
+  })
+
+  it('clientRectsInPage：页内全部矩形保留', () => {
+    const a = fakeRect({ left: 1100, top: 2000, right: 1300, bottom: 2024, width: 200, height: 24 })
+    const b = fakeRect({ left: 1100, top: 3560, right: 1300, bottom: 3584, width: 200, height: 24 })
+    expect(clientRectsInPage([a, b], pageBox)).toEqual([a, b])
   })
 })
 

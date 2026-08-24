@@ -1,6 +1,6 @@
 [package]
 name = "paperlens-desktop"
-version = "0.4.5"
+version = "0.4.6"
 description = "PaperLens desktop shell (Tauri v2 thin shell)"
 authors = ["筝青寒"]
 edition = "2021"
@@ -23,6 +23,7 @@ filetime = "0.2"
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }

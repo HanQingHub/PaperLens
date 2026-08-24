@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from app.core.config import Settings
@@ -18,6 +19,11 @@ from app.core.util import now_iso
 from app.models import OcrDoc, Paper
 
 logger = logging.getLogger(__name__)
+
+# 心跳新鲜阈值（秒）：与 worker 侧 apps/ocr-worker/worker/run.py HEARTBEAT_STALE_S 同值。
+HEARTBEAT_STALE_S = 900
+# 任务协议文件全集：认领/完成/恢复各清理点统一引用，防止新增文件残留。
+_TASK_FILES = ("task.json", "task.claimed.json", "result.json", ".heartbeat")
 
 
 class OCRManager:
@@ -215,21 +221,54 @@ class OCRManager:
                         pages_done=max(pages_done, int(data.get("pages_done") or 0)),
                         engine=data.get("engine"), error=data.get("error"),
                     )
-                    for f in (task, claimed, result):
-                        f.unlink(missing_ok=True)
+                    for f in _TASK_FILES:
+                        (d / f).unlink(missing_ok=True)
                     if status == "done":
                         tfidf_service.schedule(paper_id, loop)
                 elif claimed.exists():
-                    self._set_status(paper_id, "running", pages_done=pages_done)
-                    if not self.worker_alive():
+                    # 有 .heartbeat 看心跳；无则回退 claimed.mtime（legacy 残留/
+                    # 认领后首跳前的极小窗口）。不可取 max：认领时刻恒新，
+                    # 会把长页推理中停跳的心跳误判为存活
+                    hb = d / ".heartbeat"
+                    try:
+                        activity = hb.stat().st_mtime
+                    except OSError:
+                        activity = claimed.stat().st_mtime
+                    stale = time.time() - activity > HEARTBEAT_STALE_S
+                    if self.worker_alive():
+                        if stale:
+                            # 不 stop_worker：该目录可能是前序崩溃遗留的孤儿 claimed，
+                            # 当前 worker 或正在健康处理其他任务；陈旧回收交给 worker
+                            # find_task 的回收逻辑接管（可能自动重做并救回）
+                            logger.warning(
+                                "OCR paper_id=%s 心跳超时（%.0fs 无进展），标记 failed",
+                                paper_id, time.time() - activity,
+                            )
+                            self._finalize_db(paper_id, "failed", pages_done=pages_done,
+                                               engine=None, error="OCR 心跳超时（疑似 worker 卡死）")
+                        else:
+                            self._set_status(paper_id, "running", pages_done=pages_done)
+                    elif self.worker_proc is not None:
+                        # 句柄存在且已退出：worker 明确崩溃，快速判死并清理
                         logger.warning(
                             "OCR worker 已退出但 paper_id=%s 任务仍被认领（claimed 无 result），标记 failed",
                             paper_id,
                         )
                         self._finalize_db(paper_id, "failed", pages_done=pages_done,
                                            engine=None, error="worker 进程异常退出")
-                        for f in (task, claimed, result):
-                            f.unlink(missing_ok=True)
+                        for f in _TASK_FILES:
+                            (d / f).unlink(missing_ok=True)
+                    elif stale:
+                        # server 重启后无句柄且心跳超时：确认无人处理中，判死并
+                        # 清理（否则残留 claimed 会让 retry 早退、任务无法重入队）
+                        logger.warning("OCR paper_id=%s 重启后无 worker 句柄且心跳超时，标记 failed", paper_id)
+                        self._finalize_db(paper_id, "failed", pages_done=pages_done,
+                                           engine=None, error="worker 心跳超时（服务重启后失联）")
+                        for f in _TASK_FILES:
+                            (d / f).unlink(missing_ok=True)
+                    else:
+                        # server 重启后无句柄但心跳新鲜：其他实例的活任务，保持 running
+                        self._set_status(paper_id, "running", pages_done=pages_done)
                 elif task.exists():
                     paper = db.get(Paper, paper_id)
                     if paper is not None and paper.ocr_status == "none":
@@ -242,8 +281,8 @@ class OCRManager:
                     total = (doc_tmp.pages_total if doc_tmp and doc_tmp.pages_total else None) or (paper.page_count if paper else None) or 0
                     if paper and paper.ocr_status == "pending" and pages_done > 0 and pages_done == total and len(self._done_pages(d)) == pages_done:
                         self._finalize_db(paper_id, "done", pages_done=pages_done, engine=None, error=None)
-                        for f in (task, claimed, result):
-                            f.unlink(missing_ok=True)
+                        for f in _TASK_FILES:
+                            (d / f).unlink(missing_ok=True)
                         tfidf_service.schedule(paper_id, loop)
             db.commit()
         finally:
@@ -313,7 +352,7 @@ class OCRManager:
                 d = self.settings.ocr_dir / str(paper.id)
                 if not d.exists():
                     d.mkdir(parents=True, exist_ok=True)
-                for f in ("task.json", "task.claimed.json", "result.json"):
+                for f in _TASK_FILES:
                     (d / f).unlink(missing_ok=True)
                 pdf = self.settings.files_dir / f"{paper.file_hash}.pdf"
                 self.enqueue(paper.id, pdf, paper.page_count or 1)

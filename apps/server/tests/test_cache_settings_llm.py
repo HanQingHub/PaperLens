@@ -1,4 +1,7 @@
+import pytest
+
 from conftest import auth, register, upload_pdf
+from app.services.llm_service import LLMInterrupted
 
 
 def test_cache_translate_clears_rows(client, tmp_path):
@@ -192,7 +195,9 @@ def test_unload_sync_waits_for_inflight_generation(monkeypatch):
         # 首个 chunk 仍在原生线程中 sleep(0.1)，_generating 未清，unload_sync 必须阻塞
         assert not done.is_set(), "unload_sync 不应在生成中提前返回"
         assert not fake.closed
-        await task
+        with pytest.raises(LLMInterrupted):
+            # B9：中断不再静默 break，而是抛 LLMInterrupted（半截结果不得入缓存）
+            await task
         t.join(timeout=5)
         assert done.is_set()
         assert fake.closed

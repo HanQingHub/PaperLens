@@ -202,6 +202,11 @@ export function DraftCard({
 
   const save = async () => {
     if (saving || !paperId) return
+    if (!text.trim()) {
+      // 空草稿失焦视同取消，不产生空批注
+      setLinking(null)
+      return
+    }
     setSaving(true)
     try {
       const raw = await createAnnotation(paperId, {
@@ -229,6 +234,8 @@ export function DraftCard({
         <button
           className="px-0.5 text-[11px] text-text-faint hover:text-danger"
           title="取消 (Esc)"
+          // mousedown 阶段阻止焦点转移：textarea 不失焦 → blur-save 不会抢先发出创建请求
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => setLinking(null)}
         >
           ✕

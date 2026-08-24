@@ -179,6 +179,17 @@ export default function SettingsPage() {
       await save({ llm_model_id: m.id })
       await api.llmLoad(m.id)
       toast(`正在加载 ${m.file}…`, 'ok')
+      // 轮询至非 loading 再显错，避免 toast 时序空窗
+      const deadline = Date.now() + 30000
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 800))
+        const s = await api.llmStatus().catch(() => null)
+        if (s && s.state !== 'loading') {
+          if (s.error) toast(`加载失败：${s.error.slice(0, 200)}`, 'error')
+          refreshLlm()
+          return
+        }
+      }
       refreshLlm()
     } catch (e) {
       toast(e instanceof Error ? e.message : '加载失败', 'error')
@@ -281,6 +292,12 @@ export default function SettingsPage() {
           <span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5 }} /> 加载中
         </span>
       )
+    if (llmStatus.error)
+      return (
+        <span className="badge" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} data-testid="llm-error-badge">
+          加载失败
+        </span>
+      )
     return <span className="badge">未加载</span>
   }
 
@@ -380,6 +397,11 @@ export default function SettingsPage() {
             <span className="text-[13px]">引擎状态</span>
             {statusBadge()}
           </div>
+          {llmStatus?.state === 'unloaded' && llmStatus.error && (
+            <div className="mb-3 rounded bg-danger/10 px-2.5 py-1.5 text-xs leading-4 text-danger" data-testid="llm-error">
+              加载失败：{llmStatus.error.slice(0, 300)}
+            </div>
+          )}
 
           <div className="flex flex-col gap-2.5">
             {models.length === 0 && <p className="py-2 text-xs text-text-faint">暂无模型，点击下方「导入 GGUF」或下载推荐模型。</p>}

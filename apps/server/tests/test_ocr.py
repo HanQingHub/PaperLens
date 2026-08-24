@@ -1,10 +1,22 @@
 import json
+import os
+import time
 
 from conftest import auth, register, upload_pdf
 
 
 def ocr_dir_for(data_dir, paper_id):
     return data_dir / "ocr" / str(paper_id)
+
+
+def write_stale_heartbeat(data_dir, paper_id):
+    """写入超出新鲜阈值的 .heartbeat（B14 协议：模拟失联/崩溃残留）。"""
+    from app.services.ocr_manager import HEARTBEAT_STALE_S
+
+    hb = ocr_dir_for(data_dir, paper_id) / ".heartbeat"
+    hb.write_text("hb", encoding="utf-8")
+    old = time.time() - (HEARTBEAT_STALE_S + 60)
+    os.utime(hb, (old, old))
 
 
 def append_page(data_dir, paper_id, page, blocks=None):
@@ -73,18 +85,86 @@ def test_ocr_done_via_mock_worker(client, tmp_path, data_dir):
     assert "OCR text" in r.text
 
 
-def test_ocr_worker_dead_marks_failed(client, tmp_path, data_dir):
+def test_claimed_stale_heartbeat_marks_failed(client, tmp_path, data_dir):
+    """B14：认领后心跳超时（无句柄场景）→ failed 并清理，保证 retry 可重入队。"""
     token = register(client)
     paper = upload_pdf(client, token, tmp_path, is_scanned=True)
     pid = paper["id"]
     d = ocr_dir_for(data_dir, pid)
     (d / "task.json").rename(d / "task.claimed.json")
+    write_stale_heartbeat(data_dir, pid)
     assert not get_manager().worker_alive()
     get_manager().poll_once()
     r = client.get(f"/api/papers/{pid}/ocr-status", headers=auth(token))
     body = r.json()
     assert body["status"] == "failed"
+    assert "心跳" in body["error"]
+    assert not (d / "task.claimed.json").exists()
+    assert not (d / ".heartbeat").exists()
+
+
+def test_alive_worker_stale_orphan_kept_for_recovery(client, tmp_path, data_dir):
+    """B14/R3：worker 活着但某目录心跳超时（孤儿 claimed）→ 判 failed 但
+    不清理不杀 worker——陈旧回收交给 worker find_task 接管。"""
+
+    class AliveProc:
+        def poll(self):
+            return None
+
+    token = register(client)
+    paper = upload_pdf(client, token, tmp_path, is_scanned=True)
+    pid = paper["id"]
+    d = ocr_dir_for(data_dir, pid)
+    (d / "task.json").rename(d / "task.claimed.json")
+    write_stale_heartbeat(data_dir, pid)
+    m = get_manager()
+    m.worker_proc = AliveProc()
+    try:
+        m.poll_once()
+    finally:
+        m.worker_proc = None
+    body = client.get(f"/api/papers/{pid}/ocr-status", headers=auth(token)).json()
+    assert body["status"] == "failed"
+    assert (d / "task.claimed.json").exists()  # 保留给 worker 陈旧回收
+
+
+def test_worker_proc_exited_fails_fast_and_cleans(client, tmp_path, data_dir):
+    """B14 分支③：句柄存在且已退出 → 快速判死并清理全部协议文件。"""
+
+    class DeadProc:
+        def poll(self):
+            return 1
+
+    token = register(client)
+    paper = upload_pdf(client, token, tmp_path, is_scanned=True)
+    pid = paper["id"]
+    d = ocr_dir_for(data_dir, pid)
+    (d / "task.json").rename(d / "task.claimed.json")
+    m = get_manager()
+    m.worker_proc = DeadProc()
+    try:
+        m.poll_once()
+    finally:
+        m.worker_proc = None
+    body = client.get(f"/api/papers/{pid}/ocr-status", headers=auth(token)).json()
+    assert body["status"] == "failed"
     assert "worker" in body["error"]
+    assert not (d / "task.claimed.json").exists()
+    assert not (d / ".heartbeat").exists()
+
+
+def test_restart_with_fresh_heartbeat_keeps_running(client, tmp_path, data_dir):
+    """B14③：server 重启后无句柄，但心跳新鲜（其他实例活任务）→ 不误杀。"""
+    token = register(client)
+    paper = upload_pdf(client, token, tmp_path, is_scanned=True)
+    pid = paper["id"]
+    d = ocr_dir_for(data_dir, pid)
+    (d / "task.json").rename(d / "task.claimed.json")
+    (d / ".heartbeat").write_text("hb", encoding="utf-8")  # 刚写的心跳
+    get_manager().poll_once()
+    body = client.get(f"/api/papers/{pid}/ocr-status", headers=auth(token)).json()
+    assert body["status"] == "running"
+    assert (d / "task.claimed.json").exists()
 
 
 def test_ocr_retry_skips_done_pages(client, tmp_path, data_dir):
@@ -93,7 +173,8 @@ def test_ocr_retry_skips_done_pages(client, tmp_path, data_dir):
     pid = paper["id"]
     d = ocr_dir_for(data_dir, pid)
     (d / "task.json").rename(d / "task.claimed.json")
-    get_manager().poll_once()  # 无 worker → failed
+    write_stale_heartbeat(data_dir, pid)
+    get_manager().poll_once()  # 无 worker 且心跳超时 → failed
     assert client.get(f"/api/papers/{pid}/ocr-status", headers=auth(token)).json()["status"] == "failed"
 
     append_page(data_dir, pid, 0)  # 第 0 页已有结果

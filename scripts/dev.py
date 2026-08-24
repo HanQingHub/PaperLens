@@ -16,6 +16,31 @@ REPO = Path(__file__).resolve().parent.parent
 PY = REPO / ".venv" / "Scripts" / "python.exe"
 
 
+def _stop_tree(procs, grace: float = 8.0):
+    """先给优雅退出窗口（uvicorn lifespan 收敛 WAL、vite 清理临时文件），
+    超时后 Windows 用 taskkill /T 整树强杀（terminate() 只杀直接子进程，
+    npm.cmd 包装层下的 node/vite 与 uvicorn 拉起的 OCR worker 会成孤儿）。"""
+    for _, p in procs:
+        if p.poll() is None:
+            p.terminate()
+    deadline = time.time() + grace
+    for _, p in procs:
+        try:
+            p.wait(timeout=max(0.1, deadline - time.time()))
+        except subprocess.TimeoutExpired:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(p.pid)],
+                    capture_output=True,
+                )
+            else:
+                p.kill()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -60,28 +85,27 @@ def main():
         else:
             print("[dev] apps/desktop/package.json 不存在，跳过前端")
 
+    dead = None
     try:
         while True:
             for name, p in procs:
                 rc = p.poll()
                 if rc is not None:
-                    raise SystemExit(f"[dev] {name} 已退出 (code={rc})")
+                    dead = (name, rc)
+                    break
+            if dead is not None:
+                break
             time.sleep(1)
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    except KeyboardInterrupt:
+        print("[dev] Ctrl+C，正在停止子进程…")
     finally:
-        print("[dev] 正在停止子进程…")
-        for name, p in procs:
-            if p.poll() is None:
-                p.terminate()
-        for name, p in procs:
-            try:
-                p.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                print(f"[dev] {name} 未响应 terminate，强制 kill (pid={p.pid})")
-                p.kill()
-                p.wait()
+        if dead is not None:
+            name, rc = dead
+            print(f"[dev] {name} 已退出 (code={rc})", file=sys.stderr)
+        _stop_tree(procs)
         print("[dev] 已全部退出")
+    # 子进程死亡必须以非零码退出（端口占用等失败对调用方可见），Ctrl+C 视为正常结束
+    sys.exit((dead[1] or 1) if dead is not None else 0)
 
 
 if __name__ == "__main__":
