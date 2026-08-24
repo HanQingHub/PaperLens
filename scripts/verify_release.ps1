@@ -59,21 +59,28 @@ if (-not (Test-Path $sigPath) -or (Get-Item $sigPath).Length -le 0) {
   } elseif (-not (Test-Path $pubEnvelope)) {
     $fail += "公钥缺失：$pubEnvelope"
   } else {
-    # tauri signer 的 .pub 是单行 base64 信封；stock minisign 只认传统两行
-    # 公钥文件（注释行 + key 行），先解信封写临时文件再交给 -p
+    # tauri signer 的 .pub 与 .sig 都是单行 base64 信封；stock minisign 只认
+    # 传统多行格式、且默认找 .minisig 后缀——双双解信封写临时文件，
+    # 用 -p（公钥）+ -x（签名）完成验证
     $tmpPub = Join-Path ([System.IO.Path]::GetTempPath()) 'paperlens-verify.pub'
+    $tmpSig = Join-Path ([System.IO.Path]::GetTempPath()) 'paperlens-verify.minisig'
     try {
-      $raw = (Get-Content $pubEnvelope -Raw).Trim()
+      $rawPub = (Get-Content $pubEnvelope -Raw).Trim()
       [System.IO.File]::WriteAllText(
         $tmpPub,
-        [System.Text.Encoding]::ASCII.GetString([Convert]::FromBase64String($raw))
+        [System.Text.Encoding]::ASCII.GetString([Convert]::FromBase64String($rawPub))
       )
-      & minisign -Vm $update.FullName -p $tmpPub 2>&1 | Out-Null
+      $rawSig = (Get-Content "$($update.FullName).sig" -Raw).Trim()
+      [System.IO.File]::WriteAllText(
+        $tmpSig,
+        [System.Text.Encoding]::ASCII.GetString([Convert]::FromBase64String($rawSig))
+      )
+      & minisign -Vm $update.FullName -p $tmpPub -x $tmpSig 2>&1 | Out-Null
       if ($LASTEXITCODE -ne 0) { $fail += 'minisign verify 失败' } else { Write-Host '    minisign verify OK' }
     } catch {
-      $fail += "公钥信封解码失败：$_"
+      $fail += "签名/公钥信封解码失败：$_"
     } finally {
-      Remove-Item $tmpPub -Force -ErrorAction SilentlyContinue
+      Remove-Item $tmpPub, $tmpSig -Force -ErrorAction SilentlyContinue
     }
   }
 }
