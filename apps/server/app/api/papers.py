@@ -105,22 +105,129 @@ def _extract_doi(text: str) -> str | None:
 
 
 def _title_from_text(text: str) -> str | None:
-    """无 Info Title 时的启发式：过滤噪声行（URL/邮箱/DOI/纯数字）后，
-    取顶部候选区最长行。authors 不做文本启发式——实测真实论文集上
-    摘要句混入率不可接受（宁缺勿错），作者以 Info 元数据/手动填写为准。"""
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    candidates: list[str] = []
-    for ln in lines:
-        if not (15 <= len(ln) <= 250):
-            continue
-        if _NOISE_LINE_RE.search(ln) or _DOI_LINE_RE.search(ln):
-            continue
-        if _NUMONLY_LINE_RE.fullmatch(ln):
-            continue
-        candidates.append(ln)
-        if len(candidates) >= 8:
-            break
-    return max(candidates[:8], key=len) if candidates else None
+    """已废弃的文本启发式保留说明：最长行法在真实论文集上大量误识别
+    （作者行/摘要句更长且 pypdfium2 为文本对象顺序），已被 _title_from_font 取代。"""
+    return None
+
+
+def _title_from_font(page) -> str | None:
+    """字体大小启发式：标题字号显著大于正文/作者行，几何信号与文本顺序无关。
+    raw API 取字符（get_text_range 逐字符存在索引错位陷阱，pypdfium2 文档明示）。"""
+    from pypdfium2.raw import FPDFText_GetFontSize, FPDFText_GetUnicode
+
+    tp = page.get_textpage()
+    try:
+        n = tp.count_chars()
+        if n < 8:
+            return None
+        chars = []  # (char, x0, x1, y_mid, size)
+        for i in range(n):
+            try:
+                uni = FPDFText_GetUnicode(tp.raw, i)
+                if not uni:
+                    continue
+                ch = chr(uni)
+                if ch.isspace():
+                    continue
+                size = FPDFText_GetFontSize(tp.raw, i)
+                x0, bottom, x1, top = tp.get_charbox(i)
+            except Exception:
+                continue
+            if size <= 0:
+                continue
+            chars.append((ch, x0, x1, (bottom + top) / 2, size))
+        if len(chars) < 8:
+            return None
+
+        # y 降序（页面顶部在前）聚类成行：相邻字符 y 间隙 ≤ 较小字号×0.45 归同行
+        # （用 min 防大字号容差吞掉相邻小字行；行内同字号微差远小于此阈值）
+        chars.sort(key=lambda c: -c[3])
+        lines: list[list] = []
+        cur = [chars[0]]
+        for c in chars[1:]:
+            if abs(cur[-1][3] - c[3]) <= min(cur[-1][4], c[4]) * 0.45:
+                cur.append(c)
+            else:
+                lines.append(cur)
+                cur = [c]
+        lines.append(cur)
+
+        def line_text(group) -> tuple[str, bool]:
+            """返回 (行文本, 是否可靠)。x 逆序比例高 = 旋转/复杂排版，不可靠。"""
+            ordered = sorted(group, key=lambda c: c[1])
+            parts: list[str] = []
+            prev_x0 = prev_x1 = None
+            inversions = nonws = 0
+            for c in ordered:
+                if prev_x0 is not None and c[1] < prev_x0:
+                    inversions += 1
+                nonws += 1
+                # x 间隙超过字号 22% 处还原词间空格（空格字符已在采集时跳过）
+                if prev_x1 is not None and c[1] - prev_x1 > c[4] * 0.22:
+                    parts.append(" ")
+                parts.append(c[0])
+                prev_x0, prev_x1 = c[1], c[2]
+            reliable = nonws == 0 or inversions / nonws <= 0.2
+            return re.sub(r"\s+", " ", "".join(parts)).strip(), reliable
+
+        def cjk_ratio(s: str) -> float:
+            if not s:
+                return 0.0
+            return sum(1 for ch in s if "\u4e00" <= ch <= "\u9fff") / len(s)
+
+        rows = []
+        for g in lines:
+            text, reliable = line_text(g)
+            if not text or not reliable:
+                continue
+            sizes = sorted(c[4] for c in g)
+            med = sizes[len(sizes) // 2]
+            y_mid = sum(c[3] for c in g) / len(g)
+            rows.append({"text": text, "size": med, "y": y_mid})
+        rows = [r for r in rows if r["text"] and len(r["text"]) >= 4]
+        if len(rows) < 3:
+            return None
+
+        ys = [r["y"] for r in rows]
+        page_top, page_bottom = max(ys), min(ys)
+        span = page_top - page_bottom
+        median_size = sorted(r["size"] for r in rows)[len(rows) // 2]
+        threshold = median_size * 1.22
+
+        candidates = [
+            r for r in rows
+            if r["size"] >= threshold
+            and r["y"] >= page_bottom + span * 0.3  # 页面上半部
+            and not _NOISE_LINE_RE.search(r["text"])
+            and not _DOI_LINE_RE.search(r["text"])
+            and not _NUMONLY_LINE_RE.fullmatch(r["text"])
+            and "arXiv" not in r["text"]
+            # 摘要标记行字号常与标题相近，拼接会混入尾部（实测 67/69/70）
+            and not re.match(r"(?i)^(abstract|摘要)\b", r["text"])
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda r: -r["size"])
+        head = candidates[0]
+        # 拼接跨行标题：字号差 ≤15% 的相邻候选，按 y 降序（视觉上→下），
+        # 连接符 CJK 直连、英文空格
+        group = [head]
+        for r in sorted(candidates, key=lambda r: -r["y"]):
+            if r is head:
+                continue
+            if abs(r["size"] - head["size"]) <= head["size"] * 0.15 and len(group) < 3:
+                group.append(r)
+        group.sort(key=lambda r: -r["y"])
+        sep = "" if cjk_ratio(group[0]["text"]) > 0.3 else " "
+        title = sep.join(r["text"] for r in group)
+        min_len = 4 if cjk_ratio(title) > 0.3 else 8
+        if not (min_len <= len(title) <= 300):
+            return None
+        if _NOISE_LINE_RE.search(title) or _NUMONLY_LINE_RE.fullmatch(title):
+            return None
+        return title
+    finally:
+        tp.close()
 
 
 def extract_pdf_meta(path: Path) -> PdfMeta:
@@ -138,16 +245,19 @@ def extract_pdf_meta(path: Path) -> PdfMeta:
         except Exception:
             pass
         first_text = ""
+        font_title = None
         if n > 0:
             page = doc[0]
             tp = page.get_textpage()
             try:
                 first_text = tp.get_text_bounded()
+                if not title:
+                    font_title = _title_from_font(page)
             finally:
                 tp.close()
                 page.close()
         if not title:
-            title = _title_from_text(first_text)
+            title = font_title
         arxiv_id, watermark_year = _extract_watermark(first_text) if first_text else (None, None)
         return PdfMeta(
             page_count=n,

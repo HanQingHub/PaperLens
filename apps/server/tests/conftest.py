@@ -119,9 +119,9 @@ def register(client, username="alice", password="secret123") -> str:
 
 
 def upload_pdf(client, token, tmp_path, name="test.pdf", project_id=None, is_scanned=False,
-               pages=(("Hello world", "Second line"),), title="Test Paper"):
+               pages=(("Hello world", "Second line"),), title="Test Paper", sizes=None):
     path = tmp_path / name
-    path.write_bytes(make_pdf_bytes(pages, title=title))
+    path.write_bytes(make_pdf_bytes(pages, title=title, sizes=sizes))
     data = {"is_scanned": "true" if is_scanned else "false"}
     if project_id is not None:
         data["project_id"] = str(project_id)

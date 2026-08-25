@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -8,9 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.util import now_iso
-from app.models import Paper, ReviewLog, User, Word, WordOccurrence
+from app.models import Paper, ReviewLog, TranslationCache, User, Word, WordOccurrence
 from app.api.deps import get_current_user
-from app.services import sm2_service
+from app.services import ecdict_service, sm2_service
 
 router = APIRouter(prefix="/words", tags=["words"])
 
@@ -63,6 +64,30 @@ def list_words(stage: int | None = None, q: str | None = None, due: int | None =
     return [word_dict(w) for w in query.all()]
 
 
+def _auto_translation(db: Session, user_id: int, lemma: str) -> str | None:
+    """入库释义自动补齐：LLM 翻译缓存（跨论文取最新）优先，其次 ECDICT 词典。
+    都没有则返回 None（宁缺勿错）。"""
+    cached = (
+        db.query(TranslationCache)
+        .filter(TranslationCache.user_id == user_id, TranslationCache.lemma == lemma)
+        .order_by(TranslationCache.id.desc())
+        .first()
+    )
+    if cached:
+        try:
+            data = json.loads(cached.result_json)
+            text = (data.get("translation") or "").strip()
+            if text:
+                return text
+        except ValueError:
+            pass
+    if " " not in lemma:  # 短语跳过词典（与 translate_service 的 is_phrase 规则一致）
+        entry = ecdict_service.lookup(lemma)
+        if entry and entry.get("translation"):
+            return " ".join(str(entry["translation"]).split())
+    return None
+
+
 @router.post("", status_code=201)
 def add_word(body: WordIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     lemma = body.lemma.strip().lower()
@@ -72,21 +97,22 @@ def add_word(body: WordIn, user: User = Depends(get_current_user), db: Session =
         paper = db.get(Paper, body.paper_id)
         if paper is None or paper.user_id != user.id:
             raise HTTPException(status_code=404, detail="论文不存在")
+    translation = body.translation.strip() or _auto_translation(db, user.id, lemma) or None
     now = now_iso()
     word = db.query(Word).filter(Word.user_id == user.id, Word.lemma == lemma).first()
     if word is None:
-        word = Word(user_id=user.id, lemma=lemma, stage=0, translation=body.translation or None,
+        word = Word(user_id=user.id, lemma=lemma, stage=0, translation=translation,
                     first_seen_at=now, last_seen_at=now)
         db.add(word)
     else:
         word.last_seen_at = now
-        if body.translation:
-            word.translation = body.translation
+        if translation:
+            word.translation = translation
     db.flush()
     if body.paper_id is not None and body.sentence:
         db.add(WordOccurrence(word_id=word.id, paper_id=body.paper_id,
                               sentence=body.sentence, context=body.context,
-                              translation=body.translation, added_at=now))
+                              translation=translation, added_at=now))
     db.commit()
     db.refresh(word)
     return word_dict(word)

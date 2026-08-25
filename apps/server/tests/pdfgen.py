@@ -2,7 +2,9 @@
 
 
 def make_pdf_bytes(pages_lines: list[tuple[str, ...]] | tuple[str, ...] = (("Hello world", "Second line"),),
-                   title: str | None = "Test Paper", author: str | None = "Test Author") -> bytes:
+                   title: str | None = "Test Paper", author: str | None = "Test Author",
+                   sizes: dict[int, float] | None = None) -> bytes:
+    """sizes: 首页行号 → 字号（仅首页生效；缺省 12pt），供字体启发式测试构造大字标题。"""
     if pages_lines and isinstance(pages_lines[0], str):
         pages_lines = [pages_lines]  # type: ignore[assignment]
     n = len(pages_lines)
@@ -24,8 +26,11 @@ def make_pdf_bytes(pages_lines: list[tuple[str, ...]] | tuple[str, ...] = (("Hel
             f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
             f"/Resources << /Font << /F1 {font_no} 0 R >> >> /Contents {content_nos[i]} 0 R >>"
         ).encode()
-        ops = b"BT /F1 12 Tf 72 720 Td 16 TL\n"
-        for ln in lines:
+        ops = b"BT 72 720 Td\n"
+        for li, ln in enumerate(lines):
+            # sizes: 与首页行对齐的字号（缺省 12pt），供字体启发式测试构造大字标题
+            size = (sizes or {}).get(li, 12)
+            ops += f"/F1 {size} Tf {size * 1.33} TL\n".encode()
             ops += f"({esc(ln)}) Tj T*\n".encode("latin-1", "replace")
         ops += b"ET"
         bodies[content_nos[i]] = (

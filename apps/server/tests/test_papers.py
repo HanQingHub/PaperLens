@@ -323,3 +323,30 @@ def test_extract_meta_fills_only_empty(client, tmp_path):
     assert p["year"] == 2020  # 已有值不覆盖
     assert p["arxiv_id"] == "2401.12345"  # 空字段被补上
     assert p["doi"] == "10.1234/abc.def"
+
+
+def test_upload_title_from_font_size(client, tmp_path):
+    """G1：无 Info Title 时按字体大小识别标题——长作者行/摘要行不再胜出。"""
+    token = register(client)
+    paper = upload_pdf(
+        client, token, tmp_path, name="font.pdf", title=None,
+        pages=((
+            "Running head: small header text",
+            "Deep Learning for Robust Paper Metadata Extraction",
+            "Alice B, Carol D, Eve F, Grace H, Ivan J, Kate L, Mona P",
+            "This is a plain abstract sentence with a comma, and more text following it here.",
+        ),),
+        sizes={0: 9, 1: 18, 2: 10, 3: 10},
+    )
+    assert paper["title"] == "Deep Learning for Robust Paper Metadata Extraction"
+    assert "Alice" not in paper["title"]
+
+
+def test_upload_uniform_font_falls_back_to_filename(client, tmp_path):
+    """S10 回归锚：统一字号（无大字标题）→ title 为 None → 落文件名兜底。"""
+    token = register(client)
+    paper = upload_pdf(
+        client, token, tmp_path, name="uniform-font-fallback.pdf", title=None,
+        pages=(("Just a uniform body line",), ("Another uniform body line here",)),
+    )
+    assert paper["title"] == "uniform-font-fallback"

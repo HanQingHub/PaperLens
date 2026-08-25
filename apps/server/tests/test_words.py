@@ -107,3 +107,44 @@ def test_word_isolation(client):
     assert client.get("/api/words", headers=auth(tb)).json() == []
     r = client.post("/api/words", json={"lemma": "attention", "translation": "x"}, headers=auth(tb))
     assert r.status_code == 201
+
+
+def test_add_word_auto_translation_from_cache(client, tmp_path):
+    """G3：入库释义为空时自动回填 LLM 翻译缓存释义（跨论文）。"""
+    import json
+
+    from app.core.db import SessionLocal
+    from app.models import TranslationCache
+
+    token = register(client)
+    paper = upload_pdf(client, token, tmp_path)
+    db = SessionLocal()
+    try:
+        db.add(TranslationCache(user_id=1, paper_id=paper["id"], lemma="zzqword",
+                                engine="llm-x", result_json=json.dumps({"translation": "缓存释义"})))
+        db.commit()
+    finally:
+        db.close()
+    r = client.post("/api/words", json={"lemma": "zzqword", "paper_id": paper["id"],
+                                        "sentence": "ctx"}, headers=auth(token))
+    assert r.status_code == 201
+    assert r.json()["translation"] == "缓存释义"
+
+
+def test_add_word_auto_translation_from_ecdict(client, tmp_path):
+    """G3：无 LLM 缓存时回填 ECDICT 释义。"""
+    token = register(client)
+    upload_pdf(client, token, tmp_path)
+    # attention 在 mini 词典中（conftest make_mini_ecdict）
+    r = client.post("/api/words", json={"lemma": "attention"}, headers=auth(token))
+    assert r.status_code == 201
+    assert (r.json()["translation"] or "") != ""
+
+
+def test_add_word_no_source_stays_empty(client, tmp_path):
+    """G3：两级数据源都无 → 释义留空，不虚构。"""
+    token = register(client)
+    upload_pdf(client, token, tmp_path)
+    r = client.post("/api/words", json={"lemma": "qqqnoword"}, headers=auth(token))
+    assert r.status_code == 201
+    assert r.json()["translation"] in (None, "")
