@@ -107,9 +107,12 @@ class OCRManager:
                     self.settings.logs_dir.mkdir(parents=True, exist_ok=True)
                 except Exception:
                     pass
+                # worker 日志走 stdout（新旧产物一致），重定向落盘保证可观测性；
+                # 不传 --log-file：旧版 worker 产物不识别该参数会 exit 2
                 self.worker_proc = subprocess.Popen(
-                    [str(exe), "--data-dir", str(self.settings.data_dir), "--log-file", log_file],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    [str(exe), "--data-dir", str(self.settings.data_dir)],
+                    stdout=open(log_file, "a", encoding="utf-8"),
+                    stderr=subprocess.STDOUT,
                 )
                 return
 
