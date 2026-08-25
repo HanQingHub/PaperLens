@@ -1,9 +1,12 @@
 // 文库主页：搜索/排序/视图切换 + 项目栏 + 论文卡片网格 + 上传（预判扫描版）
 // + 卡片拖拽排序/跨组移动 + PDF 拖到分组（dnd/useLibraryDnd 装配）
+// 浏览态（视图/项目/搜索/排序/展开/滚动）存 stores/libraryUi，跨路由往返保持
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { Paper, Project } from '../../api/types'
+import { useLibraryUi } from '../../stores/libraryUi'
+import type { LibraryView } from './sort'
 import { ConfirmModal } from '../shared/Modal'
 import { toast } from '../shared/Toast'
 import ProjectRail from './ProjectRail'
@@ -14,9 +17,7 @@ import { useLibraryDnd, type DndGroup } from './dnd/useLibraryDnd'
 import type { GroupKey } from './dnd/types'
 import { resolveSort } from './sort'
 
-type ViewMode = 'all' | 'favorite' | 'recent' | 'project'
-
-const VIEW_TABS: { key: ViewMode; label: string }[] = [
+const VIEW_TABS: { key: LibraryView; label: string }[] = [
   { key: 'all', label: '全部分类' },
   { key: 'project', label: '项目分类' },
   { key: 'recent', label: '最近打开' },
@@ -27,11 +28,18 @@ export default function LibraryPage() {
   const navigate = useNavigate()
   const [papers, setPapers] = useState<Paper[]>([])
   const [projects, setProjects] = useState<Project[]>([])
-  const [view, setView] = useState<ViewMode>('all')
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
-  const [qInput, setQInput] = useState('')
-  const [q, setQ] = useState('')
-  const [sort, setSort] = useState<'created' | 'title' | 'last_opened'>('created')
+  const view = useLibraryUi((s) => s.view)
+  const selectedProjectId = useLibraryUi((s) => s.selectedProjectId)
+  const qInput = useLibraryUi((s) => s.qInput)
+  const sort = useLibraryUi((s) => s.sort)
+  const expanded = useLibraryUi((s) => s.expanded)
+  const setView = useLibraryUi((s) => s.setView)
+  const setSelectedProjectId = useLibraryUi((s) => s.setSelectedProjectId)
+  const setQInput = useLibraryUi((s) => s.setQInput)
+  const setSort = useLibraryUi((s) => s.setSort)
+  const toggleExpandedKey = useLibraryUi((s) => s.toggleExpanded)
+  // q 种子化自 qInput：带搜索词返回文库时首次请求即过滤，避免"空结果→spinner→结果"双重加载
+  const [q, setQ] = useState(() => useLibraryUi.getState().qInput.trim())
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [editing, setEditing] = useState<Paper | null>(null)
@@ -41,8 +49,11 @@ export default function LibraryPage() {
   const [ocrProgress, setOcrProgress] = useState<Record<number, OcrProgress>>({})
   const [queuePaused, setQueuePaused] = useState(false)
   const [cols, setCols] = useState(4)
-  const [expanded, setExpanded] = useState<Set<GroupKey>>(new Set())
   const contentRef = useRef<HTMLDivElement>(null)
+  // 滚动位置：onScroll 只写 ref（零重渲染），卸载时一次性写回 store；
+  // 恢复绑定 loading true→false 完成后的首帧，ref 标志保证只恢复一次
+  const scrollPos = useRef(useLibraryUi.getState().scrollTop)
+  const scrollRestored = useRef(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   // 首启动向导未完成 → 跳向导
@@ -50,10 +61,7 @@ export default function LibraryPage() {
     if (localStorage.getItem('pl_wizard_done') !== '1') navigate('/wizard', { replace: true })
   }, [navigate])
 
-  useEffect(() => {
-    localStorage.setItem('pl_view', view)
-  }, [view])
-
+  // view 的 localStorage 持久化在 store.setView 内完成
   // 列数自适应（内容区宽度 → cols，供分组折叠切片）
   useEffect(() => {
     const el = contentRef.current
@@ -88,6 +96,28 @@ export default function LibraryPage() {
     const t = setTimeout(() => setQ(qInput.trim()), 300)
     return () => clearTimeout(t)
   }, [qInput])
+
+  // 离开页面时保存滚动位置（cleanup 里 React 已把 contentRef.current 置 null，从自维护 ref 取值）
+  useEffect(
+    () => () => {
+      useLibraryUi.getState().setScrollTop(scrollPos.current)
+    },
+    [],
+  )
+
+  // 数据就绪后的首帧恢复一次滚动位置（loading=true 时内容塌缩，恢复必须在其结束后）
+  useEffect(() => {
+    if (loading || scrollRestored.current) return
+    scrollRestored.current = true
+    requestAnimationFrame(() => {
+      const el = contentRef.current
+      if (el && scrollPos.current > 0) el.scrollTop = scrollPos.current
+    })
+  }, [loading])
+
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    scrollPos.current = e.currentTarget.scrollTop
+  }, [])
 
   // 原始拉取：项目视图（含单项目）强制 sort=manual（P0-1：手动顺序不被系统排序覆盖）
   const fetchPapers = useCallback(async () => {
@@ -315,14 +345,6 @@ export default function LibraryPage() {
       />
     ))
 
-  const toggleExpanded = (key: GroupKey) => {
-    setExpanded((s) => {
-      const n = new Set(s)
-      if (n.has(key)) n.delete(key)
-      else n.add(key)
-      return n
-    })
-  }
   const visibleItems = (items: Paper[], key: GroupKey) => {
     if (q !== '' || selectedProjectId != null) return items
     if (expanded.has(key) || items.length <= cols) return items
@@ -456,7 +478,7 @@ export default function LibraryPage() {
           onFileDrop={dnd.railFileDrop}
         />
 
-        <div ref={contentRef} className="min-w-0 flex-1 overflow-y-auto">
+        <div ref={contentRef} className="min-w-0 flex-1 overflow-y-auto" onScroll={handleScroll}>
           {loading ? (
             <div className="flex h-full items-center justify-center">
               <div className="spinner spinner-lg" />
@@ -492,7 +514,7 @@ export default function LibraryPage() {
                       <>
                         <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">{cardList(vis, g.key)}</div>
                         {g.items.length > cols && q === '' && (
-                          <button className="mt-2 text-xs text-accent hover:underline" onClick={() => toggleExpanded(g.key)}>
+                          <button className="mt-2 text-xs text-accent hover:underline" onClick={() => toggleExpandedKey(g.key)}>
                             {collapsed ? `展开其余 ${g.items.length - cols} 篇` : '收起'}
                           </button>
                         )}
