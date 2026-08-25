@@ -2536,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "paperlens-desktop"
-version = "0.4.7"
+version = "0.4.8"
 dependencies = [
  "filetime",
  "getrandom 0.2.17",
