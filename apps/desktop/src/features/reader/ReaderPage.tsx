@@ -69,6 +69,7 @@ const icons = {
   export: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M7 10l5 5 5-5 M12 15V3',
   single: 'M4 4h16v16H4z',
   scroll: 'M4 4h16v7H4z M4 14h16v6H4z',
+  words: 'M6 4h8a4 4 0 0 1 4 4v12H10a4 4 0 0 1-4-4V4z M9 9h6 M12 6v9',
 }
 
 export default function ReaderPage() {
@@ -704,6 +705,9 @@ export default function ReaderPage() {
               </span>
             )}
           </span>
+        </button>
+        <button className="rd-tbtn" title="生词库" onClick={() => openPanel('words')}>
+          <I d={icons.words} />
         </button>
         <button className="rd-tbtn" title="本文术语表" onClick={() => openPanel('glossary')}>
           <I d={icons.book} />

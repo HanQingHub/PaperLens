@@ -13,9 +13,6 @@ interface ReaderBusState {
   /** 术语表版本号 */
   glossaryVersion: number
   bumpGlossary: () => void
-  /** 生词库版本号（新增生词后 bump） */
-  wordsVersion: number
-  bumpWords: () => void
 }
 
 export const useReaderBus = create<ReaderBusState>((set, get) => ({
@@ -29,6 +26,4 @@ export const useReaderBus = create<ReaderBusState>((set, get) => ({
   bumpAnnotations: () => set((s) => ({ annotationsVersion: s.annotationsVersion + 1 })),
   glossaryVersion: 0,
   bumpGlossary: () => set((s) => ({ glossaryVersion: s.glossaryVersion + 1 })),
-  wordsVersion: 0,
-  bumpWords: () => set((s) => ({ wordsVersion: s.wordsVersion + 1 })),
 }))

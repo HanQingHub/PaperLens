@@ -12,24 +12,22 @@ import EditPaperModal from './EditPaperModal'
 import { detectScanned } from './detectScanned'
 import { useLibraryDnd, type DndGroup } from './dnd/useLibraryDnd'
 import type { GroupKey } from './dnd/types'
+import { resolveSort } from './sort'
 
-type ViewMode = 'favorite' | 'recent' | 'project'
+type ViewMode = 'all' | 'favorite' | 'recent' | 'project'
 
 const VIEW_TABS: { key: ViewMode; label: string }[] = [
+  { key: 'all', label: '全部分类' },
+  { key: 'project', label: '项目分类' },
   { key: 'recent', label: '最近打开' },
   { key: 'favorite', label: '收藏' },
-  { key: 'project', label: '全部分类' },
 ]
 
 export default function LibraryPage() {
   const navigate = useNavigate()
   const [papers, setPapers] = useState<Paper[]>([])
   const [projects, setProjects] = useState<Project[]>([])
-  const [view, setView] = useState<ViewMode>(() => {
-    const raw = localStorage.getItem('pl_view')
-    if (raw === 'all') return 'project'
-    return raw && ['recent', 'favorite', 'project'].includes(raw) ? (raw as ViewMode) : 'project'
-  })
+  const [view, setView] = useState<ViewMode>('all')
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
   const [qInput, setQInput] = useState('')
   const [q, setQ] = useState('')
@@ -96,7 +94,7 @@ export default function LibraryPage() {
     try {
       const list = await api.papers({
         q: q || undefined,
-        sort: view === 'recent' ? 'last_opened' : view === 'project' ? 'manual' : sort,
+        sort: resolveSort(view, sort),
         favorite: view === 'favorite' ? true : undefined,
         project_id: selectedProjectId ?? undefined,
       })
@@ -230,7 +228,7 @@ export default function LibraryPage() {
     }
   }
 
-  const saveEdit = async (patch: { title: string; authors: string; year: number | null; venue: string; tags: string[]; note: string }) => {
+  const saveEdit = async (patch: { title: string; authors: string; year: number | null; venue: string; doi: string; tags: string[]; note: string }) => {
     if (!editing) return
     setEditBusy(true)
     try {
@@ -376,10 +374,11 @@ export default function LibraryPage() {
           {VIEW_TABS.map((t) => (
             <button
               key={t.key}
-              className={`rounded-md px-2.5 py-1 transition-all ${view === t.key ? 'bg-panel text-accent shadow-[var(--shadow-1)] font-medium' : 'text-text-faint hover:text-text-soft'}`}
+              className={`rounded-md px-2.5 py-1 transition-all ${view === t.key && (t.key !== 'project' || selectedProjectId == null) ? 'bg-panel text-accent shadow-[var(--shadow-1)] font-medium' : 'text-text-faint hover:text-text-soft'}`}
               onClick={() => {
+                // 项目分类 = 多组分组浏览（清空单项目选中）；单项目视图经左侧项目栏进入
+                if (t.key === 'project') setSelectedProjectId(null)
                 setView(t.key)
-                if (t.key === 'recent') setSort('last_opened')
               }}
             >
               {t.label}
@@ -403,7 +402,7 @@ export default function LibraryPage() {
           {selectedProjectId && (
             <span className="badge badge-accent">
               {projects.find((p) => p.id === selectedProjectId)?.name}
-              <button className="ml-1" onClick={() => setSelectedProjectId(null)}>
+              <button className="ml-1" onClick={() => { setSelectedProjectId(null); setView('all') }}>
                 ✕
               </button>
             </span>
@@ -447,7 +446,11 @@ export default function LibraryPage() {
         <ProjectRail
           projects={projects}
           activeProjectId={selectedProjectId}
-          onSelect={setSelectedProjectId}
+          onSelect={(id) => {
+            setSelectedProjectId(id)
+            // 点项目进入分组/单项目视图（手动排序 + 拖拽）；取消选中回平铺
+            setView(id == null ? 'all' : 'project')
+          }}
           onChanged={refreshProjects}
           onPaperDrop={dnd.railPaperDrop}
           onFileDrop={dnd.railFileDrop}

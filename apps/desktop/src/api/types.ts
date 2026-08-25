@@ -28,6 +28,7 @@ export interface Paper {
   venue: string | null
   year: number | null
   doi: string | null
+  arxiv_id: string | null
   file_hash: string
   page_count: number
   open_count: number

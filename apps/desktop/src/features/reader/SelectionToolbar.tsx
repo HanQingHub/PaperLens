@@ -59,7 +59,6 @@ export default function SelectionToolbar({
   const setLinking = useReader((s) => s.setLinking)
   const setSelection = useReader((s) => s.setSelection)
   const stageMap = useWords((s) => s.stageMap)
-  const bumpWords = useReaderBus((s) => s.bumpWords)
   const bumpAnnotations = useReaderBus((s) => s.bumpAnnotations)
   const { settings } = useAuth()
   const [colorIdx, setColorIdx] = useState(() =>
@@ -102,7 +101,6 @@ export default function SelectionToolbar({
       const words = await api.words({ q: lemma })
       const hit = words.find((w) => w.lemma === lemma)
       if (hit) useWords.getState().bump(hit)
-      bumpWords()
       useReader.getState().bumpHighlight()
       onToast(`已加入生词库：${lemma}`)
     } catch {

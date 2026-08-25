@@ -88,6 +88,7 @@ export const api = {
   },
   updatePaper: (id: number, patch: Partial<Paper>) =>
     request<Paper>(`/papers/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  extractMeta: (id: number) => request<Paper>(`/papers/${id}/extract-meta`, { method: 'POST' }),
   deletePaper: (id: number) => request<void>(`/papers/${id}`, { method: 'DELETE' }),
   fileToken: (id: number) => request<{ token: string; url: string }>(`/papers/${id}/file-token`, { method: 'POST' }),
 
@@ -115,7 +116,7 @@ export const api = {
     request<Word>(`/words/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteWord: (id: number) => request<void>(`/words/${id}`, { method: 'DELETE' }),
   reviewWord: (id: number, q: 2 | 3 | 5) =>
-    request<{ next_due: string; interval: number }>(`/words/${id}/review`, { method: 'POST', body: JSON.stringify({ q }) }),
+    request<{ next_due: string; interval: number; word: Word }>(`/words/${id}/review`, { method: 'POST', body: JSON.stringify({ q }) }),
   wordsExportUrl: (format: 'csv' | 'anki') => {
     const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {}
     // 导出走 fetch 拿 blob

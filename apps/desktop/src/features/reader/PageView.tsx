@@ -11,9 +11,11 @@ import { useReader } from '../../stores/readerStore'
 import { useAuth } from '../../stores/auth'
 import { useWords } from '../../stores/words'
 import { applyHighlights, type HighlightOptions } from './highlight'
-import { cssPointToPdf, linkPath, pdfPointToCss, rectCenter } from '../../shared/coords'
+import { cssPointToPdf, clientRectsInPage, clientRectsToPdf, linkPath, pdfPointToCss, rectCenter } from '../../shared/coords'
 import { scheduleRender, stashPageBitmap, takePageBitmap } from './renderScheduler'
 import { OcrOverlay } from './ocrOverlay'
+import { ensurePageText, extractSentenceContext, ocrPageText } from './readerUtils'
+import WordHoverCard from '../words/WordHoverCard'
 import AnnotationOverlay from '../annotations/AnnotationOverlay'
 import { DraftCard } from '../annotations/NoteCard'
 
@@ -197,6 +199,69 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
     }
   }, [rendered, layerVersion, highlightVersion, applyHl, ocrBlocks])
 
+  // ── 生词悬停释义卡 + 高亮词点击查询（页容器级委托，textLayer 与 OCR 层通吃）──
+  const [hoverWord, setHoverWord] = useState<{ lemma: string; rect: DOMRect } | null>(null)
+  const hoverTimer = useRef(0)
+  const hideHover = useCallback(() => {
+    window.clearTimeout(hoverTimer.current)
+    setHoverWord(null)
+  }, [])
+  const onWordHover = useCallback(
+    (e: React.MouseEvent) => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('i[data-lemma]')
+      if (!el?.dataset.lemma) return
+      window.clearTimeout(hoverTimer.current)
+      const lemma = el.dataset.lemma
+      const rect = el.getBoundingClientRect()
+      hoverTimer.current = window.setTimeout(() => setHoverWord({ lemma, rect }), 300)
+    },
+    [],
+  )
+  // textLayer 换入/重扫后旧矩形失准，立即收卡（S5）
+  useEffect(() => {
+    hideHover()
+  }, [layerVersion, highlightVersion, hideHover])
+
+  const onWordClick = useCallback(
+    async (e: React.MouseEvent): Promise<boolean> => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>('i[data-lemma]')
+      if (!el?.dataset.lemma || !pageRef.current) return false
+      e.stopPropagation() // 不冒泡到 onStageClick 的句子浮条命中测试
+      hideHover()
+      // 先建真实 DOM 选区：通过滚动容器 onMouseUp 的延迟折叠检查（R3），
+      // 且 SelectionToolbar 定位依赖真实选区存在
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      sel?.addRange(range)
+      const st = useReader.getState()
+      const size = st.pageSizes[pageIndex]
+      if (!size) return true
+      const baseGeom = { baseW: size.w, baseH: size.h, scale: st.scale }
+      const visibleRects = clientRectsInPage(el.getClientRects(), pageRef.current.getBoundingClientRect())
+      const rects = clientRectsToPdf(visibleRects, pageRef.current, baseGeom)
+      const first = visibleRects[0]
+      const text = (el.textContent ?? '').trim()
+      if (!first || !rects.length || !text) return true
+      const fullText = ocrBlocks ? ocrPageText(ocrBlocks) : await ensurePageText(pdf, pageIndex)
+      const ctx = extractSentenceContext(fullText, text)
+      useReader.getState().setSelection({
+        text,
+        pageIndex,
+        rects,
+        sentence: ctx.sentence,
+        prev: ctx.prev,
+        next: ctx.next,
+        toolbarX: first.left + first.width / 2,
+        toolbarY: first.bottom + 10,
+        toolbarBelow: true,
+      })
+      return true
+    },
+    [pdf, pageIndex, ocrBlocks, hideHover],
+  )
+
   // ── 高亮命中判定（选区折叠时）：点击点 → PDF 坐标 → sentence rects 包含测试 ──
   const onStageClick = (e: React.MouseEvent) => {
     if (!window.getSelection()?.isCollapsed) return // 划词流程不触发
@@ -270,8 +335,16 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
       data-page-no={pageIndex + 1}
       className="page-wrapper relative mx-auto mb-4 shrink-0"
       style={{ width: cssW, height: cssH, visibility: visible ? 'visible' : 'hidden' }}
-      onMouseDown={onStageMouseDown}
-      onClick={onStageClick}
+      onMouseDown={(e) => {
+        hideHover()
+        onStageMouseDown(e)
+      }}
+      onMouseOver={onWordHover}
+      onMouseOut={hideHover}
+      onClick={(e) => {
+        // 高亮生词词元 → 释义查询闭环；其余点击走句子批注浮条命中
+        if (!onWordClick(e)) onStageClick(e)
+      }}
     >
       {/* 白底纸张（未渲染时做骨架占位） */}
       <div
@@ -342,6 +415,9 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
           <DraftCard pageIndex={pageIndex} geom={stageGeom} anchorRects={linking.rects} card={linking.cardDraft} />
         )}
       </div>
+
+      {/* 生词悬停释义卡（fixed 定位，挂页内但相对视口） */}
+      {visible && hoverWord && <WordHoverCard lemma={hoverWord.lemma} anchorRect={hoverWord.rect} onClose={hideHover} />}
     </div>
   )
 })

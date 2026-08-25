@@ -85,8 +85,7 @@ export default function TranslateCard({
   const [saved, setSaved] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const sentenceAbortRef = useRef<AbortController | null>(null)
-  const bumpGlossary = useReaderBus((s) => s.bumpGlossary)
-  const bumpWords = useReaderBus((s) => s.bumpWords)
+      const bumpGlossary = useReaderBus((s) => s.bumpGlossary)
   const stageMap = useWords((s) => s.stageMap)
   const bumpHighlight = useReader((s) => s.bumpHighlight)
 
@@ -293,7 +292,6 @@ export default function TranslateCard({
       const words = await api.words({ q: word.toLowerCase() })
       const w = words.find((x) => x.lemma === word.toLowerCase())
       if (w) useWords.getState().bump(w)
-      bumpWords()
       bumpHighlight()
       setSaved(true)
       onToast(exists ? `已更新「${word}」译法` : `已加入生词库：${word}`)

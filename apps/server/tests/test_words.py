@@ -49,7 +49,11 @@ def test_list_filters_stage_q_due(client):
     r = client.get("/api/words", params={"due": 1}, headers=auth(token))
     assert r.json() == []
     # 复习后的词 due 在未来，手动置为过期后进入到期队列
-    client.post(f"/api/words/{ids[0]}/review", json={"q": 5}, headers=auth(token))
+    rv = client.post(f"/api/words/{ids[0]}/review", json={"q": 5}, headers=auth(token))
+    assert rv.status_code == 200
+    # B1 联动：review 返回体携带完整 word 对象（前端回写 stageMap）
+    assert rv.json()["word"]["lemma"] == "attention"
+    assert rv.json()["word"]["review_count"] == 1
     from app.core.db import SessionLocal
     from app.models import Word
 

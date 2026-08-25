@@ -1,7 +1,7 @@
 // UI 布局状态：侧栏折叠、右侧面板
 import { create } from 'zustand'
 
-export type RightPanelTab = 'annotations' | 'review' | 'stats' | 'glossary' | null
+export type RightPanelTab = 'annotations' | 'review' | 'stats' | 'glossary' | 'words' | null
 
 interface UiState {
   sidebarCollapsed: boolean

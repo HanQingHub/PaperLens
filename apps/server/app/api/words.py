@@ -143,7 +143,9 @@ def review_word(word_id: int, body: ReviewIn, user: User = Depends(get_current_u
     db.add(ReviewLog(user_id=user.id, word_id=w.id, reviewed_at=now_iso(), q=body.q,
                      prev_interval=prev_interval, next_interval=result["interval"]))
     db.commit()
-    return {"next_due": result["due_at"], "interval": result["interval"]}
+    db.refresh(w)
+    # word 字段供前端回写词库 stageMap（正文高亮即时反映复习结果）
+    return {"next_due": result["due_at"], "interval": result["interval"], "word": word_dict(w)}
 
 
 @router.get("/export")

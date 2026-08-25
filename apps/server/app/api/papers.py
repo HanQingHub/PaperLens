@@ -1,6 +1,8 @@
 import asyncio
 import json
+import re
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -26,6 +28,7 @@ def paper_dict(p: Paper) -> dict:
     return {
         "id": p.id, "user_id": p.user_id, "project_id": p.project_id, "title": p.title,
         "authors": p.authors, "venue": p.venue, "year": p.year, "doi": p.doi,
+        "arxiv_id": p.arxiv_id,
         "file_hash": p.file_hash, "page_count": p.page_count, "open_count": p.open_count,
         "is_scanned": bool(p.is_scanned), "ocr_status": p.ocr_status,
         "tags": json.loads(p.tags) if p.tags else [],
@@ -35,35 +38,125 @@ def paper_dict(p: Paper) -> dict:
     }
 
 
-def extract_pdf_meta(path: Path) -> tuple[int, str | None, str | None]:
-    """返回 (页数, 标题, 作者)。标题：PDF Info → 首页首行。"""
+# ── 首页文本元数据提取（纯本地启发式；识别不到即为 None，不虚构）──
+_YEAR_RE = re.compile(r"\b(19[89]\d|20[0-3]\d)\b")
+_DOI_RE = re.compile(r"10\.\d{4,9}/[^\s\"'<>]+")
+_ARXIV_NEW_RE = re.compile(r"arXiv[:\s]*(\d{4}\.\d{4,5})(?:v\d+)?")
+_ARXIV_OLD_RE = re.compile(r"arXiv[:\s]*([a-z-]+(?:\.[A-Z]{2})?/\d{7})")
+# arXiv 官方水印固定形态（含 [分类] 与日期尾部）——参考文献引用不带此尾部，
+# 可安全全文搜索（pypdfium2 文本对象顺序里水印常排在正文之后，不能限前 N 字符）
+_ARXIV_WATERMARK_NEW_RE = re.compile(
+    r"arXiv[:\s]*(\d{4}\.\d{4,5})(?:v\d+)?\s+\[[a-zA-Z.\-]+\]\s+\d{1,2}\s+[A-Z][a-z]{2}\s+(\d{4})"
+)
+_ARXIV_WATERMARK_OLD_RE = re.compile(
+    r"arXiv[:\s]*([a-z-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?\s+\[[a-zA-Z.\-]+\]\s+\d{1,2}\s+[A-Z][a-z]{2}\s+(\d{4})"
+)
+_NOISE_LINE_RE = re.compile(r"https?://|www\.|@", re.IGNORECASE)
+_NUMONLY_LINE_RE = re.compile(r"[\d\s\-–—./]+")
+_DOI_LINE_RE = re.compile(r"^10\.\d{4,9}/")
+
+
+@dataclass
+class PdfMeta:
+    page_count: int
+    title: str | None
+    authors: str | None
+    year: int | None
+    doi: str | None
+    arxiv_id: str | None
+
+
+def _extract_watermark(text: str) -> tuple[str | None, int | None]:
+    """arXiv 官方水印 → (arxiv_id, 提交年份)。水印日期是 year 最可靠来源
+    （首页前部的引用/脚注年份会造成首个匹配误报，实测 DeepSeek-R1 误报 2020）。"""
+    m = _ARXIV_WATERMARK_NEW_RE.search(text)
+    if m:
+        return m.group(1), int(m.group(2))
+    m = _ARXIV_WATERMARK_OLD_RE.search(text)
+    if m:
+        return m.group(1), int(m.group(2))
+    # 兜底：页眉区（前 600 字符）的裸 ID（作者自制 PDF 首行标注场景），无年份
+    head = text[:600]
+    m = _ARXIV_NEW_RE.search(head)
+    if m:
+        return m.group(1), None
+    m = _ARXIV_OLD_RE.search(head)
+    if m:
+        return m.group(1), None
+    return None, None
+
+
+def _extract_year(text: str, watermark_year: int | None) -> int | None:
+    if watermark_year is not None:
+        return watermark_year
+    # 版权/页眉区（前 800 字符）优先取首个；否则取首页文本内最后一个匹配
+    m = _YEAR_RE.search(text[:800])
+    if m:
+        return int(m.group(1))
+    matches = _YEAR_RE.findall(text)
+    return int(matches[-1]) if matches else None
+
+
+def _extract_doi(text: str) -> str | None:
+    m = _DOI_RE.search(text)
+    if m is None:
+        return None
+    return m.group(0).rstrip(".,;)'\">]")
+
+
+def _title_from_text(text: str) -> str | None:
+    """无 Info Title 时的启发式：过滤噪声行（URL/邮箱/DOI/纯数字）后，
+    取顶部候选区最长行。authors 不做文本启发式——实测真实论文集上
+    摘要句混入率不可接受（宁缺勿错），作者以 Info 元数据/手动填写为准。"""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    candidates: list[str] = []
+    for ln in lines:
+        if not (15 <= len(ln) <= 250):
+            continue
+        if _NOISE_LINE_RE.search(ln) or _DOI_LINE_RE.search(ln):
+            continue
+        if _NUMONLY_LINE_RE.fullmatch(ln):
+            continue
+        candidates.append(ln)
+        if len(candidates) >= 8:
+            break
+    return max(candidates[:8], key=len) if candidates else None
+
+
+def extract_pdf_meta(path: Path) -> PdfMeta:
+    """Info 元数据优先；缺失字段从首页文本启发式提取（识别不到即为 None，不虚构）。"""
     import pypdfium2 as pdfium
 
     doc = pdfium.PdfDocument(str(path))
     try:
         n = len(doc)
-        title = None
-        authors = None
+        title = authors = None
         try:
             meta = doc.get_metadata_dict()
             title = (meta.get("Title") or "").strip() or None
             authors = (meta.get("Author") or "").strip() or None
         except Exception:
             pass
-        if not title and n > 0:
+        first_text = ""
+        if n > 0:
             page = doc[0]
             tp = page.get_textpage()
             try:
-                text = tp.get_text_bounded()
-                for line in text.splitlines():
-                    line = line.strip()
-                    if len(line) >= 3:
-                        title = line[:200]
-                        break
+                first_text = tp.get_text_bounded()
             finally:
                 tp.close()
                 page.close()
-        return n, title, authors
+        if not title:
+            title = _title_from_text(first_text)
+        arxiv_id, watermark_year = _extract_watermark(first_text) if first_text else (None, None)
+        return PdfMeta(
+            page_count=n,
+            title=title,
+            authors=authors,
+            year=_extract_year(first_text, watermark_year) if first_text else None,
+            doi=_extract_doi(first_text) if first_text else None,
+            arxiv_id=arxiv_id,
+        )
     finally:
         doc.close()
 
@@ -107,7 +200,7 @@ async def upload(
     else:
         tmp.rename(dest)
 
-    page_count, title, authors = await asyncio.to_thread(extract_pdf_meta, dest)
+    meta = await asyncio.to_thread(extract_pdf_meta, dest)
 
     with write_lock:
         ref = db.get(FileRef, digest)
@@ -121,8 +214,9 @@ async def upload(
         ).scalar()
         paper = Paper(
             user_id=user.id, project_id=project_id,
-            title=title or Path(file.filename).stem,
-            authors=authors, file_hash=digest, page_count=page_count,
+            title=meta.title or Path(file.filename).stem,
+            authors=meta.authors, file_hash=digest, page_count=meta.page_count,
+            year=meta.year, doi=meta.doi, arxiv_id=meta.arxiv_id,
             is_scanned=int(is_scanned),
             ocr_status="pending" if is_scanned else "none",
             tags="[]", created_at=now_iso(),
@@ -135,7 +229,7 @@ async def upload(
     if is_scanned:
         from app.main import app
 
-        app.state.ocr_manager.enqueue(paper.id, dest, page_count or 1)
+        app.state.ocr_manager.enqueue(paper.id, dest, meta.page_count or 1)
     else:
         tfidf_service.schedule(paper.id)
     return {"paper": paper_dict(paper)}
@@ -174,6 +268,25 @@ def list_papers(
 
 @router.get("/{paper_id}")
 def get_paper(paper: Paper = Depends(get_owned_paper)):
+    return paper_dict(paper)
+
+
+@router.post("/{paper_id}/extract-meta")
+async def extract_meta(paper: Paper = Depends(get_owned_paper), db: Session = Depends(get_db)):
+    """从论文 PDF 重跑元数据提取；仅填充当前为空（None/空串）的字段，绝不覆盖已有值。"""
+    path = get_settings().files_dir / f"{paper.file_hash}.pdf"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="PDF 文件缺失，无法识别")
+    meta = await asyncio.to_thread(extract_pdf_meta, path)
+    for field, val in (
+        ("title", meta.title), ("authors", meta.authors), ("year", meta.year),
+        ("doi", meta.doi), ("arxiv_id", meta.arxiv_id),
+    ):
+        cur = getattr(paper, field)
+        if (cur is None or cur == "") and val is not None:
+            setattr(paper, field, val)
+    db.commit()
+    db.refresh(paper)
     return paper_dict(paper)
 
 

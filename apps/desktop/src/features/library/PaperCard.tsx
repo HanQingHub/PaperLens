@@ -133,6 +133,7 @@ export default function PaperCard({
         <span>{paper.page_count} 页</span>
         {paper.open_count > 0 && <span>打开 {paper.open_count} 次</span>}
         {paper.venue && <span className="line-clamp-1 italic">{paper.venue}</span>}
+        {paper.arxiv_id && <span className="badge">arXiv:{paper.arxiv_id}</span>}
       </div>
 
       {(paper.tags.length > 0 || paper.is_scanned || paper.ocr_status !== 'none') && (

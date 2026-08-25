@@ -259,3 +259,67 @@ def test_path_traversal_rejected(client, tmp_path, data_dir):
     # file_hash 越界访问
     r = client.get(f"/api/papers/{paper['id']}/ocr-result", headers=auth(token))
     assert r.status_code == 404
+
+
+def test_upload_extracts_meta_from_first_page(client, tmp_path):
+    """G1：Info 元数据缺失时，从首页文本识别 arxiv_id/doi/year/authors。"""
+    from conftest import make_pdf_bytes
+
+    path = tmp_path / "meta.pdf"
+    path.write_bytes(make_pdf_bytes(
+        (
+            ("arXiv:2401.12345v2", "Deep Learning for Robust Paper Metadata Extraction",
+             "John Smith, Jane Doe", "10.1234/abc.def", "Received 2024 ACM."),
+        ),
+        title=None, author=None,
+    ))
+    with open(path, "rb") as f:
+        r = client.post("/api/papers/upload", files={"file": ("meta.pdf", f, "application/pdf")},
+                        data={"is_scanned": "false"}, headers=auth(register(client)))
+    assert r.status_code == 200, r.text
+    p = r.json()["paper"]
+    assert p["arxiv_id"] == "2401.12345"  # 去版本号
+    assert p["doi"] == "10.1234/abc.def"
+    assert p["year"] == 2024
+    # authors 无文本启发式（真实论文集实测摘要句混入率不可接受，宁缺勿错）
+    assert p["authors"] is None
+
+
+def test_upload_meta_absent_stays_none(client, tmp_path):
+    """G5：首页无可识别信息时字段全空，不虚构。"""
+    from conftest import make_pdf_bytes
+
+    path = tmp_path / "plain.pdf"
+    path.write_bytes(make_pdf_bytes((("Just some plain text here",),), title=None, author=None))
+    with open(path, "rb") as f:
+        r = client.post("/api/papers/upload", files={"file": ("plain.pdf", f, "application/pdf")},
+                        data={"is_scanned": "false"}, headers=auth(register(client)))
+    p = r.json()["paper"]
+    assert p["arxiv_id"] is None
+    assert p["doi"] is None
+    assert p["year"] is None
+
+
+def test_extract_meta_fills_only_empty(client, tmp_path):
+    """G3：补识别仅填空字段——已有 year 不被覆盖。"""
+    from conftest import make_pdf_bytes
+
+    token = register(client)
+    path = tmp_path / "fill.pdf"
+    path.write_bytes(make_pdf_bytes(
+        (("arXiv:2401.12345", "10.1234/abc.def",),),
+        title=None, author=None,
+    ))
+    with open(path, "rb") as f:
+        r = client.post("/api/papers/upload", files={"file": ("fill.pdf", f, "application/pdf")},
+                        data={"is_scanned": "false"}, headers=auth(token))
+    pid = r.json()["paper"]["id"]
+    # 用户预填 year（模拟手改）
+    r = client.patch(f"/api/papers/{pid}", json={"year": 2020}, headers=auth(token))
+    assert r.json()["year"] == 2020
+    r = client.post(f"/api/papers/{pid}/extract-meta", headers=auth(token))
+    assert r.status_code == 200, r.text
+    p = r.json()
+    assert p["year"] == 2020  # 已有值不覆盖
+    assert p["arxiv_id"] == "2401.12345"  # 空字段被补上
+    assert p["doi"] == "10.1234/abc.def"

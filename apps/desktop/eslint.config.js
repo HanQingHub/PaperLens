@@ -13,6 +13,8 @@ export default tseslint.config(
           allowDefaultProject: [
             "src/__tests__/coords.test.ts",
             "src/__tests__/dnd.test.ts",
+            "src/__tests__/hoverCardPos.test.ts",
+            "src/__tests__/librarySort.test.ts",
             "src/__tests__/ocrOverlay.test.ts",
             "src/__tests__/ocrPollStatus.test.ts",
             "src/__tests__/sentenceContext.test.ts",

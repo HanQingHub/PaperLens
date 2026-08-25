@@ -244,6 +244,19 @@ h1, h2, h3, h4, button, input, textarea, select {
   background: var(--accent-soft);
 }
 
+/* 生词悬停释义卡（fixed，跟随词矩形定位） */
+.pl-word-hover {
+  position: fixed;
+  z-index: 45;
+  width: 240px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
+}
+
 .fade-in {
   animation: fadeIn var(--dur-2) var(--ease);
 }

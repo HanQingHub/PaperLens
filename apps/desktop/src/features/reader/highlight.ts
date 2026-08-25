@@ -1,6 +1,6 @@
 // textLayer / OCR 层词级拆分与高亮
 // pdfjs 的 text span 是 absolute + transform，子元素用 <i> 包裹避开 .textLayer span 选择器
-import { lookupStage } from './lemma'
+import { lookupHit } from './lemma'
 
 const WORD_RE = /[A-Za-z][A-Za-z'-]*/g
 
@@ -60,10 +60,18 @@ export function applyHighlights(container: HTMLElement, opts: HighlightOptions) 
       const lower = frag.text.toLowerCase()
       let cls = ''
       if (opts.enabled) {
-        const stage = lookupStage(frag.text, opts.stageMap)
-        if (stage !== undefined) cls = `hl-stage-${stage}`
+        const hit = lookupHit(frag.text, opts.stageMap)
+        if (hit) {
+          const el = document.createElement('i')
+          el.className = `hl-stage-${hit.stage}`
+          el.textContent = frag.text
+          // 悬停释义卡用归一化词元（表面形查不到屈折形的释义）
+          el.dataset.lemma = hit.lemma
+          span.append(el)
+          continue
+        }
       }
-      if (!cls && opts.searchTerms?.has(lower)) {
+      if (opts.searchTerms?.has(lower)) {
         cls = lower === opts.currentTerm ? 'search-hit search-hit-current' : 'search-hit'
       }
       if (cls) {

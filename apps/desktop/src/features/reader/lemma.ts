@@ -56,6 +56,16 @@ export function lookupStage(word: string, stageMap: Map<string, 0 | 1 | 2>): 0 |
   return undefined
 }
 
+/** 词库查档（带命中词元）：data-lemma 等场景需要归一化词元而非表面形，
+ * 否则屈折形（running/studies）悬浮卡查不到释义 */
+export function lookupHit(word: string, stageMap: Map<string, 0 | 1 | 2>): { stage: 0 | 1 | 2; lemma: string } | undefined {
+  for (const c of lemmaCandidates(word)) {
+    const s = stageMap.get(c)
+    if (s !== undefined) return { stage: s, lemma: c }
+  }
+  return undefined
+}
+
 // 不规则词形缓存：word → 词库命中的 lemma（null = 已查无）
 const irregularCache = new Map<string, string | null>()
 

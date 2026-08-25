@@ -4,7 +4,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import type { DictionaryEntry, Word } from '../../api/types'
-import { useReaderBus } from '../../stores/readerBus'
+import { useUi } from '../../stores/ui'
+import { useWords } from '../../stores/words'
 import { toast } from '../shared/Toast'
 
 const STAGES = [
@@ -14,7 +15,8 @@ const STAGES = [
 ] as const
 
 export function ReviewPanel() {
-  const bumpWords = useReaderBus((s) => s.bumpWords)
+  const openPanel = useUi((s) => s.openPanel)
+  const bumpWord = useWords((s) => s.bump)
   const [queue, setQueue] = useState<Word[]>([])
   const [idx, setIdx] = useState(0)
   const [revealed, setRevealed] = useState(false)
@@ -65,8 +67,10 @@ export function ReviewPanel() {
     if (!current || reviewing) return
     setReviewing(true)
     try {
-      await api.reviewWord(current.id, q)
-      bumpWords()
+      const r = await api.reviewWord(current.id, q)
+      // 复习结果回写词库 stageMap：正文高亮立即反映新掌握状态（B1 联动）
+      if (r.word) bumpWord(r.word)
+      setStats((s) => (s ? { ...s, done: s.done + 1 } : s))
       setIdx((i) => i + 1)
     } catch (e) {
       toast(e instanceof Error ? e.message : '复习结果保存失败', 'error')
@@ -78,9 +82,9 @@ export function ReviewPanel() {
   const setStage = async (stage: 0 | 1 | 2) => {
     if (!current) return
     try {
-      await api.updateWord(current.id, { stage })
-      bumpWords()
-      setQueue((list) => list.map((w) => (w.id === current.id ? { ...w, stage } : w)))
+      const w = await api.updateWord(current.id, { stage })
+      bumpWord(w)
+      setQueue((list) => list.map((x) => (x.id === current.id ? w : x)))
       if (stage === 2) setIdx((i) => i + 1) // 已掌握移出队列
     } catch (e) {
       toast(e instanceof Error ? e.message : '更新失败', 'error')
@@ -104,11 +108,16 @@ export function ReviewPanel() {
       {/* 头部统计 */}
       <div className="flex items-center justify-between text-xs text-text-soft">
         <span>
-          今日到期 <b className="pl-num text-accent">{stats?.due ?? 0}</b> 词 · 已复习 <b className="pl-num text-accent">{stats?.done ?? 0}</b> 词
+          今日到期 <b className="pl-num text-accent">{stats?.due ?? 0}</b> 个 · 已复习 <b className="pl-num text-accent">{stats?.done ?? 0}</b> 个
         </span>
-        <button className="btn btn-ghost px-1.5 py-0.5 text-xs" onClick={load} title="刷新队列">
-          ↻
-        </button>
+        <span className="flex items-center gap-1">
+          <button className="btn btn-ghost px-1.5 py-0.5 text-xs" title="管理生词库" onClick={() => openPanel('words')}>
+            词库
+          </button>
+          <button className="btn btn-ghost px-1.5 py-0.5 text-xs" onClick={load} title="刷新队列">
+            ↻
+          </button>
+        </span>
       </div>
 
       {finished ? (

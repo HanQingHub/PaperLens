@@ -17,6 +17,7 @@ function makePaper(id: number, sort_order: number, project_id: number | null = n
     venue: null,
     year: null,
     doi: null,
+  arxiv_id: null,
     file_hash: `h${++seq}`,
     page_count: 1,
     open_count: 0,

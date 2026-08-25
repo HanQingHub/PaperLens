@@ -48,6 +48,7 @@ class Paper(Base):
     venue: Mapped[Optional[str]] = mapped_column(Text)
     year: Mapped[Optional[int]] = mapped_column(Integer)
     doi: Mapped[Optional[str]] = mapped_column(Text)
+    arxiv_id: Mapped[Optional[str]] = mapped_column(Text)
     file_hash: Mapped[str] = mapped_column(Text, nullable=False)
     page_count: Mapped[Optional[int]] = mapped_column(Integer)
     open_count: Mapped[int] = mapped_column(Integer, default=0)
