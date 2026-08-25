@@ -114,7 +114,9 @@ interface ReaderState {
   locateAnnotationId: number | null
 
   // actions
-  setDoc: (paper: Paper, pdf: PDFDocumentProxy, pageSizes: { w: number; h: number }[]) => void
+  setDoc: (paper: Paper, pdf: PDFDocumentProxy, pageSizes: { w: number; h: number }[], numPages: number) => void
+  /** 懒解析回填：替换 [start, start+sizes.length) 段的页尺寸（等比占位 → 真实值） */
+  appendPageSizes: (start: number, sizes: { w: number; h: number }[]) => void
   setLoading: (v: boolean) => void
   setLoadError: (e: string | null) => void
   setMode: (m: ViewMode) => void
@@ -174,8 +176,15 @@ export const useReader = create<ReaderState>((set) => ({
   searchFocusPage: null,
   locateAnnotationId: null,
 
-  setDoc: (paper, pdf, pageSizes) =>
-    set({ paper, pdf, numPages: pageSizes.length, pageSizes, loading: false, loadError: null }),
+  setDoc: (paper, pdf, pageSizes, numPages) =>
+    set({ paper, pdf, numPages, pageSizes, loading: false, loadError: null }),
+  appendPageSizes: (start, sizes) =>
+    set((s) => {
+      if (start < 0 || start + sizes.length > s.pageSizes.length) return {}
+      const next = s.pageSizes.slice()
+      for (let i = 0; i < sizes.length; i++) next[start + i] = sizes[i]
+      return { pageSizes: next }
+    }),
   setLoading: (v) => set({ loading: v }),
   setLoadError: (e) => set({ loadError: e, loading: false }),
   setMode: (m) => {

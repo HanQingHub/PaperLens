@@ -5,6 +5,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useNavigate, useParams } from 'react-router-dom'
 import { getDocument } from 'pdfjs-dist'
 import { api, fetchOcrBlocks, pdfFileUrl, saveBlobWithDialog, saveProgress } from '../../api/client'
+import { loadPaperCached } from './paperPrefetch'
 import { parseAnnotation, useReader } from '../../stores/readerStore'
 import { useReaderBus } from '../../stores/readerBus'
 import { useWords } from '../../stores/words'
@@ -26,6 +27,8 @@ import { toast } from '../shared/Toast'
 
 /** 页间垂直间距（与 page-wrapper 的 mb-4 一致） */
 const PAGE_GAP = 16
+/** 懒解析：打开时同步解析的页数（其余等比占位、后台分批回填） */
+const FIRST_PARSE_PAGES = 8
 
 // ── 小工具 ────────────────────────────────────────────────
 function pageTopOf(pageIndex: number, pageSizes: { w: number; h: number }[], scale: number) {
@@ -160,7 +163,7 @@ export default function ReaderPage() {
     let task: ReturnType<typeof getDocument> | null = null
     ;(async () => {
       try {
-        const [p, tk] = await Promise.all([api.paper(pid), api.fileToken(pid)])
+        const [p, tk] = await Promise.all([loadPaperCached(pid), api.fileToken(pid)])
         if (cancelled) return
         const res = await fetch(pdfFileUrl(pid, tk.token))
         if (!res.ok) throw new Error(`PDF 加载失败（HTTP ${res.status}）`)
@@ -173,15 +176,41 @@ export default function ReaderPage() {
         })
         const doc = await task.promise
         if (cancelled) return
-        const pages = await Promise.all(
-          Array.from({ length: doc.numPages }, (_, i) => doc!.getPage(i + 1)),
+        // 懒解析：只同步解析首屏页拿真实尺寸，其余按首页宽高比占位，
+        // 后台分批回填（大 PDF 的全页 getPage 是打开耗时主项）。
+        // 占位数组恒为 full-length，所有高度数学消费方无需感知。
+        const firstCount = Math.min(FIRST_PARSE_PAGES, doc.numPages)
+        const firstPages = await Promise.all(
+          Array.from({ length: firstCount }, (_, i) => doc!.getPage(i + 1)),
         )
-        const sizes = pages.map((pg) => {
+        if (cancelled) return
+        const sizes = firstPages.map((pg) => {
           const vp = pg.getViewport({ scale: 1 })
           return { w: vp.width, h: vp.height }
         })
-        if (cancelled) return
-        useReader.getState().setDoc(p, doc!, sizes)
+        const first = sizes[0] ?? { w: 612, h: 792 }
+        // 等比占位：未解析页沿用首页尺寸（学术 PDF 尺寸一致；回填后前缀恒定）
+        const fullSizes = Array.from({ length: doc.numPages }, (_, i) => sizes[i] ?? first)
+        useReader.getState().setDoc(p, doc!, fullSizes, doc.numPages)
+
+        // 后台分批回填真实尺寸：顺序解析保证已解析前缀高度恒定，
+        // 当前视口之前的页不再变化 → 视口内容不位移
+        const BATCH = 16
+        for (let start = firstCount; start < doc!.numPages; start += BATCH) {
+          if (cancelled) return
+          const end = Math.min(start + BATCH, doc!.numPages)
+          const batch = await Promise.all(
+            Array.from({ length: end - start }, (_, i) => doc!.getPage(start + i + 1)),
+          )
+          if (cancelled) return
+          const real = batch.map((pg) => {
+            const vp = pg.getViewport({ scale: 1 })
+            return { w: vp.width, h: vp.height }
+          })
+          useReader.getState().appendPageSizes(start, real)
+          // 让出主线程，避免大批量解析挤掉渲染帧
+          await new Promise((r) => setTimeout(r, 0))
+        }
 
         // 打开计数 + 读取旧进度（PUT open=true 会写回当前值，不覆盖）
         const prog = await api.readingProgress(pid).catch(() => null)
@@ -620,8 +649,9 @@ export default function ReaderPage() {
 
   const pagesIdx = useMemo(() => Array.from({ length: numPages }, (_, i) => i), [numPages])
 
-  // ── 渲染 ──
-  if (loadError) {
+  // ── 渲染：isStale 防止切换文档时闪现旧内容（useEffect reset 在首帧后才执行）──
+  const isStale = paper != null && paper.id !== pid
+  if (loadError && !isStale) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 bg-bg-soft">
         <p className="text-sm text-danger">{loadError}</p>
@@ -640,10 +670,10 @@ export default function ReaderPage() {
           <I d={icons.back} />
         </button>
         <div className="mx-1 flex min-w-0 flex-1 items-center gap-2">
-          <span className="truncate text-[13px] font-medium" title={paper?.title}>
-            {paper?.title ?? '…'}
+          <span className="truncate text-[13px] font-medium" title={isStale ? undefined : paper?.title}>
+            {isStale ? '…' : (paper?.title ?? '…')}
           </span>
-          {paper?.is_favorite && <span className="text-[11px] text-accent">★</span>}
+          {!isStale && paper?.is_favorite && <span className="text-[11px] text-accent">★</span>}
         </div>
 
         {/* 页码 */}
@@ -729,7 +759,7 @@ export default function ReaderPage() {
 
       {/* ── 主区域 ── */}
       <div className="relative min-h-0 flex-1">
-        {loading ? (
+        {loading || isStale ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-text-faint">
             <div className="spinner spinner-lg" />
             <span className="text-xs">正在打开论文…</span>
@@ -771,13 +801,13 @@ export default function ReaderPage() {
         )}
 
         {/* 大纲抽屉 */}
-        {outlineOpen && !loading && <OutlineDrawer onGoto={(p) => gotoPage(p, false)} />}
+        {outlineOpen && !loading && !isStale && <OutlineDrawer onGoto={(p) => gotoPage(p, false)} />}
 
         {/* 页内搜索 */}
-        {searchOpen && !loading && <SearchBar onEnterPage={(i) => scrollToPosition(i + 1, 0)} />}
+        {searchOpen && !loading && !isStale && <SearchBar onEnterPage={(i) => scrollToPosition(i + 1, 0)} />}
 
         {/* OCR 状态条 */}
-        {!loading && paper && (
+        {!loading && !isStale && paper && (
           <OcrBanner
             paper={paper}
             status={ocrStatus}

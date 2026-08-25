@@ -1,6 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PaperLens server 打包 spec（PyInstaller 6.x，onedir）→ dist/paperlens-server/
 
+onedir 免去 onefile 每次启动的 48MB 自解压（启动耗时 -1.3s）。
+产物经 build_release.ps1 同步到 apps/desktop/src-tauri/binaries/paperlens-server/，
+随 tauri bundle.resources 打进安装包与更新包。
+
 用法（仓库根目录）：
   .venv\Scripts\pyinstaller --noconfirm scripts\package_server.spec --distpath dist --workpath dist\.work-server
 """
@@ -47,6 +51,8 @@ hiddenimports = [
     "alembic", "mako",
     # SQLAlchemy 2.0 依赖
     "greenlet",
+    # llm_service 空闲内存看门狗
+    "psutil",
 ]
 hiddenimports += collect_submodules("app")
 

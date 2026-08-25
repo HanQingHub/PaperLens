@@ -1,6 +1,7 @@
 // 论文卡片：标题/作者/年份/标签/收藏/页数/OCR 状态/打开计数 + ⋯ 菜单
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, useCallback } from 'react'
 import type { Paper } from '../../api/types'
+import { prefetchPaper } from '../reader/paperPrefetch'
 import type { CardDragProps } from './dnd/types'
 
 // 按文件 hash 生成稳定色相（0-359），用于卡片封面渐变装饰
@@ -67,6 +68,13 @@ export default function PaperCard({
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const hoverTimer = useRef(0)
+
+  const schedulePrefetch = useCallback(() => {
+    window.clearTimeout(hoverTimer.current)
+    hoverTimer.current = window.setTimeout(() => prefetchPaper(paper.id), 200)
+  }, [paper.id])
+  const cancelPrefetch = useCallback(() => window.clearTimeout(hoverTimer.current), [])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -84,6 +92,8 @@ export default function PaperCard({
       } ${insertSide ? `pl-dnd-indicator--${insertSide}` : ''}`}
       style={{ '--pl-hue': String(hueOf(paper)) } as CSSProperties}
       onClick={() => onOpen(paper)}
+      onMouseEnter={schedulePrefetch}
+      onMouseLeave={cancelPrefetch}
       {...dragProps}
     >
       <div className="pl-card-glow" aria-hidden />

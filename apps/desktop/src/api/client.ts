@@ -31,6 +31,22 @@ export class ApiError extends Error {
   }
 }
 
+/** 等待后端就绪（启动期 server 未起时 connection refused，本机回环失败零成本）。
+ *  超时抛错，由调用方决定降级界面；ready 判定即 health 200（lifespan 完成后才 bind）。 */
+export async function waitForBackend(timeoutMs = 30000): Promise<void> {
+  const start = Date.now()
+  for (;;) {
+    try {
+      const res = await fetch(`${BASE}/health`)
+      if (res.ok) return
+    } catch {
+      /* not ready yet */
+    }
+    if (Date.now() - start >= timeoutMs) throw new Error('后端启动超时')
+    await new Promise((r) => setTimeout(r, 200))
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   if (token) headers.set('Authorization', `Bearer ${token}`)

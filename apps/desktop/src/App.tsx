@@ -15,7 +15,7 @@ import SettingsPage from './features/settings/SettingsPage'
 import UpdaterBoot from './features/updater/UpdaterBoot'
 
 export default function App() {
-  const { booted, boot, user, settings } = useAuth()
+  const { booted, boot, bootError, retryBoot, user, settings } = useAuth()
 
   useEffect(() => {
     boot()
@@ -63,7 +63,14 @@ export default function App() {
   }, [])
 
   if (!booted) {
-    return (
+    return bootError ? (
+      <div className="flex h-full flex-col items-center justify-center gap-4 bg-bg">
+        <p className="text-sm text-danger">{bootError}</p>
+        <button className="btn btn-primary" onClick={retryBoot}>
+          重试
+        </button>
+      </div>
+    ) : (
       <div className="flex h-full items-center justify-center bg-bg">
         <div className="flex flex-col items-center gap-3 text-text-faint">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />

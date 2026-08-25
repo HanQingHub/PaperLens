@@ -1,6 +1,6 @@
 // 认证 + 用户设置 store
 import { create } from 'zustand'
-import { api, setToken } from '../api/client'
+import { api, ApiError, setToken, waitForBackend } from '../api/client'
 import type { AppSettings, User } from '../api/types'
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -40,7 +40,10 @@ interface AuthState {
   user: User | null
   settings: AppSettings
   booted: boolean
+  /** 启动失败（后端超时等非 401 错误）：置错误屏，等待用户重试 */
+  bootError: string | null
   boot: () => Promise<void>
+  retryBoot: () => Promise<void>
   login: (u: string, p: string, remember: boolean) => Promise<void>
   register: (u: string, p: string) => Promise<void>
   logout: () => Promise<void>
@@ -52,6 +55,7 @@ export const useAuth = create<AuthState>((set, get) => ({
   user: null,
   settings: DEFAULT_SETTINGS,
   booted: false,
+  bootError: null,
 
   boot: async () => {
     if (!get().token) {
@@ -59,12 +63,25 @@ export const useAuth = create<AuthState>((set, get) => ({
       return
     }
     try {
+      // server 未就绪时等待而非失败：启动竞态下静默登出是历史 bug
+      await waitForBackend()
       const me = await api.me()
-      set({ user: me.user, settings: coerceSettings(me.settings), booted: true })
-    } catch {
-      setToken(null)
-      set({ token: null, user: null, booted: true })
+      set({ user: me.user, settings: coerceSettings(me.settings), booted: true, bootError: null })
+    } catch (e) {
+      // 仅明确的 401（会话失效）清 token；网络/超时错误保会话进错误屏
+      if (e instanceof ApiError && e.status === 401) {
+        setToken(null)
+        set({ token: null, user: null, booted: true, bootError: null })
+        return
+      }
+      set({ bootError: e instanceof Error ? e.message : '启动失败' })
     }
+  },
+
+  /** 错误屏重试：回到未启动态重新走 boot */
+  retryBoot: async () => {
+    set({ booted: false, bootError: null })
+    await get().boot()
   },
 
   login: async (username, password, remember) => {

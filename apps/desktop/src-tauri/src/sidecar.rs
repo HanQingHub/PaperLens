@@ -1,18 +1,22 @@
 //! Sidecar (paperlens-server) process management: spawn, Job Object
 //! attachment, token handshake and exit cleanup.
+//!
+//! The server ships as a PyInstaller **onedir** directory under
+//! `resources/paperlens-server/` (bundled via `bundle.resources`, same
+//! mechanism as the OCR worker) — onefile self-extraction cost ~1.3s per
+//! launch and is the single largest startup regression. Spawning therefore
+//! goes through a plain `std::process::Command` resolved from the resource
+//! dir instead of tauri-plugin-shell's flat `externalBin` sidecar channel.
 
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::Mutex;
 
 use tauri::{Emitter, Manager};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
 
-/// Sidecar binary name as declared in `bundle.externalBin`.
-/// tauri-plugin-shell resolves it flat relative to the app exe dir
-/// (`{exe_dir}/paperlens-server.exe`), so the `binaries/` source prefix
-/// must NOT be included here.
-const SIDECAR_BIN: &str = "paperlens-server";
+/// Server exe path relative to the resource dir (`resources/paperlens-server/`).
+/// Mirrors the `bundle.resources` mapping in tauri.conf.json.
+const SERVER_RESOURCE_EXE: &str = "resources/paperlens-server/paperlens-server.exe";
 
 /// Fixed backend port (see `apps/server/app/core/config.py`, `PAPERLENS_PORT`).
 /// Injected explicitly to shield against a system-level PAPERLENS_PORT.
@@ -30,11 +34,13 @@ const TOKEN_FILE: &str = ".token";
 /// stays `Send + Sync`. Keeping the handle alive here prevents it from being
 /// closed early (which would kill the job's processes prematurely); it is
 /// closed explicitly on exit, cascading termination through the process tree.
+/// The child handle itself lives in the wait thread; the guard keeps only the
+/// pid for a fast-path terminate before the Job Object backstop closes.
 struct SidecarGuard {
     /// Windows Job Object handle (`0` when unavailable / non-Windows).
     job: isize,
-    /// The spawned sidecar child process, if any.
-    child: Option<CommandChild>,
+    /// The spawned sidecar pid, if any.
+    pid: Option<u32>,
 }
 
 /// Boot contract shared with the exit path: absent when there is no backend
@@ -42,7 +48,7 @@ struct SidecarGuard {
 pub(crate) struct BootInfo {
     pub token: String,
     pub port: u16,
-    /// Set by the command-event drain task once the sidecar process exits.
+    /// Set by the wait thread once the sidecar process exits.
     pub terminated: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -66,7 +72,7 @@ pub(crate) fn setup_sidecar(app: &mut tauri::App) -> Result<(), Box<dyn std::err
             // Degrade instead of panicking: without a handshake token the
             // backend cannot be trusted, so continue without it.
             println!("[error] failed to generate boot handshake token: {e}; continuing without backend");
-            app.manage(Mutex::new(SidecarGuard { job: 0, child: None }));
+            app.manage(Mutex::new(SidecarGuard { job: 0, pid: None }));
             return Ok(());
         }
     };
@@ -84,22 +90,30 @@ pub(crate) fn setup_sidecar(app: &mut tauri::App) -> Result<(), Box<dyn std::err
         }
     }
 
-    // (c) Spawn the sidecar, injecting the handshake env contract.
-    // Port is fixed (PAPERLENS_PORT) so the frontend BASE URL can be static.
-    let mut command = app
-        .shell()
-        .sidecar(SIDECAR_BIN)?
-        .env("PAPERLENS_BOOT_TOKEN", &token)
-        .env("PAPERLENS_DATA_DIR", &data_dir)
-        .env("PAPERLENS_PORT", DEFAULT_PORT);
+    // (c) Resolve the onedir server from the resource dir and spawn it with
+    // the handshake env contract. Port is fixed (PAPERLENS_PORT) so the
+    // frontend BASE URL can be static. The resource dir is absent in dev
+    // mode (scripts/dev.py provides the backend there) — spawn failure then
+    // degrades to "continue without backend" exactly like a missing sidecar.
+    let server_exe = app
+        .path()
+        .resource_dir()
+        .map(|res| strip_resource_prefix(res).join(SERVER_RESOURCE_EXE))
+        .ok();
 
-    // (d) Point the backend at bundled read-only resources (install dir).
-    // Resource dir layout mirrors `bundle.resources` in tauri.conf.json;
-    // absent in dev mode, where scripts/dev.py provides the equivalents.
+    let Some(server_exe) = server_exe.filter(|p| p.is_file()) else {
+        println!(
+            "[warn] server not found at resource path '{SERVER_RESOURCE_EXE}'; \
+             continuing without backend (expected in dev mode)"
+        );
+        app.manage(Mutex::new(SidecarGuard { job: 0, pid: None }));
+        return Ok(());
+    };
+
     // Tauri v2 resource_dir() on Windows may return verbatim \\?\ paths
     // (canonicalized); strip the prefix so consumers (SQLite URI, Popen)
     // receive normal drive paths.
-    fn strip_verbatim(p: std::path::PathBuf) -> std::path::PathBuf {
+    fn strip_resource_prefix(p: std::path::PathBuf) -> std::path::PathBuf {
         let s = p.to_string_lossy();
         if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
             std::path::PathBuf::from(format!(r"\\{}", rest))
@@ -109,33 +123,56 @@ pub(crate) fn setup_sidecar(app: &mut tauri::App) -> Result<(), Box<dyn std::err
             p
         }
     }
+
+    let mut command = std::process::Command::new(&server_exe);
+    command
+        .env("PAPERLENS_BOOT_TOKEN", &token)
+        .env("PAPERLENS_DATA_DIR", &data_dir)
+        .env("PAPERLENS_PORT", DEFAULT_PORT)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    // (d) Point the backend at bundled read-only resources (install dir).
+    // Resource dir layout mirrors `bundle.resources` in tauri.conf.json.
     if let Ok(res_dir) = app.path().resource_dir() {
-        let models = strip_verbatim(res_dir.join("resources").join("models"));
+        let res_dir = strip_resource_prefix(res_dir);
+        let models = res_dir.join("resources").join("models");
         if models.is_dir() {
-            command = command.env("PAPERLENS_MODELS_DIR", models);
+            command.env("PAPERLENS_MODELS_DIR", models);
         }
-        let ecdict = strip_verbatim(res_dir.join("resources").join("ecdict.db"));
+        let ecdict = res_dir.join("resources").join("ecdict.db");
         if ecdict.is_file() {
-            command = command.env("PAPERLENS_ECDICT_PATH", ecdict);
+            command.env("PAPERLENS_ECDICT_PATH", ecdict);
         }
-        let ocr = strip_verbatim(
-            res_dir
-                .join("resources")
-                .join("paperlens-ocr")
-                .join("paperlens-ocr.exe"),
-        );
+        let ocr = res_dir
+            .join("resources")
+            .join("paperlens-ocr")
+            .join("paperlens-ocr.exe");
         if ocr.is_file() {
-            command = command.env("PAPERLENS_OCR_EXE", ocr);
+            command.env("PAPERLENS_OCR_EXE", ocr);
         }
+    }
+
+    #[cfg(windows)]
+    {
+        // CREATE_NO_WINDOW: the onedir exe is a console subsystem binary
+        // (PyInstaller bootloader); without this flag a console window
+        // flashes on every launch.
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
     }
 
     let app_handle = app.handle().clone();
     match command.spawn() {
-        Ok((mut rx, child)) => {
-            let pid = child.pid();
-            println!("[info] sidecar '{SIDECAR_BIN}' spawned (pid {pid})");
+        Ok(mut child) => {
+            let pid = child.id();
+            println!(
+                "[info] server '{}' spawned (pid {pid})",
+                server_exe.display()
+            );
 
-            // 退出时序标志：drain 任务在 sidecar 进程退出时置位，
+            // 退出时序标志：wait 线程在 server 进程退出时置位，
             // try_graceful_shutdown 据此等待优雅退出完成（而非仅 200 响应）。
             let terminated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             app.manage(crate::sidecar::BootInfo {
@@ -144,30 +181,33 @@ pub(crate) fn setup_sidecar(app: &mut tauri::App) -> Result<(), Box<dyn std::err
                 terminated: std::sync::Arc::clone(&terminated),
             });
 
-            // Drain the command-event channel (bounded, capacity 1): without a
-            // consumer the sidecar's stdout/stderr pipes would fill up and
-            // block the backend. Forward output to the shell console.
-            tauri::async_runtime::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        CommandEvent::Stdout(line) | CommandEvent::Stderr(line) => {
-                            println!("[sidecar] {}", String::from_utf8_lossy(&line));
-                        }
-                        CommandEvent::Error(e) => {
-                            println!("[error] sidecar error: {e}");
-                        }
-                        CommandEvent::Terminated(status) => {
-                            println!("[info] sidecar terminated: {status:?}");
-                            terminated.store(true, std::sync::atomic::Ordering::SeqCst);
-                            // Notify the frontend so it can surface a
-                            // "backend exited" banner (event name is the
-                            // consumer contract; payload is exit code/signal).
-                            let _ = app_handle.emit("sidecar-terminated", status);
-                        }
-                        // CommandEvent is non_exhaustive; ignore future variants.
-                        _ => {}
-                    }
-                }
+            // Drain stdout/stderr on dedicated threads: unread pipes fill up
+            // and block the backend. Forward output to the shell console.
+            // The child handle moves into the wait thread; the guard keeps
+            // only the pid (Job Object close is the real terminator).
+            if let Some(stdout) = child.stdout.take() {
+                std::thread::spawn(move || {
+                    drain_pipe(stdout, "[sidecar]");
+                });
+            }
+            if let Some(stderr) = child.stderr.take() {
+                std::thread::spawn(move || {
+                    drain_pipe(stderr, "[sidecar:err]");
+                });
+            }
+            let wait_handle = app_handle.clone();
+            let wait_terminated = std::sync::Arc::clone(&terminated);
+            std::thread::spawn(move || {
+                let status = child.wait();
+                println!("[info] server exited: {status:?}");
+                wait_terminated.store(true, std::sync::atomic::Ordering::SeqCst);
+                // Notify the frontend so it can surface a
+                // "backend exited" banner (event name is the
+                // consumer contract; payload is exit code/signal).
+                let _ = wait_handle.emit(
+                    "sidecar-terminated",
+                    status.map(|s| s.code()).unwrap_or(None),
+                );
             });
 
             // (e) Attach the sidecar to a kill-on-close Job Object.
@@ -176,23 +216,31 @@ pub(crate) fn setup_sidecar(app: &mut tauri::App) -> Result<(), Box<dyn std::err
                 println!("[warn] sidecar is not attached to a Job Object; it may outlive the shell");
             }
 
-            app.manage(Mutex::new(SidecarGuard {
-                job,
-                child: Some(child),
-            }));
+            app.manage(Mutex::new(SidecarGuard { job, pid: Some(pid) }));
         }
-        // Development convenience: the sidecar exe may not exist yet. Do not
-        // panic; the frontend can still load and show a connection error.
         Err(e) => {
             println!(
-                "[warn] failed to spawn sidecar '{SIDECAR_BIN}': {e}. \
-                 Continuing without backend (expected while the sidecar binary is absent)."
+                "[warn] failed to spawn server '{}': {e}. \
+                 Continuing without backend.",
+                server_exe.display()
             );
-            app.manage(Mutex::new(SidecarGuard { job: 0, child: None }));
+            app.manage(Mutex::new(SidecarGuard { job: 0, pid: None }));
         }
     }
 
     Ok(())
+}
+
+/// Forward a child pipe to the shell console until EOF.
+fn drain_pipe(pipe: impl std::io::Read, prefix: &str) {
+    use std::io::BufRead;
+    let reader = std::io::BufReader::new(pipe);
+    for line in reader.lines() {
+        match line {
+            Ok(l) => println!("{prefix} {l}"),
+            Err(_) => break,
+        }
+    }
 }
 
 /// Create an anonymous Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
@@ -344,8 +392,9 @@ pub(crate) fn try_graceful_shutdown(info: &BootInfo) {
     println!("[warn] graceful shutdown: timed out waiting for backend exit, falling back");
 }
 
-/// Exit cleanup: kill the direct child, then close the Job Object handle so
-/// any descendant processes (worker processes, etc.) are terminated too.
+/// Exit cleanup: terminate the direct child (fast path), then close the
+/// Job Object handle so any descendant processes (worker processes, etc.)
+/// are terminated too.
 pub(crate) fn shutdown_sidecar(app_handle: &tauri::AppHandle) {
     let Some(guard) = app_handle.try_state::<Mutex<SidecarGuard>>() else {
         return;
@@ -354,10 +403,9 @@ pub(crate) fn shutdown_sidecar(app_handle: &tauri::AppHandle) {
         return;
     };
 
-    if let Some(child) = g.child.take() {
-        if let Err(e) = child.kill() {
-            println!("[warn] failed to kill sidecar: {e}");
-        }
+    if let Some(pid) = g.pid.take() {
+        #[cfg(windows)]
+        terminate_pid(pid);
     }
 
     #[cfg(windows)]
@@ -366,5 +414,21 @@ pub(crate) fn shutdown_sidecar(app_handle: &tauri::AppHandle) {
             windows_sys::Win32::Foundation::CloseHandle(g.job as _);
         }
         g.job = 0;
+    }
+}
+
+/// Best-effort terminate by pid; the Job Object close right after is the
+/// authoritative backstop (this only makes the direct child exit faster so
+/// uvicorn's port is released before the window teardown completes).
+#[cfg(windows)]
+fn terminate_pid(pid: u32) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if !handle.is_null() {
+            TerminateProcess(handle, 0);
+            CloseHandle(handle);
+        }
     }
 }

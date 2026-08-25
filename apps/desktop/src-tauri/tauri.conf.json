@@ -29,8 +29,8 @@
     "active": true,
     "targets": ["nsis"],
     "createUpdaterArtifacts": true,
-    "externalBin": ["binaries/paperlens-server"],
     "resources": {
+      "binaries/paperlens-server": "resources/paperlens-server",
       "bundle-resources/models/Qwen3.5-0.8B-Q4_K_M.gguf": "resources/models/Qwen3.5-0.8B-Q4_K_M.gguf",
       "bundle-resources/ecdict.db": "resources/ecdict.db",
       "ocr-dist/paperlens-ocr": "resources/paperlens-ocr"

@@ -7,9 +7,12 @@ apps/desktop/src-tauri/ocr-dist/
 apps/desktop/node_modules/
 node_modules/
 
-# binaries 下除占位 stub 外均为打包产物
+# binaries 下除占位目录外均为打包产物
 apps/desktop/src-tauri/binaries/*
-!apps/desktop/src-tauri/binaries/paperlens-server-x86_64-pc-windows-msvc.exe
+!apps/desktop/src-tauri/binaries/paperlens-server/
+apps/desktop/src-tauri/binaries/paperlens-server/_internal/
+apps/desktop/src-tauri/binaries/paperlens-server/paperlens-server.exe
+!apps/desktop/src-tauri/binaries/paperlens-server/PLACEHOLDER.md
 
 # Python
 .venv/

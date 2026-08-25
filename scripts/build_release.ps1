@@ -117,12 +117,16 @@ npm run build
 if ($LASTEXITCODE -ne 0) { throw '前端构建失败' }
 Pop-Location
 
-# ── 5. server onefile（覆盖 binaries/ 占位 stub）──
+# ── 5. server onedir（同步 binaries/paperlens-server/ 目录，随 bundle.resources 打包）──
 if (-not $SkipServer) {
-  Write-Host '==> PyInstaller server onefile'
-  & .venv\Scripts\pyinstaller.exe --noconfirm scripts\package_server_onefile.spec --distpath dist --workpath dist\.work-server-onefile
+  Write-Host '==> PyInstaller server onedir'
+  & .venv\Scripts\pyinstaller.exe --noconfirm scripts\package_server.spec --distpath dist --workpath dist\.work-server
   if ($LASTEXITCODE -ne 0) { throw 'server 打包失败' }
-  Copy-Item dist\paperlens-server.exe apps\desktop\src-tauri\binaries\paperlens-server-x86_64-pc-windows-msvc.exe -Force
+  $dest = 'apps\desktop\src-tauri\binaries\paperlens-server'
+  Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
+  Copy-Item dist\paperlens-server $dest -Recurse -Force
+  $copied = Join-Path $dest 'paperlens-server.exe'
+  if (-not (Test-Path $copied)) { throw 'server 产物同步到 binaries 失败' }
 }
 
 # ── 6. 签名环境变量（私钥丢失将无法再发布更新，务必备份 scripts/keys/）──
