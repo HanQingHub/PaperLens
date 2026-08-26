@@ -159,6 +159,7 @@ export default function ReviewPage() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (deleting != null) return // 确认弹窗打开时快捷键全部失效（含 Esc，避免双动作）
       if (e.key === ' ') {
         if (current && !revealed) {
           e.preventDefault()
@@ -178,7 +179,7 @@ export default function ReviewPage() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current, revealed, reviewing])
+  }, [current, revealed, reviewing, deleting])
 
   if (loading) {
     return (
@@ -270,7 +271,7 @@ export default function ReviewPage() {
                 <path d="M20 6 9 17l-5-5" />
               </svg>
             </div>
-            <p className="text-lg font-medium">{queue.length === 0 && !loading ? '当前分组没有到期生词' : '今日复习完成 🎉'}</p>
+            <p className="text-lg font-medium">{queue.length === 0 ? '当前分组没有到期生词' : '今日复习完成 🎉'}</p>
             <p className="mt-2 text-sm text-text-faint">
               今日已复习 <b className="text-accent">{stats?.done ?? 0}</b> 词 · 剩余到期 <b className="text-accent">{stats?.due ?? 0}</b> 词
             </p>

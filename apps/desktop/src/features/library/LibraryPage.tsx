@@ -456,6 +456,7 @@ export default function LibraryPage() {
     refreshProjects()
   }
   const importArxiv = async () => {
+    if (arxivBusy) return // 防重入：busy 期间连按 Enter 不发第二次请求
     const id = arxivInput.trim()
     if (!id) return
     setArxivBusy(true)
