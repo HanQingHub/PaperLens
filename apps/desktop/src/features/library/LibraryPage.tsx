@@ -677,11 +677,11 @@ export default function LibraryPage() {
             }}
           />
           {arxivOpen ? (
-            <div className="flex items-center gap-1.5 rounded-lg border border-border bg-panel px-2 py-1 shadow-sm focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/20">
-              <span className="shrink-0 text-[11px] font-medium text-accent">arXiv</span>
+            <div className="relative w-44">
+              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px] font-medium text-accent">arXiv</span>
               <input
-                className="h-7 w-40 border-0 bg-transparent px-1.5 text-[13px] outline-none placeholder:text-text-faint"
-                placeholder="2401.12345 / arXiv:2401.12345"
+                className="input h-7 pr-7 pl-11! text-[13px]"
+                placeholder="2401.12345"
                 value={arxivInput}
                 autoFocus
                 onChange={(e) => setArxivInput(e.target.value)}
@@ -689,11 +689,13 @@ export default function LibraryPage() {
                   if (e.key === 'Enter') importArxiv()
                   if (e.key === 'Escape') setArxivOpen(false)
                 }}
+                onBlur={() => {
+                  if (!arxivBusy && !arxivInput) setArxivOpen(false)
+                }}
               />
-              <button className="btn btn-primary h-7 shrink-0 px-3 text-xs" onClick={importArxiv} disabled={arxivBusy}>
-                {arxivBusy ? <span className="spinner" /> : '导入'}
-              </button>
-              <button className="btn btn-ghost h-7 w-7 shrink-0 p-0 text-xs" onClick={() => setArxivOpen(false)} aria-label="关闭">✕</button>
+              {arxivBusy && (
+                <span className="spinner absolute right-2 top-1/2 -translate-y-1/2" style={{ width: 12, height: 12, borderWidth: 1.5 }} />
+              )}
             </div>
           ) : (
             <button className="btn h-7 gap-1 px-2.5 text-xs" onClick={() => setArxivOpen(true)} disabled={uploading} title="通过 arXiv ID 联网导入">

@@ -1,8 +1,11 @@
 // 全屏生词复习页（替代右侧栏小面板）—— 大卡片 + 分组侧栏 + 统计
+// 快捷键：空格 显示释义 · 1/2/3 忘了/模糊/记得 · Esc 隐藏
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import type { Word, DictionaryEntry } from '../../api/types'
+import { useUi } from '../../stores/ui'
 import { useWords } from '../../stores/words'
+import { ConfirmModal } from '../shared/Modal'
 import { toast } from '../shared/Toast'
 import { STAGE_LABELS } from '../words/stageLabels'
 
@@ -10,6 +13,8 @@ const STAGES: (0 | 1 | 2)[] = [0, 1, 2]
 
 export default function ReviewPage() {
   const bumpWord = useWords((s) => s.bump)
+  const removeWord = useWords((s) => s.remove)
+  const openPanel = useUi((s) => s.openPanel)
   const [queue, setQueue] = useState<Word[]>([])
   const [idx, setIdx] = useState(0)
   const [revealed, setRevealed] = useState(false)
@@ -19,6 +24,11 @@ export default function ReviewPage() {
   const [reviewing, setReviewing] = useState(false)
   const [groupFilter, setGroupFilter] = useState<string>('')
   const [groups, setGroups] = useState<{ name: string; count: number }[]>([])
+  const [creating, setCreating] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [deleting, setDeleting] = useState<Word | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [libStats, setLibStats] = useState<{ total: number; learning: number; mastered: number } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -43,6 +53,26 @@ export default function ReviewPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  // 词库全量分桶统计（完成态/空态展示用；队列空了才拉，避免每次复习多一个请求）
+  useEffect(() => {
+    if (queue.length > 0) return
+    let cancelled = false
+    api
+      .words()
+      .then((all) => {
+        if (cancelled) return
+        setLibStats({
+          total: all.length,
+          learning: all.filter((w) => w.stage === 1).length,
+          mastered: all.filter((w) => w.stage === 2).length,
+        })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [queue.length])
 
   const current = queue[idx] as Word | undefined
 
@@ -92,6 +122,64 @@ export default function ReviewPage() {
     }
   }
 
+  const createGroup = async () => {
+    const n = draft.trim()
+    if (!n) return toast('请输入分组名', 'error')
+    if (n.length > 20) return toast('名称最长20字', 'error')
+    if (groups.some((g) => g.name === n)) return toast('已存在', 'error')
+    try {
+      await api.createWordGroup(n)
+      toast(`分组「${n}」已创建`, 'ok')
+      setCreating(false)
+      setDraft('')
+      setGroupFilter(n)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '创建失败', 'error')
+    }
+  }
+
+  const confirmDelete = async () => {
+    if (!deleting) return
+    setDeleteBusy(true)
+    try {
+      await api.deleteWord(deleting.id)
+      removeWord(deleting.id)
+      toast(`已删除「${deleting.lemma}」`, 'ok')
+      setDeleting(null)
+      load()
+    } catch {
+      toast('删除失败', 'error')
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
+
+  // 键盘快捷键：空格翻面 / 1·2·3 评分 / Esc 隐藏
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (e.key === ' ') {
+        if (current && !revealed) {
+          e.preventDefault()
+          setRevealed(true)
+        }
+        return
+      }
+      if (e.key === 'Escape') {
+        if (revealed) setRevealed(false)
+        return
+      }
+      if (!revealed || reviewing || !current) return
+      if (e.key === '1') answer(2)
+      else if (e.key === '2') answer(3)
+      else if (e.key === '3') answer(5)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current, revealed, reviewing])
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -128,10 +216,41 @@ export default function ReviewPage() {
               className={`flex justify-between rounded-md px-3 py-1.5 text-left text-sm ${groupFilter === g.name ? 'bg-accent text-white' : 'hover:bg-bg-soft'}`}
               onClick={() => setGroupFilter(g.name)}
             >
-              <span>{g.name}</span>
-              <span className="text-xs opacity-70">{g.count}</span>
+              <span className="truncate">{g.name}</span>
+              <span className="ml-1 shrink-0 text-xs opacity-70">{g.count}</span>
             </button>
           ))}
+          {creating ? (
+            <div className="mt-1 flex flex-col gap-1">
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="分组名（≤20字）"
+                maxLength={20}
+                className="input h-7 px-2 text-xs"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') setCreating(false)
+                  if (e.key === 'Enter') createGroup()
+                }}
+              />
+              <div className="flex gap-1">
+                <button className="btn btn-primary h-7 flex-1 px-2 text-[11px]" onClick={createGroup}>
+                  创建
+                </button>
+                <button className="btn btn-ghost h-7 px-2 text-[11px]" onClick={() => setCreating(false)}>
+                  取消
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              className="mt-1 rounded-md border border-dashed border-border px-3 py-1.5 text-left text-[11px] text-accent transition-colors hover:border-accent"
+              onClick={() => setCreating(true)}
+            >
+              ＋ 新建分组
+            </button>
+          )}
         </div>
         <div className="mt-6 border-t border-border pt-4">
           <div className="text-xs text-text-faint">
@@ -142,13 +261,32 @@ export default function ReviewPage() {
         </div>
       </div>
 
-      {/* 主卡片区 */}
-      <div className="flex flex-1 flex-col items-center justify-center p-8 bg-bg-soft">
+      {/* 主卡片区（背景透明，透出 AppShell 层 Waves 波纹） */}
+      <div className="flex flex-1 flex-col items-center justify-center p-8">
         {!current ? (
-          <div className="text-center">
-            <p className="text-lg font-medium">今日复习完成 🎉</p>
-            <p className="mt-2 text-sm text-text-faint">当前分组没有到期的生词，去读一篇论文吧</p>
-            <button className="btn btn-primary mt-4" onClick={load}>刷新</button>
+          <div className="w-full max-w-[420px] rounded-xl border border-border bg-panel p-8 text-center shadow-lg">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full" style={{ background: 'var(--ok)' }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+            </div>
+            <p className="text-lg font-medium">{queue.length === 0 && !loading ? '当前分组没有到期生词' : '今日复习完成 🎉'}</p>
+            <p className="mt-2 text-sm text-text-faint">
+              今日已复习 <b className="text-accent">{stats?.done ?? 0}</b> 词 · 剩余到期 <b className="text-accent">{stats?.due ?? 0}</b> 词
+            </p>
+            {libStats && (
+              <p className="mt-1 text-xs text-text-faint">
+                词库共 {libStats.total} 词 · 学习中 {libStats.learning} · 已掌握 {libStats.mastered}
+              </p>
+            )}
+            <div className="mt-5 flex items-center justify-center gap-2">
+              <button className="btn btn-primary px-4" onClick={load}>
+                刷新队列
+              </button>
+              <button className="btn px-4" onClick={() => openPanel('words')}>
+                打开词库
+              </button>
+            </div>
           </div>
         ) : (
           <div className="w-full max-w-[640px] rounded-xl border border-border bg-panel p-8 shadow-lg">
@@ -174,7 +312,7 @@ export default function ReviewPage() {
 
             {!revealed ? (
               <div className="text-center">
-                <button className="btn btn-primary px-6 py-2" onClick={() => setRevealed(true)}>
+                <button className="btn btn-primary px-6 py-2" onClick={() => setRevealed(true)} title="空格">
                   显示释义
                 </button>
                 <p className="mt-3 text-xs text-text-faint">回想一下，然后点击查看</p>
@@ -202,26 +340,49 @@ export default function ReviewPage() {
                   </div>
                 )}
                 <div className="flex gap-2 justify-center">
-                  <button className="btn flex-1 bg-red-50 text-red-600 hover:bg-red-100" onClick={() => answer(2)} disabled={reviewing}>
+                  <button className="btn flex-1 bg-red-50 text-red-600 hover:bg-red-100" onClick={() => answer(2)} disabled={reviewing} title="快捷键 1">
                     忘了
                   </button>
-                  <button className="btn flex-1 bg-yellow-50 text-yellow-700 hover:bg-yellow-100" onClick={() => answer(3)} disabled={reviewing}>
+                  <button className="btn flex-1 bg-yellow-50 text-yellow-700 hover:bg-yellow-100" onClick={() => answer(3)} disabled={reviewing} title="快捷键 2">
                     模糊
                   </button>
-                  <button className="btn flex-1 bg-green-50 text-green-700 hover:bg-green-100" onClick={() => answer(5)} disabled={reviewing}>
+                  <button className="btn flex-1 bg-green-50 text-green-700 hover:bg-green-100" onClick={() => answer(5)} disabled={reviewing} title="快捷键 3">
                     记得
                   </button>
                 </div>
-                <div className="mt-4 flex justify-center gap-2 text-xs text-text-faint">
+                <div className="mt-4 flex items-center justify-center gap-3 text-xs text-text-faint">
                   <span>{idx + 1} / {queue.length}</span>
                   <span>·</span>
                   <button className="hover:text-accent" onClick={() => setRevealed(false)}>隐藏</button>
+                  <span>·</span>
+                  <button className="hover:text-accent" onClick={() => openPanel('words')}>在词库中管理</button>
+                  <span>·</span>
+                  <button
+                    className="hover:text-danger"
+                    title="从词库删除该生词"
+                    onClick={() => setDeleting(current)}
+                  >
+                    删除
+                  </button>
                 </div>
               </>
             )}
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        open={deleting != null}
+        title="删除生词"
+        danger
+        busy={deleteBusy}
+        onClose={() => setDeleting(null)}
+        onConfirm={confirmDelete}
+      >
+        <p className="text-xs text-text-soft">
+          删除「{deleting?.lemma}」？复习记录与例句将一并清除，正文高亮同步消失。
+        </p>
+      </ConfirmModal>
     </div>
   )
 }

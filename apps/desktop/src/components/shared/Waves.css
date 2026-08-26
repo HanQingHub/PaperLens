@@ -1,0 +1,32 @@
+/* Waves 波纹背景（React Bits）。::before 为指针跟随光点：
+   源码的 calc(var(-0.5rem) - 50%) 为无效 var 引用，已修正为 --x/--y
+   （组件 tick 内 setProperty 写入）；光点色由 #160000 主题化为 --accent */
+.waves {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.waves::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0.5rem;
+  height: 0.5rem;
+  background: var(--accent);
+  border-radius: 50%;
+  transform: translate3d(calc(var(--x) - 50%), calc(var(--y) - 50%), 0);
+  will-change: transform;
+}
+
+.waves-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

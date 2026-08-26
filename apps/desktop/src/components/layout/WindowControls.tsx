@@ -1,5 +1,9 @@
 // 窗口控制小部件：— 最小化 / ✕ 退出（无边框窗口的自绘控制，无最大化按钮——产品要求保持全屏沉浸）
 // 固定悬浮右上角，全屏与窗口化（F11）下均常驻；close 走 CloseRequested → 壳层优雅关闭链路。
+// 非 Tauri 环境（浏览器 dev 调试）不渲染：getCurrentWindow 渲染期裸读
+// __TAURI_INTERNALS__.metadata 会抛 TypeError，无守卫曾是整树白屏根因之一。
+import { useMemo } from 'react'
+import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 
 const Btn = ({
@@ -26,7 +30,15 @@ const Btn = ({
 )
 
 export default function WindowControls() {
-  const win = getCurrentWindow()
+  const win = useMemo(() => {
+    if (!isTauri()) return null
+    try {
+      return getCurrentWindow()
+    } catch {
+      return null
+    }
+  }, [])
+  if (!win) return null
   return (
     <div className="fixed right-1.5 top-1.5 z-[100] flex items-center gap-1">
       <Btn
