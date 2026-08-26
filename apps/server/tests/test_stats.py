@@ -37,7 +37,9 @@ def test_stats_today_and_total(client, tmp_path):
     body = r.json()
     assert body["today_s"] == 600
     assert body["total_s"] == 900
-    today_iso = now.date().isoformat()
+    # 服务器按用户本地时区分桶（stats_service._local_date 转 astimezone().date()），
+    # 断言必须用本地日期而非 UTC 日期，否则本地 0-8 点时段会错位一整天
+    today_iso = now.astimezone().date().isoformat()
     assert [c for c in body["calendar"] if c["date"] == today_iso][0]["seconds"] == 600
     assert body["streak"] == 2
 
@@ -49,7 +51,8 @@ def test_stats_words_new_7d(client):
         client.post("/api/words", json={"lemma": lemma, "translation": "t"}, headers=auth(token))
     r = client.get("/api/stats/overview", headers=auth(token))
     body = r.json()
-    today_entry = [w for w in body["words_new_7d"] if w["date"] == now.date().isoformat()][0]
+    # 同上方：words_new_7d 亦按本地日期分桶
+    today_entry = [w for w in body["words_new_7d"] if w["date"] == now.astimezone().date().isoformat()][0]
     assert today_entry["count"] == 3
     assert sum(w["count"] for w in body["words_new_7d"]) == 3
 
