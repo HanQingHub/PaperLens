@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -76,6 +77,12 @@ def list_groups(user: User = Depends(get_current_user), db: Session = Depends(ge
     return [{"name": name, "count": merged[name]} for name in sorted(merged, key=lambda n: (-merged[n], n))]
 
 
+def _ensure_group(db: Session, user_id: int, name: str) -> None:
+    """写路径统一 upsert 组行：保证任何被词引用的分组名都有 WordGroup 行（空组可持久化）。"""
+    if not db.query(WordGroup).filter(WordGroup.user_id == user_id, WordGroup.name == name).first():
+        db.add(WordGroup(user_id=user_id, name=name))
+
+
 class WordGroupIn(BaseModel):
     name: str
 
@@ -87,21 +94,24 @@ def create_group(body: WordGroupIn, user: User = Depends(get_current_user), db: 
         raise HTTPException(status_code=400, detail="分组名需 1-20 字符")
     if db.query(WordGroup).filter(WordGroup.user_id == user.id, WordGroup.name == name).first():
         raise HTTPException(status_code=409, detail="分组已存在")
-    db.add(WordGroup(user_id=user.id, name=name))
-    db.commit()
+    try:
+        db.add(WordGroup(user_id=user.id, name=name))
+        db.commit()
+    except IntegrityError:  # 并发同名兜底
+        db.rollback()
+        raise HTTPException(status_code=409, detail="分组已存在")
     return {"name": name, "count": 0}
 
 
 @router.delete("/groups/{name}", status_code=204)
 def delete_group(name: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     grp = db.query(WordGroup).filter(WordGroup.user_id == user.id, WordGroup.name == name).first()
-    if grp is None:
-        return None
-    # 清空归属词的分组（移至未分组）后再删组
+    # 归属词一律移至未分组（组行不存在时也清，兜底隐式组）
     db.query(Word).filter(Word.user_id == user.id, Word.group_name == name).update(
         {Word.group_name: None}, synchronize_session=False
     )
-    db.delete(grp)
+    if grp is not None:
+        db.delete(grp)
     db.commit()
     return None
 
@@ -176,6 +186,8 @@ def add_word(body: WordIn, user: User = Depends(get_current_user), db: Session =
             word.translation = translation
         if body.group_name is not None:
             word.group_name = group
+    if group:
+        _ensure_group(db, user.id, group)
     db.flush()
     if body.paper_id is not None and body.sentence:
         db.add(WordOccurrence(word_id=word.id, paper_id=body.paper_id,
@@ -208,6 +220,8 @@ def patch_word(word_id: int, body: WordPatch, user: User = Depends(get_current_u
     if body.group_name is not None:
         name = body.group_name.strip()
         w.group_name = name or None  # 空串 = 移出分组
+        if name:
+            _ensure_group(db, user.id, name)
     db.commit()
     return word_dict(w)
 

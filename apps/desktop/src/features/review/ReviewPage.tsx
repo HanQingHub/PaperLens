@@ -2,11 +2,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import type { Word, DictionaryEntry } from '../../api/types'
-import { useUi } from '../../stores/ui'
+import { useWords } from '../../stores/words'
 import { toast } from '../shared/Toast'
 import { STAGE_LABELS } from '../words/stageLabels'
 
+const STAGES: (0 | 1 | 2)[] = [0, 1, 2]
+
 export default function ReviewPage() {
+  const bumpWord = useWords((s) => s.bump)
   const [queue, setQueue] = useState<Word[]>([])
   const [idx, setIdx] = useState(0)
   const [revealed, setRevealed] = useState(false)
@@ -16,7 +19,6 @@ export default function ReviewPage() {
   const [reviewing, setReviewing] = useState(false)
   const [groupFilter, setGroupFilter] = useState<string>('')
   const [groups, setGroups] = useState<{ name: string; count: number }[]>([])
-  const { closePanel } = useUi()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -40,8 +42,7 @@ export default function ReviewPage() {
 
   useEffect(() => {
     load()
-    closePanel()
-  }, [load, closePanel])
+  }, [load])
 
   const current = queue[idx] as Word | undefined
 
@@ -60,7 +61,10 @@ export default function ReviewPage() {
     if (!current || reviewing) return
     setReviewing(true)
     try {
-      await api.reviewWord(current.id, q)
+      const r = await api.reviewWord(current.id, q)
+      // 复习结果回写词库 stageMap：正文高亮立即反映新掌握状态（B1 联动）
+      if (r.word) bumpWord(r.word)
+      setStats((s) => (s ? { ...s, done: s.done + 1 } : s))
       if (idx + 1 >= queue.length) {
         toast('今日复习完成 🎉', 'ok')
         load()
@@ -76,6 +80,18 @@ export default function ReviewPage() {
     }
   }
 
+  const setStage = async (stage: 0 | 1 | 2) => {
+    if (!current) return
+    try {
+      const w = await api.updateWord(current.id, { stage })
+      bumpWord(w)
+      setQueue((list) => list.map((x) => (x.id === current.id ? w : x)))
+      if (stage === 2) setIdx((i) => i + 1) // 已掌握移出队列
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '更新失败', 'error')
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -83,6 +99,10 @@ export default function ReviewPage() {
       </div>
     )
   }
+
+  // 掌握建议：interval≥21 且 stage=1（后端无复习历史明细，据此近似判定）
+  const suggestMaster =
+    current != null && current.stage === 1 && current.interval_days >= 21 && current.review_count >= 2
 
   return (
     <div className="flex h-full">
@@ -135,9 +155,21 @@ export default function ReviewPage() {
             <div className="mb-6 text-center">
               <h2 className="font-serif text-3xl font-bold">{current.lemma}</h2>
               {dict?.phonetic && <p className="mt-1 text-sm text-text-faint">/{dict.phonetic}/</p>}
-              <span className="mt-2 inline-block rounded-full bg-bg-soft px-2 py-0.5 text-xs text-text-faint">
-                {STAGE_LABELS[current.stage as 0|1|2]} · {current.group_name ?? '未分组'}
-              </span>
+              <div className="mt-3 flex items-center justify-center gap-1.5">
+                {STAGES.map((s) => (
+                  <button
+                    key={s}
+                    className={`badge cursor-pointer ${current.stage === s ? 'badge-accent' : ''}`}
+                    onClick={() => setStage(s)}
+                    title="手动调整阶段"
+                  >
+                    {STAGE_LABELS[s]}
+                  </button>
+                ))}
+                <span className="ml-2 rounded-full bg-bg-soft px-2 py-0.5 text-xs text-text-faint">
+                  {current.group_name ?? '未分组'}
+                </span>
+              </div>
             </div>
 
             {!revealed ? (
@@ -156,6 +188,19 @@ export default function ReviewPage() {
                   )}
                 </div>
                 {dict?.pos && <p className="text-xs text-text-faint mb-2">{dict.pos}</p>}
+                <div className="mb-4 flex justify-center gap-3 text-xs text-text-faint">
+                  <span>复习 {current.review_count} 次</span>
+                  <span>间隔 {Math.round(current.interval_days)} 天</span>
+                  <span>难度 EF {current.ease.toFixed(2)}</span>
+                </div>
+                {suggestMaster && (
+                  <div className="mb-4 flex items-center justify-between rounded-md bg-accent-soft px-3 py-2 text-xs text-accent">
+                    <span>连续答「记得」且间隔已达 21 天，建议标记已掌握</span>
+                    <button className="btn btn-ghost px-2 py-0.5 text-xs" onClick={() => setStage(2)}>
+                      标记
+                    </button>
+                  </div>
+                )}
                 <div className="flex gap-2 justify-center">
                   <button className="btn flex-1 bg-red-50 text-red-600 hover:bg-red-100" onClick={() => answer(2)} disabled={reviewing}>
                     忘了

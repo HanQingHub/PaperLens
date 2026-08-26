@@ -74,6 +74,9 @@ export default function PaperCard({
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const hoverTimer = useRef(0)
+  // 入场动画仅首次挂载播一次：freeze 首帧 enterIndex。后续 prop 变化不重播
+  // CSS animation（类移除再添加会重播），也不与 FLIP 的 inline transform 冲突
+  const [enterIdx] = useState(() => enterIndex)
 
   const schedulePrefetch = useCallback(() => {
     window.clearTimeout(hoverTimer.current)
@@ -93,12 +96,12 @@ export default function PaperCard({
   return (
     <div
       data-card
-      className={`panel group relative flex cursor-pointer flex-col gap-2 p-3.5 pl-paper-card ${enterIndex != null ? 'pl-card-enter' : ''} ${
+      className={`panel group relative flex cursor-pointer flex-col gap-2 p-3.5 pl-paper-card ${enterIdx != null ? 'pl-card-enter' : ''} ${
         isDragging ? 'pl-card-dragging' : ''
       } ${insertSide ? `pl-dnd-indicator--${insertSide}` : ''}`}
       style={{
         '--pl-hue': String(hueOf(paper)),
-        ...(enterIndex != null ? { animationDelay: `${Math.min(enterIndex, 24) * 30}ms` } : {}),
+        ...(enterIdx != null ? { animationDelay: `${Math.min(enterIdx, 24) * 30}ms` } : {}),
       } as CSSProperties}
       onClick={(e) => {
         if ((e.ctrlKey || e.metaKey) && onToggleSelect) {

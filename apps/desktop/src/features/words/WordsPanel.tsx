@@ -32,6 +32,8 @@ export default function WordsPanel() {
   const [newGroupName, setNewGroupName] = useState('')
   const [editingGroup, setEditingGroup] = useState<number | null>(null)
   const [draftGroup, setDraftGroup] = useState('')
+  const [deletingGroup, setDeletingGroup] = useState<string | null>(null)
+  const [deleteGroupBusy, setDeleteGroupBusy] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -63,8 +65,14 @@ export default function WordsPanel() {
   }, [loadGroups])
 
   const moveWordToGroup = async (w: Word, groupName: string) => {
+    const name = groupName.trim().slice(0, 20)
+    if (!name) {
+      toast('请输入分组名', 'error')
+      return
+    }
+    if ((w.group_name ?? '') === name) return // 同值短路，免无意义 PATCH
     try {
-      const updated = await api.updateWord(w.id, { group_name: groupName })
+      const updated = await api.updateWord(w.id, { group_name: name })
       patchLocal(updated)
       loadGroups()
     } catch {
@@ -133,6 +141,23 @@ export default function WordsPanel() {
     }
   }
 
+  const confirmDeleteGroup = async () => {
+    if (!deletingGroup) return
+    setDeleteGroupBusy(true)
+    try {
+      await api.deleteWordGroup(deletingGroup)
+      toast(`分组「${deletingGroup}」已删除`, 'ok')
+      if (groupFilter === deletingGroup) setGroupFilter(null)
+      setDeletingGroup(null)
+      loadGroups()
+      load()
+    } catch {
+      toast('分组删除失败', 'error')
+    } finally {
+      setDeleteGroupBusy(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-3 p-4">
       <div className="flex items-center gap-2">
@@ -168,16 +193,27 @@ export default function WordsPanel() {
             (groupFilter === null && name === '全部') ||
             (groupFilter === '__none' && name === '未分组') ||
             groupFilter === name
+          const group = groups.find((g) => g.name === name)
           return (
-            <button
-              key={name}
-              className={`rounded-md px-2 py-0.5 transition-all ${
-                active ? 'bg-panel text-accent font-medium shadow-sm' : 'text-text-faint hover:text-text-soft'
-              }`}
-              onClick={() => setGroupFilter(name === '全部' ? null : name === '未分组' ? '__none' : name)}
-            >
-              {name}
-            </button>
+            <span key={name} className="group/pill relative inline-flex items-center">
+              <button
+                className={`rounded-md px-2 py-0.5 transition-all ${
+                  active ? 'bg-panel text-accent font-medium shadow-sm' : 'text-text-faint hover:text-text-soft'
+                }`}
+                onClick={() => setGroupFilter(name === '全部' ? null : name === '未分组' ? '__none' : name)}
+              >
+                {name}
+              </button>
+              {group && (
+                <button
+                  className="ml-0.5 text-[11px] text-text-faint opacity-0 transition-all hover:text-danger focus-visible:opacity-100 group-hover/pill:opacity-100"
+                  title={`删除分组「${name}」（组内 ${group.count} 个生词将变为未分组）`}
+                  onClick={() => setDeletingGroup(name)}
+                >
+                  ✕
+                </button>
+              )}
+            </span>
           )
         })}
         <button
@@ -279,9 +315,7 @@ export default function WordsPanel() {
                       onKeyDown={(e) => {
                         if (e.key === 'Escape') setEditingGroup(null)
                         if (e.key === 'Enter') {
-                          const v = draftGroup.trim().slice(0, 20)
-                          if (!v) return toast('请输入分组名', 'error')
-                          moveWordToGroup(w, v)
+                          moveWordToGroup(w, draftGroup)
                           setEditingGroup(null)
                         }
                       }}
@@ -294,9 +328,7 @@ export default function WordsPanel() {
                     <button
                       className="btn btn-primary h-6 px-1.5 text-[10px]"
                       onClick={() => {
-                        const v = draftGroup.trim().slice(0, 20)
-                        if (!v) return toast('请输入分组名', 'error')
-                        moveWordToGroup(w, v)
+                        moveWordToGroup(w, draftGroup)
                         setEditingGroup(null)
                       }}
                     >
@@ -385,6 +417,19 @@ export default function WordsPanel() {
       >
         <p className="text-xs text-text-soft">
           删除「{deleting?.lemma}」？复习记录与例句将一并清除，正文高亮同步消失。
+        </p>
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={deletingGroup != null}
+        title="删除分组"
+        danger
+        busy={deleteGroupBusy}
+        onClose={() => setDeletingGroup(null)}
+        onConfirm={confirmDeleteGroup}
+      >
+        <p className="text-xs text-text-soft">
+          删除分组「{deletingGroup}」？组内生词将全部变为未分组，生词本身不会被删除。
         </p>
       </ConfirmModal>
     </div>

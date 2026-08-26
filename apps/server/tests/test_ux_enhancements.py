@@ -86,6 +86,34 @@ def test_word_group_flow(client):
     assert w2["group_name"] is None
 
 
+def test_word_group_crud(client):
+    token = register(client)
+    h = auth(token)
+    # 创建空组 → 201 + 列表 count 0
+    r = client.post("/api/words/groups", json={"name": "词汇书"}, headers=h)
+    assert r.status_code == 201 and r.json() == {"name": "词汇书", "count": 0}
+    assert {"name": "词汇书", "count": 0} in client.get("/api/words/groups", headers=h).json()
+    # 重名 → 409；长度非法 → 400；空名 → 400
+    assert client.post("/api/words/groups", json={"name": "词汇书"}, headers=h).status_code == 409
+    assert client.post("/api/words/groups", json={"name": "x" * 21}, headers=h).status_code == 400
+    assert client.post("/api/words/groups", json={"name": "   "}, headers=h).status_code == 400
+    # PATCH 词到新组名 → 组行自动创建（upsert），空组持久化
+    w = client.post("/api/words", json={"lemma": "latent"}, headers=h).json()
+    r = client.patch(f"/api/words/{w['id']}", json={"group_name": "新组"}, headers=h).json()
+    assert r["group_name"] == "新组"
+    assert {"name": "新组", "count": 1} in client.get("/api/words/groups", headers=h).json()
+    # 删除组：词变未分组、组行消失、幂等 204
+    assert client.delete("/api/words/groups/新组", headers=h).status_code == 204
+    rows = client.get("/api/words", params={"group": ""}, headers=h).json()
+    assert any(x["lemma"] == "latent" and x["group_name"] is None for x in rows)
+    names = [g["name"] for g in client.get("/api/words/groups", headers=h).json()]
+    assert "新组" not in names
+    assert client.delete("/api/words/groups/新组", headers=h).status_code == 204
+    # 删除空组（误建清理路径）
+    assert client.delete("/api/words/groups/词汇书", headers=h).status_code == 204
+    assert "词汇书" not in [g["name"] for g in client.get("/api/words/groups", headers=h).json()]
+
+
 def test_translate_history_endpoint(client, tmp_path):
     """历史表读写：直查词典（dict 模式）自动落历史并可回看。"""
     token = register(client)

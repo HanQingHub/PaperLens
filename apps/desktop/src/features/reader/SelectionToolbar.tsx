@@ -97,7 +97,7 @@ export default function SelectionToolbar({
         sentence: selection.sentence,
         context: `${selection.prev} ▸ ${selection.next}`.trim(),
       })
-      // bump words store 由 ReviewPanel 等监听刷新；本地 bump 高亮
+      // bump words store 由复习页等监听刷新；本地 bump 高亮
       const words = await api.words({ q: lemma })
       const hit = words.find((w) => w.lemma === lemma)
       if (hit) useWords.getState().bump(hit)

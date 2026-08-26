@@ -7,7 +7,6 @@ import { api } from '../../api/client'
 import type { Paper, Project } from '../../api/types'
 import { useAuth } from '../../stores/auth'
 import { useLibraryUi } from '../../stores/libraryUi'
-import { useUi } from '../../stores/ui'
 import type { LibraryView } from './sort'
 import { ConfirmModal } from '../shared/Modal'
 import { toast } from '../shared/Toast'
@@ -475,7 +474,6 @@ export default function LibraryPage() {
   }
 
   /** 全库标签聚合（独立端点，不受当前 q/tag 筛选影响——否则筛选后下拉互斥死锁） */
-  const isSidebarAnimating = useUi((s) => s.isSidebarAnimating)
   const [allTags, setAllTags] = useState<{ name: string; count: number }[]>([])
   useEffect(() => {
     api.paperTags()
@@ -516,7 +514,7 @@ export default function LibraryPage() {
         dragProps={groupKey !== undefined ? dnd.cardDragProps(p.id, groupKey) : undefined}
         isDragging={dnd.draggingId === p.id}
         insertSide={dnd.insertMark?.id === p.id ? dnd.insertMark.side : null}
-        enterIndex={isSidebarAnimating ? undefined : idx}
+        enterIndex={idx}
         selected={selected.has(p.id)}
         onToggleSelect={toggleSelect}
       />
