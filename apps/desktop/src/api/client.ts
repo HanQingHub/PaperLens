@@ -137,7 +137,8 @@ export const api = {
   words: (params: { stage?: number; q?: string; due?: number; group?: string } = {}) => {
     const q = new URLSearchParams()
     Object.entries(params).forEach(([k, v]) => {
-      if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
+      // group 的空串是合法语义（未分组筛选），不能被通用空值过滤丢弃
+      if (v !== undefined && v !== null && (v !== '' || k === 'group')) q.set(k, String(v))
     })
     return request<Word[]>(`/words${q.size ? `?${q}` : ''}`)
   },

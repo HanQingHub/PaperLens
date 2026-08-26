@@ -83,3 +83,7 @@ def parse_setting(raw):
         return float(raw)
     except ValueError:
         return raw
+
+def like_escape(s: str) -> str:
+    """LIKE 通配符转义（配合 .like(pattern, escape=backslash) 使用），防 %/_ 注入误匹配。"""
+    return s.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')

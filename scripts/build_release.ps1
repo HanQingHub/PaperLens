@@ -118,6 +118,18 @@ if ($LASTEXITCODE -ne 0) { throw '前端构建失败' }
 Pop-Location
 
 # ── 5. server onedir（同步 binaries/paperlens-server/ 目录，随 bundle.resources 打包）──
+# 防复发 guard：-SkipServer 时若 server 源码比打包产物新，说明产物过期，拒绝发版
+# （v0.4.5-0.4.8 与 v0.6.0 两次"产物脱节"事故的根因）
+$serverSrc = 'apps\server\app'
+$serverPyc = 'apps\desktop\src-tauri\binaries\paperlens-server\_internal\app\main.pyc'
+if ($SkipServer) {
+  if (-not (Test-Path $serverPyc)) { throw '-SkipServer 但打包产物缺失：去掉 -SkipServer 重打 server' }
+  $srcNewest = (Get-ChildItem $serverSrc -Recurse -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
+  $artTime = (Get-Item $serverPyc).LastWriteTime
+  if ($srcNewest -gt $artTime) {
+    throw ("server 源码 ({0}) 比打包产物 ({1}) 新——产物过期，禁止 -SkipServer 发版（版本脱节事故防线）" -f $srcNewest, $artTime)
+  }
+}
 if (-not $SkipServer) {
   Write-Host '==> PyInstaller server onedir'
   & .venv\Scripts\pyinstaller.exe --noconfirm scripts\package_server.spec --distpath dist --workpath dist\.work-server

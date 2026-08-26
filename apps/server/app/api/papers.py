@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_db, write_lock
-from app.core.util import ensure_within, now_iso
+from app.core.util import ensure_within, like_escape, now_iso
 from app.models import (
     Annotation, Excerpt, FileRef, GlossaryTerm, OcrDoc, Paper,
     Project, ReadingProgress, ReadingSession, TranslationCache, User, WordOccurrence,
@@ -21,11 +21,6 @@ from app.api.deps import get_current_user, get_owned_paper
 from app.services import file_tokens, tfidf_service
 
 router = APIRouter(prefix="/papers", tags=["papers"])
-
-
-def _like_escape(s: str) -> str:
-    """LIKE 通配符转义（配合 ESCAPE '\\' 使用），防 %/_ 注入误匹配。"""
-    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def paper_dict(p: Paper, annotation_count: int | None = None) -> dict:
@@ -370,11 +365,11 @@ def list_papers(
     if project_id is not None:
         query = query.filter(Paper.project_id == project_id)
     if tag:
-        query = query.filter(Paper.tags.like(f'%"{_like_escape(tag)}"%', escape="\\"))
+        query = query.filter(Paper.tags.like(f'%"{like_escape(tag)}"%', escape="\\"))
     if favorite:
         query = query.filter(Paper.is_favorite == 1)
     if q:
-        like = f"%{_like_escape(q)}%"
+        like = f"%{like_escape(q)}%"
         query = query.filter(
             Paper.title.like(like, escape="\\")
             | Paper.authors.like(like, escape="\\")

@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.util import now_iso
+from app.core.util import like_escape, now_iso
 from app.models import Paper, ReviewLog, TranslationCache, User, Word, WordOccurrence
 from app.api.deps import get_current_user
 from app.services import ecdict_service, sm2_service
@@ -72,8 +72,8 @@ def list_words(stage: int | None = None, q: str | None = None, due: int | None =
     if stage is not None:
         query = query.filter(Word.stage == stage)
     if q:
-        like = f"%{q.lower()}%"
-        query = query.filter((Word.lemma.like(like)) | (Word.translation.like(like)))
+        like = f"%{like_escape(q.lower())}%"
+        query = query.filter((Word.lemma.like(like, escape="\\")) | (Word.translation.like(like, escape="\\")))
     if group is not None:
         if group == "":
             query = query.filter(Word.group_name.is_(None) | (Word.group_name == ""))
