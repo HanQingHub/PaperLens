@@ -1,14 +1,54 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useAuth } from '../../stores/auth'
+import Threads from '../../components/shared/Threads'
+
+/** 主题 accent 色 → Threads 的 [r,g,b]（0-1）。登录页低频重挂载，不做动态监听。 */
+function useAccentRgb(): [number, number, number] {
+  return useMemo(() => {
+    const raw = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()
+    const m = /^#([0-9a-f]{6})$/i.exec(raw)
+    if (!m) return [0.2, 0.4, 0.54]
+    const n = parseInt(m[1], 16)
+    return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
+  }, [])
+}
+
+/** 最近本机账号（pl_accounts，LRU 3 个；明文 token 与 pl_token 同一信任边界） */
+export interface SavedAccount {
+  username: string
+  display_name: string
+  token: string
+  at: number
+}
+
+export function loadAccounts(): SavedAccount[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem('pl_accounts') ?? '[]')
+    return Array.isArray(arr) ? arr.slice(0, 3) : []
+  } catch {
+    return []
+  }
+}
+
+export function upsertAccount(a: SavedAccount) {
+  const rest = loadAccounts().filter((x) => x.username !== a.username)
+  localStorage.setItem('pl_accounts', JSON.stringify([a, ...rest].slice(0, 3)))
+}
+
+export function removeAccount(username: string) {
+  localStorage.setItem('pl_accounts', JSON.stringify(loadAccounts().filter((x) => x.username !== username)))
+}
 
 export default function AuthPage() {
-  const { login, register } = useAuth()
+  const { login, register, switchAccount } = useAuth()
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(true)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const accentRgb = useAccentRgb()
+  const accounts = loadAccounts()
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -28,9 +68,24 @@ export default function AuthPage() {
     }
   }
 
+  const quickEnter = async (acc: SavedAccount) => {
+    setErr('')
+    setBusy(true)
+    try {
+      await switchAccount(acc.token)
+    } catch {
+      removeAccount(acc.username)
+      setErr(`账号 ${acc.display_name} 的登录状态已失效，请重新登录`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="relative flex h-full items-center justify-center overflow-hidden bg-bg">
-      <div className="pl-auth-bg" aria-hidden />
+      <div className="absolute inset-0 opacity-60" aria-hidden>
+        <Threads color={accentRgb} amplitude={1} distance={0} enableMouseInteraction={false} />
+      </div>
       <div className="fade-in relative w-[380px]">
         <div className="mb-8 flex flex-col items-center gap-3">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent shadow-[var(--shadow-2)] transition-transform duration-300 hover:scale-105">
@@ -47,6 +102,26 @@ export default function AuthPage() {
         </div>
 
         <form onSubmit={submit} className="panel pl-auth-card p-6">
+          {accounts.length > 0 && mode === 'login' && (
+            <div className="mb-4">
+              <span className="mb-1.5 block text-xs text-text-soft">最近账号</span>
+              <div className="flex flex-wrap gap-1.5">
+                {accounts.map((acc) => (
+                  <button
+                    key={acc.username}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => quickEnter(acc)}
+                    className="rounded-full border border-border px-2.5 py-1 text-[12px] text-text-soft transition-colors hover:border-accent hover:text-accent"
+                    title={`以 ${acc.display_name} 直接进入`}
+                  >
+                    {acc.display_name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="mb-4 flex rounded-lg bg-bg-soft p-1 text-[13px]">
             {(['login', 'register'] as const).map((m) => (
               <button

@@ -14,7 +14,8 @@ from typing import AsyncGenerator
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models import GlossaryTerm, Paper, TranslationCache, Word
+from app.core.util import now_iso
+from app.models import GlossaryTerm, Paper, TranslateHistory, TranslationCache, Word
 from app.services import ecdict_service
 from app.services.llm_service import (
     LOAD_TIMEOUT, LLMLoadingTimeout, LLMInterrupted, LLMTimeout, llm_service,
@@ -293,6 +294,19 @@ def _cache_put(
     db.commit()
 
 
+def save_history(db: Session, user_id: int, *, word: str, mode: str,
+                 result: dict, sentence: str | None = None) -> None:
+    """查词历史落库：失败静默（历史是附属功能，绝不影响翻译主流程）。"""
+    try:
+        db.add(TranslateHistory(
+            user_id=user_id, word=word, sentence=sentence, mode=mode,
+            result=json.dumps(result, ensure_ascii=False), created_at=now_iso(),
+        ))
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+
 SYSTEM_PROMPT = "你是学术翻译助手。只输出规定内容，不要解释。上下文仅供理解，不要翻译或输出它们。"
 
 
@@ -479,6 +493,8 @@ async def word_stream(db: Session, user_id: int, paper: Paper, body: dict, reque
         engine = f"llm-{llm_service.model_id}"
         _cache_put(db, user_id, paper.id, lemma=lemma, sentence_hash=None,
                    engine=engine, result={"translation": full})
+        save_history(db, user_id, word=lemma, mode="word",
+                     result={"translation": full}, sentence=sentence or None)
         yield sse_event("done", {"engine": engine, "cached": False})
     except LLMLoadingTimeout as e:
         yield sse_event("error", {"code": "llm_loading_timeout", "detail": str(e)})
@@ -541,6 +557,8 @@ async def sentence_stream(db: Session, user_id: int, paper: Paper, body: dict, r
         engine = f"llm-{llm_service.model_id}"
         _cache_put(db, user_id, paper.id, lemma=None, sentence_hash=h,
                    engine=engine, result={"translation": full})
+        save_history(db, user_id, word=_cut_head(text, 80), mode="sentence",
+                     result={"translation": full}, sentence=text)
         yield sse_event("done", {"engine": engine, "cached": False})
     except LLMLoadingTimeout as e:
         yield sse_event("error", {"code": "llm_loading_timeout", "detail": str(e)})

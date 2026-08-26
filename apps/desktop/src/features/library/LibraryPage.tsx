@@ -49,6 +49,13 @@ export default function LibraryPage() {
   const [ocrProgress, setOcrProgress] = useState<Record<number, OcrProgress>>({})
   const [queuePaused, setQueuePaused] = useState(false)
   const [cols, setCols] = useState(4)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [tagFilter, setTagFilter] = useState<string | null>(null)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false)
+  const [arxivOpen, setArxivOpen] = useState(false)
+  const [arxivInput, setArxivInput] = useState('')
+  const [arxivBusy, setArxivBusy] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   // 滚动位置：onScroll 只写 ref（零重渲染），卸载时一次性写回 store；
   // 恢复绑定 loading true→false 完成后的首帧，ref 标志保证只恢复一次
@@ -127,14 +134,21 @@ export default function LibraryPage() {
         sort: resolveSort(view, sort),
         favorite: view === 'favorite' ? true : undefined,
         project_id: selectedProjectId ?? undefined,
+        tag: tagFilter ?? undefined,
       })
       setPapers(list)
+      // 修剪已不存在的选中项（删除/移动后残留 id 会让批量 PATCH 打到 404）
+      setSelected((prev) => {
+        const ids = new Set(list.map((p) => p.id))
+        const next = new Set([...prev].filter((id) => ids.has(id)))
+        return next.size === prev.size ? prev : next
+      })
     } catch (e) {
       toast(e instanceof Error ? e.message : '加载论文失败', 'error')
     } finally {
       setLoading(false)
     }
-  }, [q, sort, view, selectedProjectId])
+  }, [q, sort, view, selectedProjectId, tagFilter])
 
   const refreshProjects = useCallback(async () => {
     try {
@@ -194,6 +208,17 @@ export default function LibraryPage() {
     onPapersChange: setPapers,
     onUpload: (files, projectId) => handleFiles(files, projectId),
     onRefresh: fetchPapers,
+    onCountsChange: (movedIds, toProject) => {
+      // 乐观计数：跨组移动后本地增减 paper_count，免全量重拉闪烁
+      setProjects((ps) =>
+        ps.map((proj) => {
+          let c = proj.paper_count ?? 0
+          if (proj.id === toProject) c += movedIds.length
+          else c -= movedIds.filter((id) => papers.some((p) => p.id === id && p.project_id === proj.id)).length
+          return { ...proj, paper_count: Math.max(0, c) }
+        }),
+      )
+    },
   })
   // 受控刷新入口：持久化在途时抑制（P0-1），结束后补一次收敛
   const refreshPapers = dnd.refresh
@@ -201,7 +226,7 @@ export default function LibraryPage() {
   useEffect(() => {
     setLoading(true)
     refreshPapers()
-  }, [q, sort, view, selectedProjectId, refreshPapers])
+  }, [q, sort, view, selectedProjectId, tagFilter, refreshPapers])
   useEffect(() => {
     refreshProjects()
   }, [refreshProjects])
@@ -326,9 +351,79 @@ export default function LibraryPage() {
     return () => { cancelled = true; clearInterval(t) }
   }, [papers])
 
+  /** 批量操作辅助 */
+  const toggleSelect = (id: number) => {
+    setSelected((prev) => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  }
+  const bulkPatch = async (patch: Record<string, unknown>, okMsg: string) => {
+    const ids = [...selected]
+    let failed = 0
+    for (const id of ids) {
+      try {
+        await api.updatePaper(id, patch)
+      } catch {
+        failed++
+        break // 任一失败即停（已完成保留），refresh 收敛
+      }
+    }
+    if (failed) toast('部分操作失败，已停止', 'error')
+    else toast(okMsg, 'ok')
+    setSelected(new Set())
+    refreshPapers()
+    refreshProjects()
+  }
+  const bulkDelete = async () => {
+    setBulkDeleteBusy(true)
+    let failed = 0
+    for (const id of [...selected]) {
+      try {
+        await api.deletePaper(id)
+      } catch {
+        failed++
+        break
+      }
+    }
+    setBulkDeleteBusy(false)
+    setBulkDeleting(false)
+    if (failed) toast('部分删除失败，已停止', 'error')
+    else toast(`已删除 ${selected.size} 篇论文`, 'ok')
+    setSelected(new Set())
+    refreshPapers()
+    refreshProjects()
+  }
+  const importArxiv = async () => {
+    const id = arxivInput.trim()
+    if (!id) return
+    setArxivBusy(true)
+    try {
+      const p = await api.importArxiv(id)
+      toast(`已导入：${p.title}`, 'ok')
+      setArxivOpen(false)
+      setArxivInput('')
+      refreshPapers()
+      refreshProjects()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '导入失败', 'error')
+    } finally {
+      setArxivBusy(false)
+    }
+  }
+
+  /** 全库标签聚合（当前列表去重排序） */
+  const allTags = useMemo(() => {
+    const s = new Set<string>()
+    for (const p of papers) for (const t of p.tags ?? []) s.add(t)
+    return [...s].sort((a, b) => a.localeCompare(b))
+  }, [papers])
+
   /** groupKey 传入时（project 视图）卡片启用拖拽；其他视图纯展示 */
   const cardList = (list: Paper[], groupKey?: GroupKey) =>
-    list.map((p) => (
+    list.map((p, idx) => (
       <PaperCard
         key={p.id}
         paper={p}
@@ -342,6 +437,9 @@ export default function LibraryPage() {
         dragProps={groupKey !== undefined ? dnd.cardDragProps(p.id, groupKey) : undefined}
         isDragging={dnd.draggingId === p.id}
         insertSide={dnd.insertMark?.id === p.id ? dnd.insertMark.side : null}
+        enterIndex={idx}
+        selected={selected.has(p.id)}
+        onToggleSelect={toggleSelect}
       />
     ))
 
@@ -420,6 +518,18 @@ export default function LibraryPage() {
           <option value="last_opened">按最近打开</option>
         </select>
 
+        <select
+          className="input w-auto! py-1 text-[12.5px]"
+          value={tagFilter ?? ''}
+          onChange={(e) => setTagFilter(e.target.value || null)}
+          title="按标签筛选"
+        >
+          <option value="">全部标签</option>
+          {allTags.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+
         <div className="ml-auto flex items-center gap-2">
           {selectedProjectId && (
             <span className="badge badge-accent">
@@ -456,6 +566,29 @@ export default function LibraryPage() {
               e.target.value = ''
             }}
           />
+          {arxivOpen ? (
+            <div className="flex items-center gap-1">
+              <input
+                className="input w-36 py-1 text-[12.5px]"
+                placeholder="2401.12345"
+                value={arxivInput}
+                autoFocus
+                onChange={(e) => setArxivInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') importArxiv()
+                  if (e.key === 'Escape') setArxivOpen(false)
+                }}
+              />
+              <button className="btn btn-primary px-2 py-1 text-xs" onClick={importArxiv} disabled={arxivBusy}>
+                {arxivBusy ? <span className="spinner" /> : '导入'}
+              </button>
+              <button className="btn btn-ghost px-1.5 py-1 text-xs" onClick={() => setArxivOpen(false)}>✕</button>
+            </div>
+          ) : (
+            <button className="btn px-2 py-1 text-xs" onClick={() => setArxivOpen(true)} disabled={uploading} title="通过 arXiv ID 联网导入">
+              arXiv
+            </button>
+          )}
           <button className="btn btn-primary" onClick={() => fileInput.current?.click()} disabled={uploading}>
             {uploading ? <span className="spinner" /> : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M17 8l-5-5-5 5 M12 3v12" /></svg>}
             {uploading ? '上传中…' : '选择 PDF'}
@@ -555,6 +688,45 @@ export default function LibraryPage() {
       </div>
 
       <EditPaperModal paper={editing} busy={editBusy} onClose={() => setEditing(null)} onSave={saveEdit} />
+
+      {/* 批量操作栏 */}
+      {selected.size > 0 && (
+        <div className="glass fade-in fixed bottom-5 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border-strong px-4 py-2 shadow-[var(--shadow-2)]">
+          <span className="text-xs font-medium text-accent">已选 {selected.size} 篇</span>
+          <span className="h-4 w-px bg-border" />
+          <select
+            className="input w-auto! py-0.5 text-xs"
+            value=""
+            onChange={(e) => {
+              const pid = e.target.value ? Number(e.target.value) : null
+              if (e.target.value) void bulkPatch({ project_id: pid }, `已移动到「${projects.find((x) => x.id === pid)?.name ?? '未分组'}」`)
+            }}
+          >
+            <option value="">移动到项目…</option>
+            <option value="null">未分组</option>
+            {projects.map((proj) => (
+              <option key={proj.id} value={proj.id}>{proj.name}</option>
+            ))}
+          </select>
+          <button className="btn px-2 py-0.5 text-xs" onClick={() => bulkPatch({ is_favorite: true }, '已收藏')}>收藏</button>
+          <button className="btn px-2 py-0.5 text-xs text-danger" onClick={() => setBulkDeleting(true)}>删除</button>
+          <button className="btn btn-ghost px-2 py-0.5 text-xs" onClick={() => setSelected(new Set())}>取消</button>
+        </div>
+      )}
+
+      <ConfirmModal
+        open={bulkDeleting}
+        title="批量删除论文"
+        confirmText={`永久删除 ${selected.size} 篇`}
+        danger
+        busy={bulkDeleteBusy}
+        onClose={() => setBulkDeleting(false)}
+        onConfirm={bulkDelete}
+      >
+        <p className="text-[13px] leading-6">
+          确定永久删除选中的 <b>{selected.size}</b> 篇论文及其全部批注、生词记录、缓存？<b>不可恢复</b>。
+        </p>
+      </ConfirmModal>
 
       <ConfirmModal
         open={!!deleting}

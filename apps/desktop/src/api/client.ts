@@ -107,6 +107,20 @@ export const api = {
   extractMeta: (id: number) => request<Paper>(`/papers/${id}/extract-meta`, { method: 'POST' }),
   deletePaper: (id: number) => request<void>(`/papers/${id}`, { method: 'DELETE' }),
   fileToken: (id: number) => request<{ token: string; url: string }>(`/papers/${id}/file-token`, { method: 'POST' }),
+  importArxiv: (arxivId: string) =>
+    request<Paper>('/papers/arxiv', { method: 'POST', body: JSON.stringify({ arxiv_id: arxivId }) }),
+
+  // ── 账号资料 / 查词历史 ──
+  updateProfile: (displayName: string) =>
+    request<{ id: number; username: string; display_name: string }>('/auth/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({ display_name: displayName }),
+    }),
+  translateHistory: (limit = 50) =>
+    request<{ id: number; word: string; sentence: string | null; mode: string; result: Record<string, unknown>; created_at: string }[]>(
+      `/translate/history?limit=${limit}`,
+    ),
+  wordGroups: () => request<{ name: string; count: number }[]>('/words/groups'),
 
   // ── 词典 / 术语表 ──
   dictionary: (word: string) => request<DictionaryEntry>(`/dictionary/${encodeURIComponent(word)}`),
@@ -119,7 +133,7 @@ export const api = {
   deleteGlossaryTerm: (id: number) => request<void>(`/glossary/terms/${id}`, { method: 'DELETE' }),
 
   // ── 生词 ──
-  words: (params: { stage?: number; q?: string; due?: number } = {}) => {
+  words: (params: { stage?: number; q?: string; due?: number; group?: string } = {}) => {
     const q = new URLSearchParams()
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
@@ -128,7 +142,7 @@ export const api = {
   },
   addWord: (body: { lemma: string; translation?: string; paper_id?: number; sentence?: string; context?: string }) =>
     request<Word>('/words', { method: 'POST', body: JSON.stringify(body) }),
-  updateWord: (id: number, patch: { stage?: number; translation?: string }) =>
+  updateWord: (id: number, patch: { stage?: number; translation?: string; group_name?: string }) =>
     request<Word>(`/words/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteWord: (id: number) => request<void>(`/words/${id}`, { method: 'DELETE' }),
   reviewWord: (id: number, q: 2 | 3 | 5) =>
@@ -144,10 +158,18 @@ export const api = {
   updateAnnotation: (id: number, patch: Partial<Annotation>) =>
     request<Annotation>(`/annotations/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteAnnotation: (id: number) => request<void>(`/annotations/${id}`, { method: 'DELETE' }),
-  exportAnnotationsPdf: (paperId: number) =>
-    request<Blob>(`/papers/${paperId}/export-annotations-pdf`, { method: 'POST' }),
-  exportAnnotationsMd: (paperId: number) =>
-    request<Blob>(`/papers/${paperId}/export-annotations-md`, { method: 'POST' }),
+  exportAnnotationsPdf: (paperId: number, filter?: { color?: string; type?: string }) => {
+    const q = new URLSearchParams()
+    if (filter?.color) q.set('color', filter.color)
+    if (filter?.type) q.set('type', filter.type)
+    return request<Blob>(`/papers/${paperId}/export-annotations-pdf${q.size ? `?${q}` : ''}`, { method: 'POST' })
+  },
+  exportAnnotationsMd: (paperId: number, filter?: { color?: string; type?: string }) => {
+    const q = new URLSearchParams()
+    if (filter?.color) q.set('color', filter.color)
+    if (filter?.type) q.set('type', filter.type)
+    return request<Blob>(`/papers/${paperId}/export-annotations-md${q.size ? `?${q}` : ''}`, { method: 'POST' })
+  },
 
   // ── OCR ──
   startOcr: (paperId: number) => request<OcrStatus>(`/papers/${paperId}/ocr`, { method: 'POST' }),

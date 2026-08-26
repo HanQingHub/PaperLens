@@ -30,6 +30,11 @@ interface Props {
   isDragging?: boolean
   /** 插入指示线：悬停卡片前/后缘 */
   insertSide?: 'before' | 'after' | null
+  /** 入场 stagger 动画的延迟序号（列表内位置；仅首次挂载生效） */
+  enterIndex?: number
+  /** 批量选择态（父级 Ctrl+点击管理） */
+  selected?: boolean
+  onToggleSelect?: (id: number) => void
 }
 
 function OcrBadge({ paper, progress }: { paper: Paper; progress: OcrProgress | null }) {
@@ -64,7 +69,7 @@ function OcrBadge({ paper, progress }: { paper: Paper; progress: OcrProgress | n
 
 export default function PaperCard({
   paper, ocrProgress, onOpen, onEdit, onToggleFav, onDelete, onRetryOcr, onCancelOcr,
-  dragProps, isDragging, insertSide,
+  dragProps, isDragging, insertSide, enterIndex, selected, onToggleSelect,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -87,19 +92,40 @@ export default function PaperCard({
 
   return (
     <div
-      className={`panel group relative flex cursor-pointer flex-col gap-2 p-3.5 pl-paper-card ${
+      className={`panel group relative flex cursor-pointer flex-col gap-2 p-3.5 pl-paper-card pl-card-enter ${
         isDragging ? 'pl-card-dragging' : ''
       } ${insertSide ? `pl-dnd-indicator--${insertSide}` : ''}`}
-      style={{ '--pl-hue': String(hueOf(paper)) } as CSSProperties}
-      onClick={() => onOpen(paper)}
+      style={{
+        '--pl-hue': String(hueOf(paper)),
+        ...(enterIndex != null ? { animationDelay: `${Math.min(enterIndex, 24) * 30}ms` } : {}),
+      } as CSSProperties}
+      onClick={(e) => {
+        if ((e.ctrlKey || e.metaKey) && onToggleSelect) {
+          e.preventDefault()
+          onToggleSelect(paper.id)
+          return
+        }
+        if (selected) {
+          // 已在批量选择态：普通点击也切换选中（避免误开文档）
+          onToggleSelect?.(paper.id)
+          return
+        }
+        onOpen(paper)
+      }}
       onMouseEnter={schedulePrefetch}
       onMouseLeave={cancelPrefetch}
       {...dragProps}
     >
       <div className="pl-card-glow" aria-hidden />
+      {selected && <div className="pointer-events-none absolute inset-0 rounded-[var(--radius-panel,10px)] border-2 border-accent bg-[var(--accent-soft)]/30" aria-hidden />}
       <div className="flex items-start justify-between gap-2">
         <h3 className="line-clamp-2 flex-1 text-[13.5px] font-medium leading-5">{paper.title}</h3>
         <div className="flex shrink-0 items-center gap-0.5">
+          {(paper.annotation_count ?? 0) > 0 && (
+            <span className="pl-anno-badge" title={`${paper.annotation_count} 条批注`}>
+              ✎{paper.annotation_count}
+            </span>
+          )}
           <button
             className="rounded-md px-1 py-0.5 text-[15px] leading-none transition-transform hover:scale-110"
             style={{ color: paper.is_favorite ? '#e0a63c' : 'var(--text-faint)' }}

@@ -26,10 +26,13 @@ export default function WordsPanel() {
   const [busy, setBusy] = useState(false)
   const [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [groupFilter, setGroupFilter] = useState<string | null>(null)
+  const [groups, setGroups] = useState<{ name: string; count: number }[]>([])
 
   const load = useCallback(async () => {
     try {
-      const list = await api.words({ q: q || undefined, stage: stageFilter ?? undefined })
+      const groupParam = groupFilter === '__none' ? '' : groupFilter ?? undefined
+      const list = await api.words({ q: q || undefined, stage: stageFilter ?? undefined, group: groupParam })
       setTruncated(list.length > LIST_CAP)
       setRows(list.slice(0, LIST_CAP))
     } catch {
@@ -37,11 +40,33 @@ export default function WordsPanel() {
     } finally {
       setLoading(false)
     }
-  }, [q, stageFilter])
+  }, [q, stageFilter, groupFilter])
+
+  const loadGroups = useCallback(async () => {
+    try {
+      setGroups(await api.wordGroups())
+    } catch {
+      /* 静默 */
+    }
+  }, [])
 
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    loadGroups()
+  }, [loadGroups])
+
+  const moveWordToGroup = async (w: Word, groupName: string) => {
+    try {
+      const updated = await api.updateWord(w.id, { group_name: groupName })
+      patchLocal(updated)
+      loadGroups()
+    } catch {
+      toast('分组失败', 'error')
+    }
+  }
 
   // 搜索防抖
   useEffect(() => {
@@ -133,6 +158,18 @@ export default function WordsPanel() {
             {s == null ? '全部' : STAGE_LABELS[s]}
           </button>
         ))}
+        <select
+          className="input ml-auto w-auto! py-0.5 text-[11px]"
+          value={groupFilter ?? ''}
+          title="按分组筛选"
+          onChange={(e) => setGroupFilter(e.target.value || null)}
+        >
+          <option value="">全部分组</option>
+          <option value="__none">未分组</option>
+          {groups.map((g) => (
+            <option key={g.name} value={g.name}>{g.name} ({g.count})</option>
+          ))}
+        </select>
       </div>
 
       {loading ? (
@@ -161,6 +198,17 @@ export default function WordsPanel() {
                     {STAGE_LABELS[s][0]}
                   </button>
                 ))}
+                <select
+                  className="input w-auto! py-0 px-0.5 text-[10.5px] opacity-0 transition-all group-hover:opacity-100 focus-visible:opacity-100"
+                  title="移动到分组"
+                  value={w.group_name ?? ''}
+                  onChange={(e) => moveWordToGroup(w, e.target.value)}
+                >
+                  <option value="">未分组</option>
+                  {groups.map((g) => (
+                    <option key={g.name} value={g.name}>{g.name}</option>
+                  ))}
+                </select>
                 <button
                   className="text-[11px] text-text-faint opacity-0 transition-all hover:text-danger group-hover:opacity-100 focus-visible:opacity-100"
                   title="删除生词"

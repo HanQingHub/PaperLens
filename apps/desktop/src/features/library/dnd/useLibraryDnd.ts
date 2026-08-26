@@ -29,10 +29,12 @@ interface Options {
   onPapersChange: (next: Paper[]) => void
   onUpload: (files: File[], projectId: number | null) => void
   onRefresh: () => Promise<void> | void
+  /** 跨组移动成功后的乐观计数回调（movedIds, 目标组）；组内重排不触发 */
+  onCountsChange?: (movedIds: number[], toProject: GroupKey) => void
 }
 
 export function useLibraryDnd({
-  papers, groups, enabled, pageUploadProjectId, onPapersChange, onUpload, onRefresh,
+  papers, groups, enabled, pageUploadProjectId, onPapersChange, onUpload, onRefresh, onCountsChange,
 }: Options) {
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [overGroupKey, setOverGroupKey] = useState<GroupKey | null>(null)
@@ -54,6 +56,8 @@ export function useLibraryDnd({
   onUploadRef.current = onUpload
   const onRefreshRef = useRef(onRefresh)
   onRefreshRef.current = onRefresh
+  const onCountsChangeRef = useRef(onCountsChange)
+  onCountsChangeRef.current = onCountsChange
 
   // 拖拽状态机 ref（drop 时读取，绕过 React 批处理时序）
   const draggingIdRef = useRef<number | null>(null)
@@ -141,6 +145,7 @@ export function useLibraryDnd({
     if (patches.length === 0) return // 拖回原位：no-op
     // 乐观更新（即时重排），再异步持久化
     onPapersChangeRef.current(papersRef.current.map((p) => changes.get(p.id) ?? p))
+    if (src.key !== tgt.key) onCountsChangeRef.current?.([paperId], toGroup)
     persist(patches)
   }, [persist])
 

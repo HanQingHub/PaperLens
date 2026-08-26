@@ -79,8 +79,33 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 }
 
 export default function SettingsPage() {
-  const { settings, updateSettings } = useAuth()
+  const { settings, updateSettings, user } = useAuth()
   const [saving, setSaving] = useState(false)
+
+  // ── 账号：展示名编辑 ──
+  const [editingName, setEditingName] = useState(false)
+  const [nameInput, setNameInput] = useState('')
+  const [nameBusy, setNameBusy] = useState(false)
+  const saveDisplayName = async () => {
+    const name = nameInput.trim()
+    if (!name || name === user?.display_name) {
+      setEditingName(false)
+      return
+    }
+    setNameBusy(true)
+    try {
+      await api.updateProfile(name)
+      // 就地更新 user（useAuth 无 setUser action，走局部刷新）
+      const me = await api.me()
+      useAuth.setState({ user: me.user })
+      toast('展示名已更新', 'ok')
+      setEditingName(false)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '保存失败', 'error')
+    } finally {
+      setNameBusy(false)
+    }
+  }
 
   // ── 应用更新 ──
   const updater = useUpdater()
@@ -305,6 +330,47 @@ export default function SettingsPage() {
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-[760px] flex-col gap-4 px-6 py-6">
         <h1 className="text-base font-semibold">设置</h1>
+
+        {/* 账号 */}
+        <Section title="账号">
+          <Row label="用户名" hint="登录凭据，不可修改">
+            <span className="text-[12.5px] text-text-soft">{user?.username}</span>
+          </Row>
+          <Row label="展示名" hint="界面右上角显示的名称">
+            {editingName ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  className="input w-40 py-1 text-xs"
+                  value={nameInput}
+                  autoFocus
+                  maxLength={30}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveDisplayName()
+                    if (e.key === 'Escape') setEditingName(false)
+                  }}
+                />
+                <button className="btn btn-primary px-2 py-1 text-xs" onClick={saveDisplayName} disabled={nameBusy}>
+                  保存
+                </button>
+                <button className="btn btn-ghost px-1.5 py-1 text-xs" onClick={() => setEditingName(false)}>✕</button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[12.5px] text-text-soft">{user?.display_name}</span>
+                <button
+                  className="btn btn-ghost px-1.5 py-0.5 text-xs"
+                  onClick={() => {
+                    setNameInput(user?.display_name ?? '')
+                    setEditingName(true)
+                  }}
+                >
+                  ✎
+                </button>
+              </div>
+            )}
+          </Row>
+        </Section>
 
         {/* 外观 */}
         <Section title="外观">

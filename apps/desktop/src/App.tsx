@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -7,6 +7,8 @@ import { setUnauthorizedHandler } from './api/client'
 import { toast } from './features/shared/Toast'
 import AppShell from './components/layout/AppShell'
 import WindowControls from './components/layout/WindowControls'
+import Threads from './components/shared/Threads'
+import StrokeText from './components/shared/StrokeText'
 import AuthPage from './features/auth/AuthPage'
 import WizardPage from './features/wizard/WizardPage'
 import LibraryPage from './features/library/LibraryPage'
@@ -14,8 +16,28 @@ import ReaderPage from './features/reader/ReaderPage'
 import SettingsPage from './features/settings/SettingsPage'
 import UpdaterBoot from './features/updater/UpdaterBoot'
 
+/** 主题色 → [r,g,b]（0-1），供 WebGL uniform 使用 */
+function useThemeColors() {
+  return useMemo(() => {
+    const cs = getComputedStyle(document.documentElement)
+    const toRgb = (name: string, fallback: [number, number, number]): [number, number, number] => {
+      const m = /^#([0-9a-f]{6})$/i.exec(cs.getPropertyValue(name).trim())
+      if (!m) return fallback
+      const n = parseInt(m[1], 16)
+      return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
+    }
+    return {
+      accent: toRgb('--accent', [0.2, 0.4, 0.54]),
+      accentHex: cs.getPropertyValue('--accent').trim() || '#33658a',
+      textHex: cs.getPropertyValue('--text').trim() || '#2a2f36',
+    }
+  }, [])
+}
+
 export default function App() {
   const { booted, boot, bootError, retryBoot, user, settings } = useAuth()
+  const themeColors = useThemeColors()
+  const animationsOn = settings.animations !== false
 
   useEffect(() => {
     boot()
@@ -63,14 +85,44 @@ export default function App() {
   }, [])
 
   if (!booted) {
-    return bootError ? (
-      <div className="flex h-full flex-col items-center justify-center gap-4 bg-bg">
-        <p className="text-sm text-danger">{bootError}</p>
-        <button className="btn btn-primary" onClick={retryBoot}>
-          重试
-        </button>
-      </div>
-    ) : (
+    if (bootError) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center gap-4 bg-bg">
+          <p className="text-sm text-danger">{bootError}</p>
+          <button className="btn btn-primary" onClick={retryBoot}>
+            重试
+          </button>
+        </div>
+      )
+    }
+    if (animationsOn) {
+      return (
+        <div className="relative flex h-full flex-col items-center justify-center gap-6 overflow-hidden bg-bg">
+          <div className="absolute inset-0 opacity-40" aria-hidden>
+            <Threads color={themeColors.accent} amplitude={1} distance={0} enableMouseInteraction={false} />
+          </div>
+          <div className="relative w-[min(520px,80vw)]">
+            <StrokeText
+              text="PAPERLENS"
+              strokeColor={themeColors.accentHex}
+              fillColor={themeColors.textHex}
+              fontSize={72}
+              fontWeight={800}
+              letterSpacing={2}
+              drawDuration={1.4}
+              fillDelay={0.15}
+              fillMode="wipe"
+              trigger="mount"
+            />
+          </div>
+          <div className="relative flex flex-col items-center gap-3 text-text-faint">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+            <span className="text-xs tracking-widest">正在准备你的书房…</span>
+          </div>
+        </div>
+      )
+    }
+    return (
       <div className="flex h-full items-center justify-center bg-bg">
         <div className="flex flex-col items-center gap-3 text-text-faint">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />

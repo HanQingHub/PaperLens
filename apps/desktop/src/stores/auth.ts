@@ -2,6 +2,7 @@
 import { create } from 'zustand'
 import { api, ApiError, setToken, waitForBackend } from '../api/client'
 import type { AppSettings, User } from '../api/types'
+import { upsertAccount, removeAccount } from '../features/auth/AuthPage'
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'warm',
@@ -44,6 +45,8 @@ interface AuthState {
   bootError: string | null
   boot: () => Promise<void>
   retryBoot: () => Promise<void>
+  /** 用已存 token 直接进入（登录页最近账号 chips）；401 抛错由调用方摘除该账号 */
+  switchAccount: (token: string) => Promise<void>
   login: (u: string, p: string, remember: boolean) => Promise<void>
   register: (u: string, p: string) => Promise<void>
   logout: () => Promise<void>
@@ -84,10 +87,21 @@ export const useAuth = create<AuthState>((set, get) => ({
     await get().boot()
   },
 
+  switchAccount: async (token: string) => {
+    setToken(token)
+    set({ token, booted: false, bootError: null })
+    await get().boot()
+    if (get().bootError || !get().user) {
+      // token 失效：boot 已清会话，抛错让 UI 摘除该账号
+      throw new Error('登录状态已失效')
+    }
+  },
+
   login: async (username, password, remember) => {
     const r = await api.login(username, password, remember)
     setToken(r.token)
     set({ token: r.token, user: r.user })
+    upsertAccount({ username: r.user.username, display_name: r.user.display_name ?? r.user.username, token: r.token, at: Date.now() })
     const me = await api.me().catch(() => null)
     if (me) set({ settings: coerceSettings(me.settings) })
   },
@@ -96,12 +110,15 @@ export const useAuth = create<AuthState>((set, get) => ({
     const r = await api.register(username, password)
     setToken(r.token)
     set({ token: r.token, user: r.user })
+    upsertAccount({ username: r.user.username, display_name: r.user.display_name ?? r.user.username, token: r.token, at: Date.now() })
   },
 
   logout: async () => {
+    const current = get().user?.username
     await api.logout().catch(() => {})
     setToken(null)
     set({ token: null, user: null, settings: DEFAULT_SETTINGS })
+    if (current) removeAccount(current) // logout 已服务端销毁 session，摘除死 token
   },
 
   updateSettings: async (patch) => {

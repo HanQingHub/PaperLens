@@ -24,19 +24,26 @@ export function ReviewPanel() {
   const [stats, setStats] = useState<{ done: number; due: number } | null>(null)
   const [loading, setLoading] = useState(true)
   const [reviewing, setReviewing] = useState(false)
+  const [groupFilter, setGroupFilter] = useState<string>('')
+  const [groups, setGroups] = useState<{ name: string; count: number }[]>([])
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [words, s] = await Promise.all([api.words({ due: 1 }), api.stats()])
+      const [words, s, g] = await Promise.all([
+        api.words({ due: 1, group: groupFilter || undefined }),
+        api.stats(),
+        api.wordGroups(),
+      ])
       setQueue(words)
       setStats({ done: s.review_done_today, due: s.review_due_today })
+      setGroups(g)
     } catch (e) {
       toast(e instanceof Error ? e.message : '复习队列加载失败', 'error')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [groupFilter])
 
   useEffect(() => {
     load()
@@ -109,8 +116,20 @@ export function ReviewPanel() {
       <div className="flex items-center justify-between text-xs text-text-soft">
         <span>
           今日到期 <b className="pl-num text-accent">{stats?.due ?? 0}</b> 个 · 已复习 <b className="pl-num text-accent">{stats?.done ?? 0}</b> 个
+          {groupFilter && <span className="text-text-faint">（按组「{groupFilter}」出题 {queue.length} 个）</span>}
         </span>
         <span className="flex items-center gap-1">
+          <select
+            className="input w-auto! py-0.5 text-[11px]"
+            value={groupFilter}
+            title="按分组复习"
+            onChange={(e) => setGroupFilter(e.target.value)}
+          >
+            <option value="">全部分组</option>
+            {groups.map((g) => (
+              <option key={g.name} value={g.name}>{g.name}</option>
+            ))}
+          </select>
           <button className="btn btn-ghost px-1.5 py-0.5 text-xs" title="管理生词库" onClick={() => openPanel('words')}>
             词库
           </button>

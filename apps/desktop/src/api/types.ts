@@ -40,6 +40,7 @@ export interface Paper {
   sort_order: number
   created_at: string
   last_opened_at: string | null
+  annotation_count?: number
 }
 
 export type AnnotationType = 'word_note' | 'sentence'
@@ -76,6 +77,7 @@ export interface Word {
   lemma: string
   stage: 0 | 1 | 2
   translation: string | null
+  group_name: string | null
   ease: number
   interval_days: number
   due_at: string

@@ -10,7 +10,7 @@ from app.core.security import hash_password, new_token, verify_password
 from app.core.util import now_iso
 from app.models import Session as DbSession
 from app.models import User
-from app.api.deps import _bearer
+from app.api.deps import _bearer, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -24,6 +24,10 @@ class LoginIn(BaseModel):
     username: str
     password: str
     remember: bool = False
+
+
+class ProfileIn(BaseModel):
+    display_name: str
 
 
 def user_dict(user: User) -> dict:
@@ -63,6 +67,17 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
     token = _create_session(db, user.id, days=30 if body.remember else 1)
     db.commit()
     return {"token": token, "user": user_dict(user)}
+
+
+@router.patch("/profile")
+def update_profile(body: ProfileIn, user: User = Depends(get_current_user),
+                   db: Session = Depends(get_db)):
+    name = body.display_name.strip()
+    if not (1 <= len(name) <= 30):
+        raise HTTPException(status_code=422, detail="展示名需 1-30 字符")
+    user.display_name = name
+    db.commit()
+    return user_dict(user)
 
 
 @router.post("/logout", status_code=204)

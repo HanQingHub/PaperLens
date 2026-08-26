@@ -981,3 +981,29 @@ a:focus-visible {
   line-height: 1.7;
   letter-spacing: 0.015em;
 }
+
+/* 文库卡片入场：向右平滑移入（stagger 由内联 animationDelay 控制） */
+.pl-card-enter {
+  animation: pl-card-in 0.38s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+@keyframes pl-card-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+.no-motion .pl-card-enter {
+  animation: none;
+}
+
+/* 卡片批注计数徽章 */
+.pl-anno-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--text-soft);
+}

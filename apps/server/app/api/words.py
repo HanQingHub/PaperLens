@@ -5,6 +5,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -21,6 +22,7 @@ STAGE_NAMES = {0: "陌生", 1: "学习中", 2: "已掌握"}
 def word_dict(w: Word, sentence: str | None = None) -> dict:
     d = {
         "id": w.id, "lemma": w.lemma, "stage": w.stage, "translation": w.translation,
+        "group_name": w.group_name,
         "ease": w.ease, "interval_days": w.interval_days, "due_at": w.due_at,
         "review_count": w.review_count, "first_seen_at": w.first_seen_at,
         "last_seen_at": w.last_seen_at, "stage_name": STAGE_NAMES.get(w.stage, ""),
@@ -36,26 +38,47 @@ class WordIn(BaseModel):
     paper_id: int | None = None
     sentence: str = ""
     context: str = ""
+    group_name: str | None = None
 
 
 class WordPatch(BaseModel):
     stage: int | None = None
     translation: str | None = None
+    group_name: str | None = None  # 空串 = 移出分组；None = 不改动
 
 
 class ReviewIn(BaseModel):
     q: int
 
 
+@router.get("/groups")
+def list_groups(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """生词分组名列表（非空组名，按成员数降序）。"""
+    rows = (
+        db.query(Word.group_name, func.count(Word.id).label("c"))
+        .filter(Word.user_id == user.id, Word.group_name.isnot(None), Word.group_name != "")
+        .group_by(Word.group_name)
+        .order_by(func.count(Word.id).desc())
+        .all()
+    )
+    return [{"name": name, "count": c} for name, c in rows]
+
+
 @router.get("")
 def list_words(stage: int | None = None, q: str | None = None, due: int | None = None,
-               user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+               group: str | None = None, user: User = Depends(get_current_user),
+               db: Session = Depends(get_db)):
     query = db.query(Word).filter(Word.user_id == user.id)
     if stage is not None:
         query = query.filter(Word.stage == stage)
     if q:
         like = f"%{q.lower()}%"
         query = query.filter((Word.lemma.like(like)) | (Word.translation.like(like)))
+    if group is not None:
+        if group == "":
+            query = query.filter(Word.group_name.is_(None) | (Word.group_name == ""))
+        else:
+            query = query.filter(Word.group_name == group)
     if due == 1:  # 到期复习队列（唯一到期查询入口）
         query = query.filter(Word.stage < 2, Word.due_at.isnot(None), Word.due_at <= now_iso())
         query = query.order_by(Word.due_at)
@@ -98,16 +121,19 @@ def add_word(body: WordIn, user: User = Depends(get_current_user), db: Session =
         if paper is None or paper.user_id != user.id:
             raise HTTPException(status_code=404, detail="论文不存在")
     translation = body.translation.strip() or _auto_translation(db, user.id, lemma) or None
+    group = (body.group_name or "").strip() or None if body.group_name is not None else None
     now = now_iso()
     word = db.query(Word).filter(Word.user_id == user.id, Word.lemma == lemma).first()
     if word is None:
         word = Word(user_id=user.id, lemma=lemma, stage=0, translation=translation,
-                    first_seen_at=now, last_seen_at=now)
+                    group_name=group, first_seen_at=now, last_seen_at=now)
         db.add(word)
     else:
         word.last_seen_at = now
         if translation:
             word.translation = translation
+        if body.group_name is not None:
+            word.group_name = group
     db.flush()
     if body.paper_id is not None and body.sentence:
         db.add(WordOccurrence(word_id=word.id, paper_id=body.paper_id,
@@ -137,6 +163,9 @@ def patch_word(word_id: int, body: WordPatch, user: User = Depends(get_current_u
             w.due_at = None
     if body.translation is not None:
         w.translation = body.translation
+    if body.group_name is not None:
+        name = body.group_name.strip()
+        w.group_name = name or None  # 空串 = 移出分组
     db.commit()
     return word_dict(w)
 

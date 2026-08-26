@@ -103,10 +103,25 @@ def delete_annotation(annotation_id: int, user: User = Depends(get_current_user)
     return None
 
 
+def _filtered_annotations(db: Session, paper_id: int, color: str | None, type_: str | None):
+    """导出取数 + 可选筛选；非法筛选值返回 400 而非静默空结果。"""
+    query = db.query(Annotation).filter(Annotation.paper_id == paper_id).order_by(Annotation.page_no)
+    if color:
+        if color not in ("yellow", "green", "blue", "pink", "purple"):
+            raise HTTPException(status_code=400, detail=f"未知颜色筛选：{color}")
+        query = query.filter(Annotation.color == color)
+    if type_:
+        if type_ not in ("word_note", "sentence"):
+            raise HTTPException(status_code=400, detail=f"未知类型筛选：{type_}")
+        query = query.filter(Annotation.type == type_)
+    return query.all()
+
+
 @router.post("/papers/{paper_id}/export-annotations-pdf")
-def export_pdf(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def export_pdf(paper_id: int, color: str | None = None, type: str | None = None,
+               user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     paper = owned_paper(db, user, paper_id)
-    rows = db.query(Annotation).filter(Annotation.paper_id == paper_id).order_by(Annotation.page_no).all()
+    rows = _filtered_annotations(db, paper_id, color, type)
     settings = get_settings()
     src = ensure_within(settings.files_dir, settings.files_dir / f"{paper.file_hash}.pdf")
     if not src.exists():
@@ -125,9 +140,10 @@ def export_pdf(paper_id: int, user: User = Depends(get_current_user), db: Sessio
 
 
 @router.post("/papers/{paper_id}/export-annotations-md")
-def export_md(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def export_md(paper_id: int, color: str | None = None, type: str | None = None,
+              user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     paper = owned_paper(db, user, paper_id)
-    rows = db.query(Annotation).filter(Annotation.paper_id == paper_id).order_by(Annotation.page_no).all()
+    rows = _filtered_annotations(db, paper_id, color, type)
     lines = [f"# {paper.title or '论文'} 批注", ""]
     for a in rows:
         try:

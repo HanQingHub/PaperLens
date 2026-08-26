@@ -16,14 +16,14 @@ from app.core.util import now_iso
 from app.core.config import get_settings
 from app.models import (
     Annotation, AppSetting, Excerpt, FileRef, GlossaryTerm, Paper, Project,
-    ReadingProgress, ReadingSession, ReviewLog, TranslationCache, User, Word,
-    WordOccurrence,
+    ReadingProgress, ReadingSession, ReviewLog, TranslateHistory, TranslationCache,
+    User, Word, WordOccurrence,
 )
 
 _USER_TABLES = [
     ("projects", Project), ("papers", Paper), ("words", Word),
     ("review_logs", ReviewLog), ("glossary_terms", GlossaryTerm),
-    ("translation_cache", TranslationCache),
+    ("translation_cache", TranslationCache), ("translate_history", TranslateHistory),
     ("reading_progress", ReadingProgress), ("reading_sessions", ReadingSession),
     ("excerpts", Excerpt), ("app_settings", AppSetting),
 ]

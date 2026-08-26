@@ -103,12 +103,25 @@ class Word(Base):
     lemma: Mapped[str] = mapped_column(Text, nullable=False)
     stage: Mapped[int] = mapped_column(Integer, default=0)  # 0陌生/1学习中/2已掌握
     translation: Mapped[Optional[str]] = mapped_column(Text)
+    group_name: Mapped[Optional[str]] = mapped_column(Text)  # 生词分组（NULL=未分组）
     ease: Mapped[float] = mapped_column(Float, default=2.5)
     interval_days: Mapped[float] = mapped_column(Float, default=0)
     due_at: Mapped[Optional[str]] = mapped_column(Text)
     review_count: Mapped[int] = mapped_column(Integer, default=0)
     first_seen_at: Mapped[Optional[str]] = mapped_column(Text)
     last_seen_at: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class TranslateHistory(Base):
+    __tablename__ = "translate_history"
+    __table_args__ = (Index("ix_translate_history_user", "user_id", "created_at"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    word: Mapped[str] = mapped_column(Text, nullable=False)
+    sentence: Mapped[Optional[str]] = mapped_column(Text)
+    mode: Mapped[str] = mapped_column(Text, nullable=False)  # word | dict | sentence
+    result: Mapped[str] = mapped_column(Text, nullable=False)  # 翻译结果 JSON
+    created_at: Mapped[str] = mapped_column(Text, default=now_iso)
 
 
 class ReviewLog(Base):

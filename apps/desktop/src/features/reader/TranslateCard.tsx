@@ -8,6 +8,15 @@ import { useWords } from '../../stores/words'
 import { useReader } from '../../stores/readerStore'
 import { lemmaCandidates } from './lemma'
 
+interface HistoryItem {
+  id: number
+  word: string
+  sentence: string | null
+  mode: string
+  result: Record<string, unknown>
+  created_at: string
+}
+
 export interface TranslateRequest {
   id: number
   word: string
@@ -67,6 +76,8 @@ export default function TranslateCard({
   onToast: (msg: string) => void
 }) {
   const [pinned, setPinned] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [history, setHistory] = useState<HistoryItem[] | null>(null)
   const [pos, setPos] = useState({ x: 0, y: 0, below: true })
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -371,6 +382,23 @@ export default function TranslateCard({
         {engine && engine.startsWith('llm') && status === 'done' && <span className="badge">LLM</span>}
         <span className="ml-auto flex items-center gap-1">
           <button
+            title="查词历史"
+            className={`rounded px-1.5 py-0.5 text-xs ${historyOpen ? 'bg-accent-soft text-accent' : 'text-text-faint hover:text-accent'}`}
+            onClick={async () => {
+              const next = !historyOpen
+              setHistoryOpen(next)
+              if (next && history === null) {
+                try {
+                  setHistory(await api.translateHistory(50))
+                } catch {
+                  setHistory([])
+                }
+              }
+            }}
+          >
+            🕘
+          </button>
+          <button
             title={pinned ? '取消固定' : '钉住卡片'}
             className={`rounded px-1.5 py-0.5 text-xs ${pinned ? 'bg-accent-soft text-accent' : 'text-text-faint hover:text-accent'}`}
             onClick={() => setPinned((p) => !p)}
@@ -382,6 +410,36 @@ export default function TranslateCard({
           </button>
         </span>
       </div>
+
+      {/* 查词历史下拉 */}
+      {historyOpen && (
+        <div className="max-h-44 overflow-y-auto border-b border-border bg-panel-soft px-2 py-1.5">
+          {history === null ? (
+            <p className="py-2 text-center text-[11px] text-text-faint">加载中…</p>
+          ) : history.length === 0 ? (
+            <p className="py-2 text-center text-[11px] text-text-faint">暂无查词记录</p>
+          ) : (
+            history.map((it) => (
+              <button
+                key={it.id}
+                className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-[12px] hover:bg-accent-soft"
+                onClick={() => {
+                  const gloss = typeof it.result.translation === 'string' ? it.result.translation : String(it.result.gloss ?? '')
+                  setHistoryOpen(false)
+                  onToast(`「${it.word}」：${gloss.slice(0, 60)}`)
+                }}
+                title={String(it.result.translation ?? it.result.gloss ?? '')}
+              >
+                <span className="font-medium">{it.word}</span>
+                <span className="badge">{it.mode === 'dict' ? '词典' : it.mode === 'sentence' ? '句译' : 'LLM'}</span>
+                <span className="ml-auto text-[10px] text-text-faint">
+                  {new Date(it.created_at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
         {/* hit 层：词性 + 基本义 / 直接译法 */}

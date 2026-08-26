@@ -14,6 +14,7 @@ import { clientRectsInPage, clientRectsToPdf } from '../../shared/coords'
 import { RENDER_DEBOUNCE_MS, PROGRESS_SAVE_THROTTLE_MS, ZOOM_STEP_RATIO, mapOcrPollStatus } from './constants'
 import '../../lib/pdfjsSetup'
 import PageView from './PageView'
+import ThumbnailRail from './ThumbnailRail'
 import { clearPageBitmaps } from './renderScheduler'
 import SelectionToolbar, { type SelectionActions } from './SelectionToolbar'
 import TranslateCard, { type TranslateRequest } from './TranslateCard'
@@ -108,6 +109,11 @@ export default function ReaderPage() {
 
   const [translateReq, setTranslateReq] = useState<TranslateRequest | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
+  // 导出筛选（全部 = null）
+  const [exportColor, setExportColor] = useState<string>('')
+  const [exportType, setExportType] = useState<string>('')
+  // 无大纲时显示缩略图导航条（outline 加载完成后判定）
+  const [outlineMissing, setOutlineMissing] = useState(false)
   const actionsRef = useRef<SelectionActions | null>(null)
   const reqSeq = useRef(1)
   const rafScroll = useRef(0)
@@ -260,6 +266,20 @@ export default function ReaderPage() {
       .then((list) => useReader.getState().setAnnotations(list.map(parseAnnotation)))
       .catch(() => {})
   }, [pid])
+
+  // ── 大纲探测：无大纲 → 缩略图导航条兜底 ──
+  useEffect(() => {
+    setOutlineMissing(false)
+    if (!pdf) return
+    let cancelled = false
+    pdf
+      .getOutline()
+      .then((o) => !cancelled && setOutlineMissing(!o || o.length === 0))
+      .catch(() => !cancelled && setOutlineMissing(true))
+    return () => {
+      cancelled = true
+    }
+  }, [pdf])
 
   // ── 生词库（高亮匹配用）──
   useEffect(() => {
@@ -611,11 +631,14 @@ export default function ReaderPage() {
     })
   }, [pid])
 
-  // ── 导出 ──
+  // ── 导出（带筛选）──
   const exportPdf = async () => {
     setExportOpen(false)
     try {
-      const blob = await api.exportAnnotationsPdf(pid)
+      const blob = await api.exportAnnotationsPdf(pid, {
+        color: exportColor || undefined,
+        type: exportType || undefined,
+      })
       const saved = await saveBlobWithDialog(blob, `${paper?.title?.slice(0, 40) || 'paper'}_批注版.pdf`)
       if (!saved) return
       toast('已导出批注写回副本', 'ok')
@@ -626,7 +649,10 @@ export default function ReaderPage() {
   const exportMd = async () => {
     setExportOpen(false)
     try {
-      const blob = await api.exportAnnotationsMd(pid)
+      const blob = await api.exportAnnotationsMd(pid, {
+        color: exportColor || undefined,
+        type: exportType || undefined,
+      })
       const saved = await saveBlobWithDialog(blob, `${paper?.title?.slice(0, 40) || 'paper'}_批注.md`)
       if (!saved) return
       toast('已导出批注 Markdown', 'ok')
@@ -749,7 +775,26 @@ export default function ReaderPage() {
             <I d={icons.export} />
           </button>
           {exportOpen && (
-            <div className="menu-pop">
+            <div className="menu-pop w-44 p-2">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <span className="w-8 text-[11px] text-text-faint">颜色</span>
+                <select className="input flex-1 py-0.5 text-[11px]" value={exportColor} onChange={(e) => setExportColor(e.target.value)}>
+                  <option value="">全部</option>
+                  <option value="yellow">黄</option>
+                  <option value="green">绿</option>
+                  <option value="blue">蓝</option>
+                  <option value="pink">粉</option>
+                  <option value="purple">紫</option>
+                </select>
+              </div>
+              <div className="mb-2 flex items-center gap-1.5">
+                <span className="w-8 text-[11px] text-text-faint">类型</span>
+                <select className="input flex-1 py-0.5 text-[11px]" value={exportType} onChange={(e) => setExportType(e.target.value)}>
+                  <option value="">全部</option>
+                  <option value="word_note">笔记</option>
+                  <option value="sentence">高亮</option>
+                </select>
+              </div>
               <button onClick={exportPdf}>写回 PDF 副本</button>
               <button onClick={exportMd}>Markdown 列表</button>
             </div>
@@ -758,7 +803,8 @@ export default function ReaderPage() {
       </div>
 
       {/* ── 主区域 ── */}
-      <div className="relative min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
+        <div className="relative min-w-0 flex-1">
         {loading || isStale ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-text-faint">
             <div className="spinner spinner-lg" />
@@ -804,7 +850,11 @@ export default function ReaderPage() {
         {outlineOpen && !loading && !isStale && <OutlineDrawer onGoto={(p) => gotoPage(p, false)} />}
 
         {/* 页内搜索 */}
-        {searchOpen && !loading && !isStale && <SearchBar onEnterPage={(i) => scrollToPosition(i + 1, 0)} />}
+        {searchOpen && !loading && !isStale && (
+          <div className={outlineMissing ? 'absolute right-16 top-2 z-30' : 'absolute right-3 top-2 z-30'}>
+            <SearchBar onEnterPage={(i) => scrollToPosition(i + 1, 0)} />
+          </div>
+        )}
 
         {/* OCR 状态条 */}
         {!loading && !isStale && paper && (
@@ -823,6 +873,12 @@ export default function ReaderPage() {
           <div className="glass pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-full border border-border-strong px-4 py-1.5 text-xs text-text-soft shadow-[var(--shadow-1)]">
             从锚点按住拖动到页边任意位置松开落卡 · Esc 取消
           </div>
+        )}
+        </div>
+
+        {/* 缩略图导航条（无大纲 PDF 的页级跳转兜底） */}
+        {!loading && !isStale && outlineMissing && pdf && numPages > 0 && (
+          <ThumbnailRail pdf={pdf} numPages={numPages} currentPage={currentPage} onGoto={(p) => gotoPage(p, false)} />
         )}
       </div>
 

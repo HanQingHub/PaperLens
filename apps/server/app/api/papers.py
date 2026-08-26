@@ -1,7 +1,6 @@
 import asyncio
 import json
 import re
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,8 +23,8 @@ from app.services import file_tokens, tfidf_service
 router = APIRouter(prefix="/papers", tags=["papers"])
 
 
-def paper_dict(p: Paper) -> dict:
-    return {
+def paper_dict(p: Paper, annotation_count: int | None = None) -> dict:
+    d = {
         "id": p.id, "user_id": p.user_id, "project_id": p.project_id, "title": p.title,
         "authors": p.authors, "venue": p.venue, "year": p.year, "doi": p.doi,
         "arxiv_id": p.arxiv_id,
@@ -36,6 +35,9 @@ def paper_dict(p: Paper) -> dict:
         "sort_order": p.sort_order,
         "created_at": p.created_at, "last_opened_at": p.last_opened_at,
     }
+    if annotation_count is not None:
+        d["annotation_count"] = annotation_count
+    return d
 
 
 # ── 首页文本元数据提取（纯本地启发式；识别不到即为 None，不虚构）──
@@ -281,6 +283,24 @@ async def upload(
 ):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="仅支持 PDF 文件")
+    paper = await _import_pdf_bytes(
+        await file.read(), user, db, project_id=project_id, is_scanned=is_scanned,
+        filename=file.filename,
+    )
+    return {"paper": paper_dict(paper)}
+
+
+async def _import_pdf_bytes(
+    data: bytes,
+    user: User,
+    db: Session,
+    *,
+    project_id: int | None = None,
+    is_scanned: bool = False,
+    filename: str | None = None,
+) -> Paper:
+    """上传管道共用入口（upload 与 arXiv 导入）：写盘+hash 去重 → 元数据提取 →
+    FileRef/Paper 落库 → OCR/tfidf 分派。阻塞段（解析/提取）卸载到线程。"""
     settings = get_settings()
     settings.ensure_dirs()
     if project_id is not None:
@@ -290,25 +310,10 @@ async def upload(
 
     import hashlib
 
-    h = hashlib.sha256()
-    tmp = settings.files_dir / f".upload-{uuid.uuid4().hex}"
-    try:
-        with open(tmp, "wb") as out:
-            while True:
-                chunk = await file.read(1 << 20)
-                if not chunk:
-                    break
-                out.write(chunk)
-                h.update(chunk)
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise
-    digest = h.hexdigest()
+    digest = hashlib.sha256(data).hexdigest()
     dest = settings.files_dir / f"{digest}.pdf"
-    if dest.exists():
-        tmp.unlink(missing_ok=True)  # 全局内容 hash 去重，跨账号共享物理文件
-    else:
-        tmp.rename(dest)
+    if not dest.exists():
+        dest.write_bytes(data)
 
     meta = await asyncio.to_thread(extract_pdf_meta, dest)
 
@@ -322,9 +327,10 @@ async def upload(
         max_order = db.query(func.max(Paper.sort_order)).filter(
             Paper.user_id == user.id, Paper.project_id == project_id
         ).scalar()
+        title_fallback = Path(filename).stem if filename else (f"arXiv {meta.arxiv_id}" if meta.arxiv_id else "未命名论文")
         paper = Paper(
             user_id=user.id, project_id=project_id,
-            title=meta.title or Path(file.filename).stem,
+            title=meta.title or title_fallback,
             authors=meta.authors, file_hash=digest, page_count=meta.page_count,
             year=meta.year, doi=meta.doi, arxiv_id=meta.arxiv_id,
             is_scanned=int(is_scanned),
@@ -342,7 +348,7 @@ async def upload(
         app.state.ocr_manager.enqueue(paper.id, dest, meta.page_count or 1)
     else:
         tfidf_service.schedule(paper.id)
-    return {"paper": paper_dict(paper)}
+    return paper
 
 
 @router.get("")
@@ -364,7 +370,7 @@ def list_papers(
         query = query.filter(Paper.is_favorite == 1)
     if q:
         like = f"%{q}%"
-        query = query.filter((Paper.title.like(like)) | (Paper.authors.like(like)))
+        query = query.filter((Paper.title.like(like)) | (Paper.authors.like(like)) | (Paper.tags.like(like)))
     if sort == "title":
         query = query.order_by(func.lower(Paper.title).asc())
     elif sort == "last_opened":
@@ -373,7 +379,51 @@ def list_papers(
         query = query.order_by(Paper.sort_order.asc(), Paper.id.asc())
     else:
         query = query.order_by(Paper.created_at.desc(), Paper.id.desc())
-    return [paper_dict(p) for p in query.all()]
+    # 批注计数一次聚合（每 paper 一行的子查询，outerjoin 不产生行膨胀）
+    from app.models import Annotation
+
+    count_sq = (
+        db.query(Annotation.paper_id, func.count(Annotation.id).label("c"))
+        .filter(Annotation.user_id == user.id)
+        .group_by(Annotation.paper_id)
+        .subquery()
+    )
+    rows = (
+        query.outerjoin(count_sq, count_sq.c.paper_id == Paper.id)
+        .with_entities(Paper, func.coalesce(count_sq.c.c, 0))
+        .all()
+    )
+    return [paper_dict(p, c) for p, c in rows]
+
+
+class ArxivIn(BaseModel):
+    arxiv_id: str
+
+
+@router.post("/arxiv", status_code=201)
+async def import_arxiv(body: ArxivIn, user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    """arXiv ID 粘贴导入：联网下载 PDF 后走标准上传管道。"""
+    import httpx
+
+    aid = body.arxiv_id.strip()
+    if not re.fullmatch(r"\d{4}\.\d{4,5}(v\d+)?", aid):
+        raise HTTPException(status_code=422, detail="arXiv ID 格式应为 2401.12345")
+    base_id = aid.split("v")[0]
+    dup = db.query(Paper).filter(Paper.user_id == user.id, Paper.arxiv_id == base_id).first()
+    if dup is not None:
+        raise HTTPException(status_code=409, detail=f"该 arXiv 论文已在库（{dup.title}）")
+    try:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            resp = await client.get(f"https://arxiv.org/pdf/{aid}")
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="无法连接 arXiv（请检查网络）")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"arXiv 下载失败（HTTP {resp.status_code}）")
+    if len(resp.content) < 1024 or not resp.content[:5] == b"%PDF-":
+        raise HTTPException(status_code=502, detail="arXiv 返回内容不是有效 PDF")
+    paper = await _import_pdf_bytes(resp.content, user, db, filename=f"arXiv {base_id}.pdf")
+    return paper_dict(paper)
 
 
 @router.get("/{paper_id}")
