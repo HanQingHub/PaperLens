@@ -17,7 +17,8 @@ class Settings:
     def __init__(self) -> None:
         raw = os.environ.get("PAPERLENS_DATA_DIR")
         if not raw:
-            if not os.path.isdir(os.path.splitdrive(DEFAULT_DATA_DIR)[0] or "/"):
+            # 显式带盘符根路径（"D:" 是 drive-relative 语义，≠ "D:\"）
+            if not os.path.isdir(DEFAULT_DATA_DIR):
                 raw = os.path.join(os.environ.get("LOCALAPPDATA", ""), "PaperLens")
             else:
                 raw = DEFAULT_DATA_DIR

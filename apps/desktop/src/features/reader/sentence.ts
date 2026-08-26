@@ -85,63 +85,49 @@ export function extractSentenceContext(fullText: string, selText: string): {
   const needle = selText.replace(/\s+/g, ' ').trim()
   if (!needle) return { sentence: selText, prev: '', next: '' }
 
-  const flat = fullText.replace(/\s+/g, ' ')
-  const idx = flat.indexOf(needle)
-  if (idx < 0) return { sentence: selText, prev: '', next: '' }
-
-  // 行感知：用原始换行切分，建 char→line 映射
   const lines = fullText.split('\n')
+
+  // 规范化定位：每行折叠空白后拼接（行间单空格），记录规范化偏移→原始行索引的
+  // 精确映射。needle 做同样规范化后 indexOf——长度保真，不再有折叠近似误差。
+  const normLines: { text: string; rawIdx: number; start: number }[] = []
   let acc = 0
-  const lineOff: number[] = []
-  for (const ln of lines) {
-    lineOff.push(acc)
-    acc += ln.length + 1 // +1 for '\n'
+  for (let i = 0; i < lines.length; i++) {
+    const norm = lines[i].replace(/\s+/g, ' ').trim()
+    if (!norm) continue
+    normLines.push({ text: norm, rawIdx: i, start: acc })
+    acc += norm.length + 1
   }
-  // flat 的换行已被折为空格，映射需用折叠后长度近似；简化：用 lines 拼成 flatLines 再 indexOf
-  const flatLines = lines.map((ln) => ln.replace(/\s+/g, ' ').trim()).filter(Boolean)
-  // 备用：若 flatLines 方法找不到，回退旧逻辑
-  const needleLineIdx = (() => {
-    let _p = 0
-    for (let i = 0; i < lines.length; i++) {
-      const norm = lines[i].replace(/\s+/g, ' ').trim()
-      if (!norm) { _p += 1; continue }
-      if (norm.includes(needle.split(' ')[0] ?? '')) {
-        // 粗略：首词命中即认为该行包含 needle
-        const lineFlat = flatLines.join(' ')
-        const li = lineFlat.indexOf(needle)
-        if (li >= 0) {
-          // 估算行号：累加 flatLines 长度
-          let s = 0
-          for (let j = 0; j < flatLines.length; j++) {
-            if (s <= li && li < s + flatLines[j].length) return j
-            s += flatLines[j].length + 1
-          }
-        }
-      }
-      _p += norm.length + 1
+  const flatNorm = normLines.map((l) => l.text).join(' ')
+  const idx = flatNorm.indexOf(needle)
+  if (idx < 0) return { sentence: needle, prev: '', next: '' }
+
+  // idx 所在行（normLines 有序，线性扫描即可）
+  let lineIdx = normLines.length - 1
+  for (let i = 0; i < normLines.length; i++) {
+    const end = normLines[i].start + normLines[i].text.length
+    if (idx < end) {
+      lineIdx = i
+      break
     }
-    // 回退：用 char 映射近似
-    let cur = 0
-    for (let i = 0; i < lines.length; i++) {
-      const ln = lines[i]
-      if (idx >= cur && idx < cur + ln.length + 1) return i
-      cur += ln.length + 1
-    }
-    return -1
-  })()
+  }
+  const rawIdx = normLines[lineIdx].rawIdx
 
   // 向上收集（目标：得到以上一句句号结尾的 before-clean）
   const collectUp: string[] = []
   let needlePrefix = ''
-  if (needleLineIdx >= 0) {
-    const lineText = lines[needleLineIdx] ?? ''
-    const firstWord = needle.split(' ')[0] ?? ''
-    const col = firstWord ? lineText.indexOf(firstWord) : -1
-    const prefixInLine = col >= 0 ? lineText.slice(0, col) : ''
-    needlePrefix = stripLeadingHeading(prefixInLine).trim()
+  {
+    const lineText = lines[rawIdx] ?? ''
+    // needle 在本行规范化文本内的起点 → 映射回原始行的字符位置（比例近似仅影响
+    // 前缀截断点，上下文语义由行级收集保证）
+    const normStartInLine = Math.max(0, idx - normLines[lineIdx].start)
+    const normLineText = normLines[lineIdx].text
+    // 原始行前缀：按规范化长度比例回映射（原始行与规范化行长度差只来自空白）
+    const ratio = normLineText.length > 0 ? lineText.length / normLineText.length : 0
+    const rawCut = Math.min(lineText.length, Math.round(normStartInLine * ratio))
+    needlePrefix = stripLeadingHeading(lineText.slice(0, rawCut)).trim()
     if (needlePrefix) collectUp.unshift(needlePrefix)
 
-    for (let i = needleLineIdx - 1; i >= 0; i--) {
+    for (let i = rawIdx - 1; i >= 0; i--) {
       const t = lines[i].trim()
       if (!t) break
       if (isHeading(t)) {
@@ -153,70 +139,54 @@ export function extractSentenceContext(fullText: string, selText: string): {
     }
   }
 
-  let beforeClean: string
-  if (collectUp.length > 0) {
-    beforeClean = collectUp.join(' ').replace(/\s+/g, ' ').trim()
-    // 若 needlePrefix 非空且 beforeClean 以它结尾，则它是当前句前缀，否则它是上一句
-    if (needlePrefix && beforeClean.endsWith(needlePrefix)) {
-      // beforeClean 包含当前句前缀，需拆分（保留整体让后续 split 自然处理）
-    }
-  } else {
-    // 回退旧逻辑的 before
-    const before = flat.slice(0, idx)
+  // 向上收集为空（选区在文档最前/前面全是标题）→ 用纯 needle 流程
+  if (collectUp.length === 0) {
+    const before = flatNorm.slice(0, idx)
+    const after = flatNorm.slice(idx + needle.length)
     const prevSentences = splitSentences(before)
+    const nextSentences = splitSentences(after)
     let startFrag = prevSentences.length ? prevSentences[prevSentences.length - 1] : ''
-    // 同行标题剥离
     startFrag = stripLeadingHeading(startFrag)
-    if (prevSentences.length === 1 && before.length > 300 && startFrag.length > 200) startFrag = ''
-    else if (startFrag.length > 240) {
+    if (startFrag.length > 240) {
       const cut = startFrag.slice(-240)
       const sp = cut.indexOf(' ')
       startFrag = sp >= 0 ? cut.slice(sp + 1) : cut
     }
-    beforeClean = startFrag ? startFrag + ' ' + needle : needle
-    // 简化：直接用 startFrag 逻辑的 beforeClean 近似
-    // 为避免与新逻辑分支混淆，这里直接按新收集结果处理：若无收集则用 startFrag
-    const parts = splitSentences(beforeClean)
-    const startFrag2 = parts.length ? parts[parts.length - 1] : ''
-    const prev2 = parts.length > 1 ? parts[parts.length - 2] : ''
-    // 向下仍用旧逻辑的 after
-    const after = flat.slice(idx + needle.length)
-    const nextSentences = splitSentences(after)
     const endFrag = isWholeSentence(needle) ? '' : (nextSentences.length ? nextSentences[0] : '')
-    const next2 = isWholeSentence(needle) ? (nextSentences.length ? nextSentences[0] : '') : (nextSentences.length > 1 ? nextSentences[1] : '')
-    const sentence2 = `${startFrag2}`.replace(/\s+/g, ' ').trim() || needle
-    // 合并 endFrag（整句时不再粘下一句）
-    const fullSent = isWholeSentence(needle) ? sentence2 : `${sentence2} ${endFrag}`.replace(/\s+/g, ' ').trim()
-    return { sentence: fullSent || needle, prev: prev2, next: next2 }
+    const next = isWholeSentence(needle)
+      ? (nextSentences.length ? nextSentences[0] : '')
+      : (nextSentences.length > 1 ? nextSentences[1] : '')
+    const sentence = isWholeSentence(needle) ? needle : `${startFrag} ${needle} ${endFrag}`.replace(/\s+/g, ' ').trim() || needle
+    return { sentence, prev: prevSentences.length > 1 ? prevSentences[prevSentences.length - 2] : '', next }
   }
 
-  // 正常行感知分支：beforeClean 是上一句，needlePrefix 是当前句前缀
+  // 正常行感知分支：beforeClean 的末句是上一句
+  const beforeClean = collectUp.join(' ').replace(/\s+/g, ' ').trim()
   const beforeParts = splitSentences(beforeClean)
   const prev = beforeParts.length ? beforeParts[beforeParts.length - 1] : ''
-  const startFrag = needlePrefix
+  const startFrag = needlePrefix && !beforeClean.endsWith(needlePrefix) ? '' : needlePrefix
 
   // 向下收集（至第二个句末）
-  const needleLine = needleLineIdx >= 0 ? lines[needleLineIdx] : ''
-  const colEnd = needleLineIdx >= 0 ? needleLine.indexOf(needle) + needle.length : -1
-  const restInLine = colEnd >= 0 ? needleLine.slice(colEnd) : ''
+  const normStartInLine = Math.max(0, idx - normLines[lineIdx].start)
+  const normLineText = normLines[lineIdx].text
+  const restNorm = normLineText.slice(normStartInLine + needle.length)
   const afterCollect: string[] = []
-  if (restInLine.trim()) afterCollect.push(restInLine)
-  const seenEnd = isSentEnd(restInLine)
+  if (restNorm.trim()) afterCollect.push(restNorm)
+  const seenEnd = isSentEnd(restNorm)
   let endCount = seenEnd ? 1 : 0
-  for (let i = (needleLineIdx >= 0 ? needleLineIdx + 1 : 0); i < lines.length && endCount < 2; i++) {
+  for (let i = rawIdx + 1; i < lines.length && endCount < 2; i++) {
     const t = lines[i].trim()
     if (!t) break
     if (isHeading(t)) continue
     afterCollect.push(lines[i])
     if (isSentEnd(t)) endCount++
   }
-  const afterClean2 = afterCollect.join(' ').replace(/\s+/g, ' ').trim()
-  const afterParts = splitSentences(afterClean2)
+  const afterClean = afterCollect.join(' ').replace(/\s+/g, ' ').trim()
+  const afterParts = splitSentences(afterClean)
   const endFrag = isWholeSentence(needle) ? '' : (afterParts.length ? afterParts[0] : '')
   const next = isWholeSentence(needle) ? (afterParts.length ? afterParts[0] : '') : (afterParts.length > 1 ? afterParts[1] : '')
   const sentence = isWholeSentence(needle) ? needle : `${needle} ${endFrag}`.replace(/\s+/g, ' ').trim() || needle
 
-  // 兜底
   let sFrag = startFrag
   if (sFrag.length > 240) {
     const cut = sFrag.slice(-240)
@@ -224,8 +194,6 @@ export function extractSentenceContext(fullText: string, selText: string): {
     sFrag = sp >= 0 ? cut.slice(sp + 1) : cut
   }
 
-  // 若 startFrag 非空且 needle 不以它结尾，说明 startFrag 是上一句前缀的片段而非当前句前缀；此时 sentence 前应补上 sFrag
-  // 但按收集逻辑，sFrag 已是当前句前缀（来自 needle 行前缀或上一行折行），应拼入
   const finalSentence = sFrag && !needle.startsWith(sFrag.slice(0, 10)) ? `${sFrag} ${needle} ${endFrag}`.replace(/\s+/g, ' ').trim() : sentence
 
   return { sentence: finalSentence, prev, next }

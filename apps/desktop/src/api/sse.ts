@@ -47,7 +47,7 @@ export async function* ssePost(
   }, 1000)
 
   try {
-    for await (const raw of readFrames(res, '\n\n')) {
+    for await (const raw of readFrames(res, '\n\n', controller.signal)) {
       lastEventAt = Date.now()
       const ev = toTranslateEvent(raw)
       if (ev) yield ev

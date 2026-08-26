@@ -97,15 +97,21 @@ def find_task(ocr_root: Path):
 
 
 def resolve_scale(task):
-    """task.json dpi_scale → 环境变量 PAPERLENS_DPI_SCALE → 默认 2.8。"""
-    scale = task.get("dpi_scale")
+    """task.json dpi_scale → 环境变量 PAPERLENS_DPI_SCALE → 默认 2.8。
+    非法值（非数值/NaN/Inf/越界）一律回退默认：脏 task.json 不得触发渲染 OOM/除零。"""
+
+    def _clean(raw):
+        try:
+            s = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if s != s or s in (float("inf"), float("-inf")) or not (1.0 <= s <= 6.0):
+            return None
+        return s
+
+    scale = _clean(task.get("dpi_scale"))
     if scale is None:
-        env = os.environ.get("PAPERLENS_DPI_SCALE")
-        if env is not None:
-            try:
-                scale = float(env)
-            except ValueError:
-                scale = None
+        scale = _clean(os.environ.get("PAPERLENS_DPI_SCALE"))
     return scale if scale is not None else 2.8
 
 

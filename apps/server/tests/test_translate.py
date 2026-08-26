@@ -59,8 +59,12 @@ def test_layer3_cache_hit(client, tmp_path, data_dir):
 
     db = SessionLocal()
     try:
+        # engine 对齐（F-04 修复）：缓存按模型维度隔离，命中需与当前模型一致
+        from app.services.llm_service import llm_service
+
+        engine = f"llm-{llm_service.model_id}"
         db.add(TranslationCache(user_id=1, paper_id=paper["id"], lemma="zzzunknown",
-                                engine="llm-x", result_json=json.dumps({"translation": "缓存译法"})))
+                                engine=engine, result_json=json.dumps({"translation": "缓存译法"})))
         db.commit()
     finally:
         db.close()

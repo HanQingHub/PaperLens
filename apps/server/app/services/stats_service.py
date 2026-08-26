@@ -1,33 +1,41 @@
-"""统计：30 天热力图 / 今日与累计时长 / 新增曲线 / 复习完成率。"""
+"""统计：30 天热力图 / 今日与累计时长 / 新增曲线 / 复习完成率。
+
+日期归属一律按**用户本地时区**（UTC 存储的 ISO 时间戳在 Python 侧转本地日期），
+避免 UTC 凌晨时段（本地 8 点前）的会话被记到前一天。
+"""
 from datetime import timedelta
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import ReadingSession, ReviewLog, Word
 from app.core.util import now_iso, parse_iso, utc_now
 
 
+def _local_date(iso_str: str | None):
+    """UTC ISO 时间戳 → 本地日历日期；解析失败返回 None。"""
+    if not iso_str:
+        return None
+    try:
+        return parse_iso(iso_str).astimezone().date()
+    except (ValueError, TypeError, OSError):
+        return None
+
+
 def overview(db: Session, user_id: int) -> dict:
     now = utc_now()
-    today = now.date()
+    today = now.astimezone().date()
     now_str = now_iso()
 
-    rows = (
-        db.query(func.substr(ReadingSession.start_at, 1, 10), func.coalesce(func.sum(ReadingSession.duration_s), 0))
-        .filter(ReadingSession.user_id == user_id)
-        .group_by(func.substr(ReadingSession.start_at, 1, 10))
-        .all()
-    )
+    rows = db.query(ReadingSession.start_at, ReadingSession.duration_s).filter(
+        ReadingSession.user_id == user_id
+    ).all()
     total_s = 0
     per_day: dict = {}
-    for day_str, seconds in rows:
+    for start_at, seconds in rows:
         total_s += seconds
-        if day_str:
-            try:
-                per_day[parse_iso(day_str).date()] = seconds
-            except ValueError:
-                continue
+        day = _local_date(start_at)
+        if day is not None:
+            per_day[day] = per_day.get(day, 0) + seconds
 
     today_s = per_day.get(today, 0)
     calendar = [
@@ -42,30 +50,23 @@ def overview(db: Session, user_id: int) -> dict:
         streak += 1
         cursor -= timedelta(days=1)
 
-    new_rows = (
-        db.query(func.substr(Word.first_seen_at, 1, 10), func.count())
-        .filter(Word.user_id == user_id)
-        .group_by(func.substr(Word.first_seen_at, 1, 10))
-        .all()
-    )
+    new_rows = db.query(Word.first_seen_at).filter(Word.user_id == user_id).all()
     new_per_day: dict = {}
-    for day_str, count in new_rows:
-        if day_str:
-            try:
-                new_per_day[parse_iso(day_str).date()] = count
-            except ValueError:
-                continue
+    for (first_seen_at,) in new_rows:
+        day = _local_date(first_seen_at)
+        if day is not None:
+            new_per_day[day] = new_per_day.get(day, 0) + 1
     words_new_7d = [
         {"date": (today - timedelta(days=i)).isoformat(), "count": new_per_day.get(today - timedelta(days=i), 0)}
         for i in range(6, -1, -1)
     ]
 
-    review_done_today = (
-        db.query(func.count())
-        .select_from(ReviewLog)
-        .filter(ReviewLog.user_id == user_id, func.substr(ReviewLog.reviewed_at, 1, 10) == today.isoformat())
-        .scalar()
-    ) or 0
+    # 复习完成：ReviewLog.reviewed_at 逐行转本地日期比对（量级=当日复习数，可接受）
+    review_rows = db.query(ReviewLog.reviewed_at).filter(ReviewLog.user_id == user_id).all()
+    review_done_today = 0
+    for (reviewed_at,) in review_rows:
+        if _local_date(reviewed_at) == today:
+            review_done_today += 1
 
     review_due_today = (
         db.query(Word)

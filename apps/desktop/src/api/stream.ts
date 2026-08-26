@@ -5,24 +5,35 @@
 export async function* readFrames(
   res: Response,
   sep: string,
+  signal?: AbortSignal,
 ): AsyncGenerator<string, void, unknown> {
   if (!res.ok || !res.body) {
     const detail = await res.text().catch(() => '')
     throw new Error(detail || `HTTP ${res.status}`)
   }
   const reader = res.body.getReader()
+  // 上游中止时主动 cancel：否则后台 fetch 会继续消费到 TCP 结束（泄漏）
+  const onAbort = () => void reader.cancel().catch(() => {})
+  signal?.addEventListener('abort', onAbort, { once: true })
   const decoder = new TextDecoder()
   let buf = ''
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let idx: number
-    while ((idx = buf.indexOf(sep)) >= 0) {
-      const frame = buf.slice(0, idx)
-      buf = buf.slice(idx + sep.length)
-      yield frame
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      let idx: number
+      while ((idx = buf.indexOf(sep)) >= 0) {
+        const frame = buf.slice(0, idx)
+        buf = buf.slice(idx + sep.length)
+        yield frame
+      }
     }
+    // 流正常结束：冲刷解码器并交出无分隔符结尾的尾帧（此前被静默丢弃）
+    buf += decoder.decode()
+    if (buf.trim()) yield buf
+  } finally {
+    signal?.removeEventListener('abort', onAbort)
   }
 }
 

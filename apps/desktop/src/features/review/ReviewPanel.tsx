@@ -31,7 +31,7 @@ export function ReviewPanel() {
     setLoading(true)
     try {
       const [words, s, g] = await Promise.all([
-        api.words({ due: 1, group: groupFilter || undefined }),
+        api.words({ due: 1, group: groupFilter === '__none' ? '' : groupFilter || undefined }),
         api.stats(),
         api.wordGroups(),
       ])
@@ -126,6 +126,7 @@ export function ReviewPanel() {
             onChange={(e) => setGroupFilter(e.target.value)}
           >
             <option value="">全部分组</option>
+            <option value="__none">未分组</option>
             {groups.map((g) => (
               <option key={g.name} value={g.name}>{g.name}</option>
             ))}
@@ -149,8 +150,9 @@ export function ReviewPanel() {
           <div>
             <p className="text-sm font-medium">今日复习完成 🎉</p>
             <p className="mt-1 text-xs text-text-faint">
+              {/* done=当日已复习，due=剩余到期（重复进入会因 due_at 后移变小，做分母会虚高）——只展示数量 */}
               {stats && stats.due > 0
-                ? `完成率 ${Math.round((stats.done / Math.max(stats.done + stats.due, 1)) * 100)}%（今日已复习 ${stats.done} 词）`
+                ? `今日已复习 ${stats.done} 词 · 剩余到期 ${stats.due} 词`
                 : '当前没有到期的生词，去读一篇论文吧'}
             </p>
           </div>

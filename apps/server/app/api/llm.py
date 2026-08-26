@@ -5,10 +5,12 @@ import uuid
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.api.deps import get_current_user
+from app.models import User
 from app.core.config import get_settings
 from app.services.llm_service import BUILTIN_MODELS, llm_service
 
@@ -16,7 +18,7 @@ router = APIRouter(prefix="/llm", tags=["llm"])
 
 
 @router.get("/models")
-def list_models():
+def list_models(user: User = Depends(get_current_user)):
     return llm_service.scan_models()
 
 
@@ -25,7 +27,7 @@ class DownloadIn(BaseModel):
 
 
 @router.post("/download")
-async def download(body: DownloadIn):
+async def download(body: DownloadIn, user: User = Depends(get_current_user)):
     model = next((m for m in BUILTIN_MODELS if m["id"] == body.model_id), None)
     if model is None:
         raise HTTPException(status_code=404, detail="未知模型")
@@ -106,7 +108,7 @@ class LoadIn(BaseModel):
 
 
 @router.post("/load", status_code=202)
-async def load(body: LoadIn):
+async def load(body: LoadIn, user: User = Depends(get_current_user)):
     if llm_service.state == "ready" and llm_service.model_id == body.model_id:
         return {"state": "ready"}
     if llm_service.state == "loading":
@@ -117,18 +119,19 @@ async def load(body: LoadIn):
 
 
 @router.post("/unload")
-async def unload():
+async def unload(user: User = Depends(get_current_user)):
     await llm_service.unload()
     return {"state": "unloaded"}
 
 
 @router.get("/status")
-def status():
+def status(user: User = Depends(get_current_user)):
     return llm_service.status()
 
 
 @router.post("/import")
 async def import_model(
+    user: User = Depends(get_current_user),
     file: UploadFile | None = File(None),
     gguf: UploadFile | None = File(None),
 ):

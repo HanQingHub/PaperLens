@@ -414,11 +414,12 @@ export default function LibraryPage() {
     }
   }
 
-  /** 全库标签聚合（当前列表去重排序） */
-  const allTags = useMemo(() => {
-    const s = new Set<string>()
-    for (const p of papers) for (const t of p.tags ?? []) s.add(t)
-    return [...s].sort((a, b) => a.localeCompare(b))
+  /** 全库标签聚合（独立端点，不受当前 q/tag 筛选影响——否则筛选后下拉互斥死锁） */
+  const [allTags, setAllTags] = useState<{ name: string; count: number }[]>([])
+  useEffect(() => {
+    api.paperTags()
+      .then(setAllTags)
+      .catch(() => {})
   }, [papers])
 
   /** groupKey 传入时（project 视图）卡片启用拖拽；其他视图纯展示 */
@@ -526,7 +527,7 @@ export default function LibraryPage() {
         >
           <option value="">全部标签</option>
           {allTags.map((t) => (
-            <option key={t} value={t}>{t}</option>
+            <option key={t.name} value={t.name}>{t.name} ({t.count})</option>
           ))}
         </select>
 
@@ -698,12 +699,15 @@ export default function LibraryPage() {
             className="input w-auto! py-0.5 text-xs"
             value=""
             onChange={(e) => {
-              const pid = e.target.value ? Number(e.target.value) : null
-              if (e.target.value) void bulkPatch({ project_id: pid }, `已移动到「${projects.find((x) => x.id === pid)?.name ?? '未分组'}」`)
+              // "none"=未分组（project_id:null）；其余为项目 id
+              const pid = e.target.value === 'none' ? null : e.target.value ? Number(e.target.value) : undefined
+              if (pid === undefined) return
+              const label = pid === null ? '未分组' : projects.find((x) => x.id === pid)?.name ?? '未分组'
+              void bulkPatch({ project_id: pid }, `已移动到「${label}」`)
             }}
           >
             <option value="">移动到项目…</option>
-            <option value="null">未分组</option>
+            <option value="none">未分组</option>
             {projects.map((proj) => (
               <option key={proj.id} value={proj.id}>{proj.name}</option>
             ))}

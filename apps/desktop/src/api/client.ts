@@ -109,6 +109,7 @@ export const api = {
   fileToken: (id: number) => request<{ token: string; url: string }>(`/papers/${id}/file-token`, { method: 'POST' }),
   importArxiv: (arxivId: string) =>
     request<Paper>('/papers/arxiv', { method: 'POST', body: JSON.stringify({ arxiv_id: arxivId }) }),
+  paperTags: () => request<{ name: string; count: number }[]>('/papers/tags'),
 
   // ── 账号资料 / 查词历史 ──
   updateProfile: (displayName: string) =>

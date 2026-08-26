@@ -226,7 +226,7 @@ export default function TranslateCard({
       // 词典释义：不发 SSE，直查 dictionary
       setStatus('loading')
       api
-        .dictionary(encodeURIComponent(request.word.trim().split(/\s+/)[0] ?? ''))
+        .dictionary(request.word.trim().split(/\s+/)[0] ?? '')
         .then((entry) => {
           setHit({ layer: 'dict', pos: entry.pos, phonetic: entry.phonetic, gloss: entry.translation })
           setStatus('done')
@@ -491,7 +491,7 @@ export default function TranslateCard({
                   setStatus('loading')
                   setErrorDetail('')
                   api
-                    .dictionary(encodeURIComponent(request.word.trim().split(/\s+/)[0] ?? ''))
+                    .dictionary(request.word.trim().split(/\s+/)[0] ?? '')
                     .then((entry) => {
                       setHit({ layer: 'dict', pos: entry.pos, phonetic: entry.phonetic, gloss: entry.translation })
                       setStatus('done')

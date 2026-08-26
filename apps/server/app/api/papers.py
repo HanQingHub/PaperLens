@@ -23,6 +23,11 @@ from app.services import file_tokens, tfidf_service
 router = APIRouter(prefix="/papers", tags=["papers"])
 
 
+def _like_escape(s: str) -> str:
+    """LIKE 通配符转义（配合 ESCAPE '\\' 使用），防 %/_ 注入误匹配。"""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def paper_dict(p: Paper, annotation_count: int | None = None) -> dict:
     d = {
         "id": p.id, "user_id": p.user_id, "project_id": p.project_id, "title": p.title,
@@ -365,12 +370,16 @@ def list_papers(
     if project_id is not None:
         query = query.filter(Paper.project_id == project_id)
     if tag:
-        query = query.filter(Paper.tags.like(f'%"{tag}"%'))
+        query = query.filter(Paper.tags.like(f'%"{_like_escape(tag)}"%', escape="\\"))
     if favorite:
         query = query.filter(Paper.is_favorite == 1)
     if q:
-        like = f"%{q}%"
-        query = query.filter((Paper.title.like(like)) | (Paper.authors.like(like)) | (Paper.tags.like(like)))
+        like = f"%{_like_escape(q)}%"
+        query = query.filter(
+            Paper.title.like(like, escape="\\")
+            | Paper.authors.like(like, escape="\\")
+            | Paper.tags.like(like, escape="\\")
+        )
     if sort == "title":
         query = query.order_by(func.lower(Paper.title).asc())
     elif sort == "last_opened":
@@ -394,6 +403,23 @@ def list_papers(
         .all()
     )
     return [paper_dict(p, c) for p, c in rows]
+
+
+@router.get("/tags")
+def list_tags(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """全库标签聚合（不受当前筛选影响），按使用次数降序。"""
+    from collections import Counter
+
+    counter: Counter = Counter()
+    rows = db.query(Paper.tags).filter(Paper.user_id == user.id, Paper.tags.isnot(None), Paper.tags != "[]").all()
+    for (tags_json,) in rows:
+        try:
+            for t in json.loads(tags_json):
+                if t:
+                    counter[t] += 1
+        except ValueError:
+            continue
+    return [{"name": t, "count": n} for t, n in counter.most_common()]
 
 
 class ArxivIn(BaseModel):

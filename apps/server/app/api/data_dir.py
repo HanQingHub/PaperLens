@@ -49,13 +49,21 @@ async def migrate_data_dir(payload: dict) -> dict:
     try:
         with write_lock:
             # WAL checkpoint 后再复制（避免复制到未合并的 -wal 数据）
-            con = sqlite3.connect(str(src / "paperlens.db"))
-            try:
-                con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            finally:
-                con.close()
-            try:
+            # 阻塞段卸载线程：数十秒的 copytree 若占住事件循环会饿死 SSE 看门狗
+            import asyncio
+
+            def _checkpoint_and_copy() -> None:
+                con = sqlite3.connect(str(src / "paperlens.db"))
+                try:
+                    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                finally:
+                    con.close()
                 shutil.copytree(src, dst)
+
+            try:
+                await asyncio.to_thread(_checkpoint_and_copy)
+            except HTTPException:
+                raise
             except Exception as e:
                 shutil.rmtree(dst, ignore_errors=True)
                 raise HTTPException(500, f"复制数据目录失败: {e}")

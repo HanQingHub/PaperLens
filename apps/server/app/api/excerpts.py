@@ -1,3 +1,4 @@
+import datetime
 import io
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -88,5 +89,8 @@ def export_md(paper_id: int | None = None, user: User = Depends(get_current_user
         lines.append("---")
         lines.append("")
     data = "\n".join(lines).encode("utf-8")
+    from app.core.util import content_disposition
+
+    name = (f"excerpts_{datetime.datetime.now().date().isoformat()}")
     return StreamingResponse(io.BytesIO(data), media_type="text/markdown",
-                             headers={"Content-Disposition": 'attachment; filename="excerpts.md"'})
+                             headers={"Content-Disposition": content_disposition(f"{name}_摘录.md")})

@@ -217,13 +217,14 @@ def _glossary_hits_text(db: Session, paper_id: int, budget: int = GLOSSARY_BUDGE
     return "; ".join(parts) or "（无）"
 
 
-def _word_cache_get(db: Session, user_id: int, paper_id: int, lemma: str) -> dict | None:
+def _word_cache_get(db: Session, user_id: int, paper_id: int, lemma: str, engine: str) -> dict | None:
     row = (
         db.query(TranslationCache)
         .filter(
             TranslationCache.user_id == user_id,
             TranslationCache.paper_id == paper_id,
             TranslationCache.lemma == lemma,
+            TranslationCache.engine == engine,
         )
         .order_by(TranslationCache.id.desc())
         .first()
@@ -238,7 +239,7 @@ def _word_cache_get(db: Session, user_id: int, paper_id: int, lemma: str) -> dic
     return data
 
 
-def _sentence_cache_get(db: Session, user_id: int, paper_id: int, text: str) -> dict | None:
+def _sentence_cache_get(db: Session, user_id: int, paper_id: int, text: str, engine: str) -> dict | None:
     h = hashlib.sha256(text.encode("utf-8")).hexdigest()
     row = (
         db.query(TranslationCache)
@@ -246,6 +247,7 @@ def _sentence_cache_get(db: Session, user_id: int, paper_id: int, text: str) -> 
             TranslationCache.user_id == user_id,
             TranslationCache.paper_id == paper_id,
             TranslationCache.sentence_hash == h,
+            TranslationCache.engine == engine,
         )
         .first()
     )
@@ -280,6 +282,7 @@ def _cache_put(
                 TranslationCache.user_id == user_id,
                 TranslationCache.paper_id == paper_id,
                 TranslationCache.sentence_hash == sentence_hash,
+            TranslationCache.engine == engine,
             )
             .first()
         )
@@ -448,7 +451,8 @@ async def word_stream(db: Session, user_id: int, paper: Paper, body: dict, reque
             return
 
         # ③ 翻译缓存
-        cached = _word_cache_get(db, user_id, paper.id, lemma)
+        engine = f"llm-{llm_service.model_id}"
+        cached = _word_cache_get(db, user_id, paper.id, lemma, engine)
         if cached is not None:
             yield sse_event("hit", {"layer": "cache", **cached})
             yield sse_event("done", {"layer": "cache", "cached": True})
@@ -523,7 +527,8 @@ async def sentence_stream(db: Session, user_id: int, paper: Paper, body: dict, r
             yield sse_event("error", {"code": "text_too_long", "detail": "文本过长，请分段选择后再翻译"})
             return
         h = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        cached = _sentence_cache_get(db, user_id, paper.id, text)
+        engine = f"llm-{llm_service.model_id}"
+        cached = _sentence_cache_get(db, user_id, paper.id, text, engine)
         if cached is not None:
             yield sse_event("hit", {"layer": "cache", **cached})
             yield sse_event("done", {"layer": "cache", "cached": True})
