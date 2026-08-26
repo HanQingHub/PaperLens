@@ -20,7 +20,7 @@ def test_migrations_apply_all_and_create_indexes(tmp_path, monkeypatch):
         indexes = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='index'")}
         assert {"ix_papers_user_id", "ix_projects_user_id", "ix_review_logs_word_id"}.issubset(indexes)
         version = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert version == "c3d4e5f6a7b8"
+        assert version == "d4e5f6a7b8c9d0"
     finally:
         con.close()
 
@@ -43,7 +43,7 @@ def test_migrations_idempotent(tmp_path, monkeypatch):
     con = sqlite3.connect(str(data / "paperlens.db"))
     try:
         version = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert version == "c3d4e5f6a7b8"
+        assert version == "d4e5f6a7b8c9d0"
     finally:
         con.close()
 

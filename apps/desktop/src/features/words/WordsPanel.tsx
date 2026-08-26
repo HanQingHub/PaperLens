@@ -28,6 +28,10 @@ export default function WordsPanel() {
   const [loading, setLoading] = useState(true)
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
   const [groups, setGroups] = useState<{ name: string; count: number }[]>([])
+  const [showCreateGroup, setShowCreateGroup] = useState(false)
+  const [newGroupName, setNewGroupName] = useState('')
+  const [editingGroup, setEditingGroup] = useState<number | null>(null)
+  const [draftGroup, setDraftGroup] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -146,7 +150,7 @@ export default function WordsPanel() {
         </button>
       </div>
 
-      <div className="flex gap-1 text-[12px]">
+      <div className="flex flex-wrap items-center gap-1 text-[12px]">
         {([null, ...STAGES] as const).map((s) => (
           <button
             key={s ?? 'all'}
@@ -158,19 +162,83 @@ export default function WordsPanel() {
             {s == null ? '全部' : STAGE_LABELS[s]}
           </button>
         ))}
-        <select
-          className="input ml-auto w-auto! py-0.5 text-[11px]"
-          value={groupFilter ?? ''}
-          title="按分组筛选"
-          onChange={(e) => setGroupFilter(e.target.value || null)}
+        <span className="mx-1 h-4 w-px bg-border" />
+        {['全部', ...groups.map((g) => g.name), '未分组'].map((name) => {
+          const active =
+            (groupFilter === null && name === '全部') ||
+            (groupFilter === '__none' && name === '未分组') ||
+            groupFilter === name
+          return (
+            <button
+              key={name}
+              className={`rounded-md px-2 py-0.5 transition-all ${
+                active ? 'bg-panel text-accent font-medium shadow-sm' : 'text-text-faint hover:text-text-soft'
+              }`}
+              onClick={() => setGroupFilter(name === '全部' ? null : name === '未分组' ? '__none' : name)}
+            >
+              {name}
+            </button>
+          )
+        })}
+        <button
+          className="ml-1 rounded-md border border-dashed border-border px-2 py-0.5 text-[11px] text-accent hover:border-accent"
+          onClick={() => setShowCreateGroup((v) => !v)}
         >
-          <option value="">全部分组</option>
-          <option value="__none">未分组</option>
-          {groups.map((g) => (
-            <option key={g.name} value={g.name}>{g.name} ({g.count})</option>
-          ))}
-        </select>
+          ＋ 新建分组
+        </button>
       </div>
+      {showCreateGroup && (
+        <div className="flex gap-1.5">
+          <input
+            value={newGroupName}
+            onChange={(e) => setNewGroupName(e.target.value)}
+            placeholder="新分组名（≤20字）"
+            maxLength={20}
+            className="input h-7 flex-1 text-xs"
+            onKeyDown={async (e) => {
+              if (e.key === 'Escape') setShowCreateGroup(false)
+              if (e.key === 'Enter') {
+                const n = newGroupName.trim()
+                if (!n) return toast('请输入名称', 'error')
+                if (n.length > 20) return toast('名称最长20字', 'error')
+                if (groups.some((g) => g.name === n)) return toast('已存在', 'error')
+                try {
+                  await api.createWordGroup(n)
+                  toast(`分组“${n}”已创建`, 'ok')
+                  setShowCreateGroup(false)
+                  setNewGroupName('')
+                  loadGroups()
+                } catch (err) {
+                  toast(err instanceof Error ? err.message : '创建失败', 'error')
+                }
+              }
+            }}
+          />
+          <button
+            className="btn btn-primary h-7 px-3 text-xs"
+            onClick={async () => {
+              const n = newGroupName.trim()
+              if (!n) return toast('请输入名称', 'error')
+              if (n.length > 20) return toast('名称最长20字', 'error')
+              if (groups.some((g) => g.name === n)) return toast('已存在', 'error')
+              try {
+                await api.createWordGroup(n)
+                toast(`分组“${n}”已创建`, 'ok')
+                setShowCreateGroup(false)
+                setNewGroupName('')
+                loadGroups()
+              } catch (e) {
+                toast(e instanceof Error ? e.message : '创建失败', 'error')
+              }
+            }}
+          >
+            确定
+          </button>
+          <button className="btn btn-ghost h-7 px-2 text-xs" onClick={() => setShowCreateGroup(false)}>
+            取消
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-8">
@@ -198,24 +266,73 @@ export default function WordsPanel() {
                     {STAGE_LABELS[s][0]}
                   </button>
                 ))}
-                <select
-                  className="input w-auto! py-0 px-0.5 text-[10.5px] opacity-0 transition-all group-hover:opacity-100 focus-visible:opacity-100"
-                  title="移动到分组"
-                  value={w.group_name ?? ''}
-                  onChange={(e) => moveWordToGroup(w, e.target.value)}
-                >
-                  <option value="">未分组</option>
-                  {groups.map((g) => (
-                    <option key={g.name} value={g.name}>{g.name}</option>
-                  ))}
-                </select>
-                <button
-                  className="text-[11px] text-text-faint opacity-0 transition-all hover:text-danger group-hover:opacity-100 focus-visible:opacity-100"
-                  title="删除生词"
-                  onClick={() => setDeleting(w)}
-                >
-                  🗑
-                </button>
+                {editingGroup === w.id ? (
+                  <div className="flex items-center gap-1">
+                    <input
+                      list={`word-groups-${w.id}`}
+                      value={draftGroup}
+                      onChange={(e) => setDraftGroup(e.target.value)}
+                      placeholder="输入新分组名"
+                      maxLength={20}
+                      className="input h-6 w-24 px-1.5 text-[11px]"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') setEditingGroup(null)
+                        if (e.key === 'Enter') {
+                          const v = draftGroup.trim().slice(0, 20)
+                          if (!v) return toast('请输入分组名', 'error')
+                          moveWordToGroup(w, v)
+                          setEditingGroup(null)
+                        }
+                      }}
+                    />
+                    <datalist id={`word-groups-${w.id}`}>
+                      {groups.map((g) => (
+                        <option key={g.name} value={g.name} />
+                      ))}
+                    </datalist>
+                    <button
+                      className="btn btn-primary h-6 px-1.5 text-[10px]"
+                      onClick={() => {
+                        const v = draftGroup.trim().slice(0, 20)
+                        if (!v) return toast('请输入分组名', 'error')
+                        moveWordToGroup(w, v)
+                        setEditingGroup(null)
+                      }}
+                    >
+                      确定
+                    </button>
+                    <button
+                      className="btn btn-ghost h-6 px-1 text-[10px]"
+                      onClick={() => setEditingGroup(null)}
+                    >
+                      取消
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <span className="rounded bg-bg-soft px-1.5 py-0.5 text-[11px] text-text-soft">
+                      {w.group_name ?? '未分组'}
+                    </span>
+                    <button
+                      className="text-[11px] text-text-faint opacity-0 transition-all hover:text-accent group-hover:opacity-100 focus-visible:opacity-100"
+                      title="编辑分组"
+                      onClick={() => {
+                        setEditingGroup(w.id)
+                        setDraftGroup(w.group_name ?? '')
+                      }}
+                    >
+                      ✎
+                    </button>
+                    <button
+                      className="text-[11px] text-text-faint opacity-0 transition-all hover:text-danger group-hover:opacity-100 focus-visible:opacity-100"
+                      title="删除生词"
+                      onClick={() => setDeleting(w)}
+                    >
+                      🗑
+                    </button>
+                  </>
+                )}
               </div>
               {editingId === w.id ? (
                 <textarea

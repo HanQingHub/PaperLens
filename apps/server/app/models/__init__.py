@@ -112,6 +112,18 @@ class Word(Base):
     last_seen_at: Mapped[Optional[str]] = mapped_column(Text)
 
 
+class WordGroup(Base):
+    __tablename__ = "word_groups"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_word_groups_user_name"),
+        Index("ix_word_groups_user", "user_id"),
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, default=now_iso)
+
+
 class TranslateHistory(Base):
     __tablename__ = "translate_history"
     __table_args__ = (Index("ix_translate_history_user", "user_id", "created_at"),)

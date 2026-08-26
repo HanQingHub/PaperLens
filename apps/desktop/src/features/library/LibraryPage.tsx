@@ -1,11 +1,13 @@
 // 文库主页：搜索/排序/视图切换 + 项目栏 + 论文卡片网格 + 上传（预判扫描版）
 // + 卡片拖拽排序/跨组移动 + PDF 拖到分组（dnd/useLibraryDnd 装配）
 // 浏览态（视图/项目/搜索/排序/展开/滚动）存 stores/libraryUi，跨路由往返保持
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { Paper, Project } from '../../api/types'
+import { useAuth } from '../../stores/auth'
 import { useLibraryUi } from '../../stores/libraryUi'
+import { useUi } from '../../stores/ui'
 import type { LibraryView } from './sort'
 import { ConfirmModal } from '../shared/Modal'
 import { toast } from '../shared/Toast'
@@ -51,12 +53,62 @@ export default function LibraryPage() {
   const [cols, setCols] = useState(4)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [tagFilter, setTagFilter] = useState<string | null>(null)
+  const [tagMenuOpen, setTagMenuOpen] = useState(false)
+  const tagMenuRef = useRef<HTMLDivElement>(null)
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false)
   const [arxivOpen, setArxivOpen] = useState(false)
   const [arxivInput, setArxivInput] = useState('')
   const [arxivBusy, setArxivBusy] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
+  // FLIP：cols 变化导致网格重排时，卡片从旧位置平滑滑到新位置（消除挤压瞬移跳变）。
+  // 仅作用于位移；visibleItems 切片（展开其余）不参与。动效关闭时直接跳过。
+  const flipRectsRef = useRef<Map<Element, DOMRect> | null>(null)
+  const captureFlip = useCallback(() => {
+    if (document.documentElement.classList.contains('no-motion')) return
+    if (!useAuth.getState().settings.animations) return
+    const grids = contentRef.current?.querySelectorAll('.library-grid')
+    if (!grids?.length) return
+    const m = new Map<Element, DOMRect>()
+    grids.forEach((g) => g.querySelectorAll('[data-card]').forEach((el) => m.set(el, el.getBoundingClientRect())))
+    flipRectsRef.current = m
+  }, [])
+  // cols 变化渲染完成后：Last - First = 位移，反向 transform 过渡归零
+  useLayoutEffect(() => {
+    const first = flipRectsRef.current
+    if (!first?.size) return
+    flipRectsRef.current = null
+    const grids = contentRef.current?.querySelectorAll('.library-grid')
+    if (!grids?.length) return
+    const moving: Element[] = []
+    grids.forEach((g) =>
+      g.querySelectorAll('[data-card]').forEach((el) => {
+        const f = first.get(el)
+        if (!f) return
+        const l = el.getBoundingClientRect()
+        const dx = f.left - l.left
+        const dy = f.top - l.top
+        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+          ;(el as HTMLElement).style.transition = 'none'
+          ;(el as HTMLElement).style.transform = `translate(${dx}px, ${dy}px)`
+          moving.push(el)
+        }
+      }),
+    )
+    if (!moving.length) return
+    requestAnimationFrame(() => {
+      moving.forEach((el) => {
+        ;(el as HTMLElement).style.transition = 'transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1)'
+        ;(el as HTMLElement).style.transform = ''
+      })
+      window.setTimeout(() => {
+        moving.forEach((el) => {
+          ;(el as HTMLElement).style.transition = ''
+          ;(el as HTMLElement).style.transform = ''
+        })
+      }, 300)
+    })
+  }, [cols])
   // 滚动位置：onScroll 只写 ref（零重渲染），卸载时一次性写回 store；
   // 恢复绑定 loading true→false 完成后的首帧，ref 标志保证只恢复一次
   const scrollPos = useRef(useLibraryUi.getState().scrollTop)
@@ -70,19 +122,26 @@ export default function LibraryPage() {
 
   // view 的 localStorage 持久化在 store.setView 内完成
   // 列数自适应（内容区宽度 → cols，供分组折叠切片）
+  // 防抖 260ms ≥ 侧栏 250ms 动画，确保动画完成后再重排，避免跳变
   useEffect(() => {
     const el = contentRef.current
     if (!el) return
     let raf = 0
+    let debounceTimer: number | undefined
     let lastCols = cols
     const calc = (w: number) => Math.max(1, Math.floor((w + 12) / (230 + 12)))
     const ro = new ResizeObserver((entries) => {
       const w = Math.round(entries[0]?.contentRect.width ?? el.clientWidth)
       const c = calc(w)
       if (c !== lastCols) {
-        lastCols = c
-        cancelAnimationFrame(raf)
-        raf = requestAnimationFrame(() => setCols(c))
+        window.clearTimeout(debounceTimer)
+        debounceTimer = window.setTimeout(() => {
+          lastCols = c
+          // 防抖到期 = 宽度已稳定：捕获旧列数下的卡片位置，供 cols 更新后 FLIP 回放
+          captureFlip()
+          cancelAnimationFrame(raf)
+          raf = requestAnimationFrame(() => setCols(c))
+        }, 260)
       }
     })
     ro.observe(el)
@@ -92,6 +151,7 @@ export default function LibraryPage() {
       if (c !== cols) setCols(c)
     }
     return () => {
+      window.clearTimeout(debounceTimer)
       cancelAnimationFrame(raf)
       ro.disconnect()
     }
@@ -415,12 +475,30 @@ export default function LibraryPage() {
   }
 
   /** 全库标签聚合（独立端点，不受当前 q/tag 筛选影响——否则筛选后下拉互斥死锁） */
+  const isSidebarAnimating = useUi((s) => s.isSidebarAnimating)
   const [allTags, setAllTags] = useState<{ name: string; count: number }[]>([])
   useEffect(() => {
     api.paperTags()
       .then(setAllTags)
       .catch(() => {})
   }, [papers])
+
+  // 标签下拉 OutsideClick/Esc 关闭（ref 含触发按钮 + 面板，避免按钮点开后立即被 outside 误关）
+  useEffect(() => {
+    if (!tagMenuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (!tagMenuRef.current?.contains(e.target as Node)) setTagMenuOpen(false)
+    }
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTagMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onEsc)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onEsc)
+    }
+  }, [tagMenuOpen])
 
   /** groupKey 传入时（project 视图）卡片启用拖拽；其他视图纯展示 */
   const cardList = (list: Paper[], groupKey?: GroupKey) =>
@@ -438,7 +516,7 @@ export default function LibraryPage() {
         dragProps={groupKey !== undefined ? dnd.cardDragProps(p.id, groupKey) : undefined}
         isDragging={dnd.draggingId === p.id}
         insertSide={dnd.insertMark?.id === p.id ? dnd.insertMark.side : null}
-        enterIndex={idx}
+        enterIndex={isSidebarAnimating ? undefined : idx}
         selected={selected.has(p.id)}
         onToggleSelect={toggleSelect}
       />
@@ -449,6 +527,10 @@ export default function LibraryPage() {
     if (expanded.has(key) || items.length <= cols) return items
     return items.slice(0, cols)
   }
+
+  // 列数由 cols 锁定（非 auto-fill）：侧栏宽度过渡期间卡片仅横向压缩不换行，
+  // 过渡结束后 setCols 才触发重排，配合 FLIP 平滑滑动（消除挤压瞬移跳变）
+  const gridStyle = { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }
 
   const pd = dnd.pageDropProps()
 
@@ -491,13 +573,12 @@ export default function LibraryPage() {
           />
         </div>
 
-        <div className="flex rounded-lg bg-bg-soft p-0.5 text-[12.5px]">
+        <div className="flex items-center gap-1 rounded-lg bg-bg-soft p-0.5 text-[12.5px]">
           {VIEW_TABS.map((t) => (
             <button
               key={t.key}
               className={`rounded-md px-2.5 py-1 transition-all ${view === t.key && (t.key !== 'project' || selectedProjectId == null) ? 'bg-panel text-accent shadow-[var(--shadow-1)] font-medium' : 'text-text-faint hover:text-text-soft'}`}
               onClick={() => {
-                // 项目分类 = 多组分组浏览（清空单项目选中）；单项目视图经左侧项目栏进入
                 if (t.key === 'project') setSelectedProjectId(null)
                 setView(t.key)
               }}
@@ -505,31 +586,61 @@ export default function LibraryPage() {
               {t.label}
             </button>
           ))}
+          <div className="h-4 w-px bg-border" />
+          {view === 'project' ? (
+            <span className="rounded-md bg-panel px-2.5 py-1 text-accent shadow-sm font-medium">手动排序</span>
+          ) : (
+            <select
+              className="rounded-md bg-transparent px-2.5 py-1 text-xs outline-none"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as typeof sort)}
+              title="排序"
+            >
+              <option value="created">按上传时间</option>
+              <option value="title">按标题</option>
+              <option value="last_opened">按最近打开</option>
+            </select>
+          )}
+          <div className="h-4 w-px bg-border" />
+          <div className="relative" ref={tagMenuRef}>
+            <button
+              className={`rounded-md px-2.5 py-1 ${tagFilter ? 'bg-panel text-accent shadow-sm font-medium' : 'text-text-faint hover:text-text-soft'}`}
+              onClick={() => setTagMenuOpen((v) => !v)}
+              aria-expanded={tagMenuOpen}
+            >
+              {tagFilter ? `#${tagFilter}` : '标签'} ▾
+            </button>
+            {tagMenuOpen && (
+              <div className="absolute right-0 z-20 mt-1 max-h-56 w-48 overflow-auto rounded-lg border bg-panel p-1 shadow">
+                <button
+                  className="w-full rounded px-2 py-1 text-left text-xs hover:bg-bg-soft"
+                  onClick={() => {
+                    setTagFilter(null)
+                    setTagMenuOpen(false)
+                  }}
+                >
+                  全部标签
+                </button>
+                {allTags.map((t) => (
+                  <button
+                    key={t.name}
+                    className="flex w-full justify-between rounded px-2 py-1 text-left text-xs hover:bg-bg-soft"
+                    onClick={() => {
+                      setTagFilter(t.name)
+                      setTagMenuOpen(false)
+                    }}
+                  >
+                    <span>#{t.name}</span>
+                    <span className="text-text-faint">{t.count}</span>
+                  </button>
+                ))}
+                {allTags.length === 0 && (
+                  <span className="block px-2 py-1 text-xs text-text-faint">暂无标签</span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-
-        <select
-          className="input w-auto! py-1 text-[12.5px]"
-          value={sort}
-          onChange={(e) => setSort(e.target.value as typeof sort)}
-          disabled={view === 'project'}
-          title={view === 'project' ? '项目视图固定为手动排序' : '排序'}
-        >
-          <option value="created">按上传时间</option>
-          <option value="title">按标题</option>
-          <option value="last_opened">按最近打开</option>
-        </select>
-
-        <select
-          className="input w-auto! py-1 text-[12.5px]"
-          value={tagFilter ?? ''}
-          onChange={(e) => setTagFilter(e.target.value || null)}
-          title="按标签筛选"
-        >
-          <option value="">全部标签</option>
-          {allTags.map((t) => (
-            <option key={t.name} value={t.name}>{t.name} ({t.count})</option>
-          ))}
-        </select>
 
         <div className="ml-auto flex items-center gap-2">
           {selectedProjectId && (
@@ -568,10 +679,11 @@ export default function LibraryPage() {
             }}
           />
           {arxivOpen ? (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5 rounded-lg border border-border bg-panel px-2 py-1 shadow-sm focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/20">
+              <span className="shrink-0 text-[11px] font-medium text-accent">arXiv</span>
               <input
-                className="input w-36 py-1 text-[12.5px]"
-                placeholder="2401.12345"
+                className="h-7 w-40 border-0 bg-transparent px-1.5 text-[13px] outline-none placeholder:text-text-faint"
+                placeholder="2401.12345 / arXiv:2401.12345"
                 value={arxivInput}
                 autoFocus
                 onChange={(e) => setArxivInput(e.target.value)}
@@ -580,14 +692,14 @@ export default function LibraryPage() {
                   if (e.key === 'Escape') setArxivOpen(false)
                 }}
               />
-              <button className="btn btn-primary px-2 py-1 text-xs" onClick={importArxiv} disabled={arxivBusy}>
+              <button className="btn btn-primary h-7 shrink-0 px-3 text-xs" onClick={importArxiv} disabled={arxivBusy}>
                 {arxivBusy ? <span className="spinner" /> : '导入'}
               </button>
-              <button className="btn btn-ghost px-1.5 py-1 text-xs" onClick={() => setArxivOpen(false)}>✕</button>
+              <button className="btn btn-ghost h-7 w-7 shrink-0 p-0 text-xs" onClick={() => setArxivOpen(false)} aria-label="关闭">✕</button>
             </div>
           ) : (
-            <button className="btn px-2 py-1 text-xs" onClick={() => setArxivOpen(true)} disabled={uploading} title="通过 arXiv ID 联网导入">
-              arXiv
+            <button className="btn h-7 gap-1 px-2.5 text-xs" onClick={() => setArxivOpen(true)} disabled={uploading} title="通过 arXiv ID 联网导入">
+              <span>＋</span> arXiv
             </button>
           )}
           <button className="btn btn-primary" onClick={() => fileInput.current?.click()} disabled={uploading}>
@@ -646,7 +758,7 @@ export default function LibraryPage() {
                       <p className="px-1 py-2 text-[11.5px] leading-5 text-text-faint">拖拽 PDF 或卡片到此分组</p>
                     ) : (
                       <>
-                        <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">{cardList(vis, g.key)}</div>
+                        <div className="library-grid grid gap-3" style={gridStyle}>{cardList(vis, g.key)}</div>
                         {g.items.length > cols && q === '' && (
                           <button className="mt-2 text-xs text-accent hover:underline" onClick={() => toggleExpandedKey(g.key)}>
                             {collapsed ? `展开其余 ${g.items.length - cols} 篇` : '收起'}
@@ -675,7 +787,7 @@ export default function LibraryPage() {
                   {singleGroupItems.length === 0 ? (
                     <p className="px-1 py-2 text-[11.5px] leading-5 text-text-faint">拖拽 PDF 或卡片到此分组</p>
                   ) : (
-                    <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">
+                    <div className="library-grid grid gap-3" style={gridStyle}>
                       {cardList(singleGroupItems, selectedProjectId)}
                     </div>
                   )}
@@ -683,7 +795,7 @@ export default function LibraryPage() {
               )
             })()
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3">{cardList(papers)}</div>
+            <div className="library-grid grid gap-3" style={gridStyle}>{cardList(papers)}</div>
           )}
         </div>
       </div>

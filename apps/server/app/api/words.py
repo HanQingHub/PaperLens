@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.util import like_escape, now_iso
-from app.models import Paper, ReviewLog, TranslationCache, User, Word, WordOccurrence
+from app.models import Paper, ReviewLog, TranslationCache, User, Word, WordGroup, WordOccurrence
 from app.api.deps import get_current_user
 from app.services import ecdict_service, sm2_service
 
@@ -53,15 +53,57 @@ class ReviewIn(BaseModel):
 
 @router.get("/groups")
 def list_groups(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """生词分组名列表（非空组名，按成员数降序）。"""
+    """生词分组名列表（含空组计数，按成员数降序）。"""
     rows = (
+        db.query(WordGroup.name, func.count(Word.id).label("c"))
+        .outerjoin(Word, (Word.user_id == WordGroup.user_id) & (Word.group_name == WordGroup.name))
+        .filter(WordGroup.user_id == user.id)
+        .group_by(WordGroup.name)
+        .order_by(func.count(Word.id).desc(), WordGroup.name)
+        .all()
+    )
+    # 兼容：历史数据中可能存在 Word.group_name 但 WordGroup 未回填的行（旧库未迁移完成前），合并计数
+    word_only = (
         db.query(Word.group_name, func.count(Word.id).label("c"))
         .filter(Word.user_id == user.id, Word.group_name.isnot(None), Word.group_name != "")
         .group_by(Word.group_name)
-        .order_by(func.count(Word.id).desc())
         .all()
     )
-    return [{"name": name, "count": c} for name, c in rows]
+    merged = {name: c for name, c in rows}
+    for name, c in word_only:
+        if name not in merged:
+            merged[name] = c
+    return [{"name": name, "count": merged[name]} for name in sorted(merged, key=lambda n: (-merged[n], n))]
+
+
+class WordGroupIn(BaseModel):
+    name: str
+
+
+@router.post("/groups", status_code=201)
+def create_group(body: WordGroupIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    name = body.name.strip()
+    if not (1 <= len(name) <= 20):
+        raise HTTPException(status_code=400, detail="分组名需 1-20 字符")
+    if db.query(WordGroup).filter(WordGroup.user_id == user.id, WordGroup.name == name).first():
+        raise HTTPException(status_code=409, detail="分组已存在")
+    db.add(WordGroup(user_id=user.id, name=name))
+    db.commit()
+    return {"name": name, "count": 0}
+
+
+@router.delete("/groups/{name}", status_code=204)
+def delete_group(name: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    grp = db.query(WordGroup).filter(WordGroup.user_id == user.id, WordGroup.name == name).first()
+    if grp is None:
+        return None
+    # 清空归属词的分组（移至未分组）后再删组
+    db.query(Word).filter(Word.user_id == user.id, Word.group_name == name).update(
+        {Word.group_name: None}, synchronize_session=False
+    )
+    db.delete(grp)
+    db.commit()
+    return None
 
 
 @router.get("")

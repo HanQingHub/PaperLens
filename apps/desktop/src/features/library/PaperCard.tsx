@@ -92,7 +92,8 @@ export default function PaperCard({
 
   return (
     <div
-      className={`panel group relative flex cursor-pointer flex-col gap-2 p-3.5 pl-paper-card pl-card-enter ${
+      data-card
+      className={`panel group relative flex cursor-pointer flex-col gap-2 p-3.5 pl-paper-card ${enterIndex != null ? 'pl-card-enter' : ''} ${
         isDragging ? 'pl-card-dragging' : ''
       } ${insertSide ? `pl-dnd-indicator--${insertSide}` : ''}`}
       style={{

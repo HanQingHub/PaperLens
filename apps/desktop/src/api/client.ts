@@ -122,6 +122,9 @@ export const api = {
       `/translate/history?limit=${limit}`,
     ),
   wordGroups: () => request<{ name: string; count: number }[]>('/words/groups'),
+  createWordGroup: (name: string) =>
+    request<{ name: string; count: number }>('/words/groups', { method: 'POST', body: JSON.stringify({ name }) }),
+  deleteWordGroup: (name: string) => request<void>(`/words/groups/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 
   // ── 词典 / 术语表 ──
   dictionary: (word: string) => request<DictionaryEntry>(`/dictionary/${encodeURIComponent(word)}`),

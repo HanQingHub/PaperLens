@@ -1,6 +1,5 @@
 // 右侧滑出面板骨架：Tab 切换 + 内容由 features 提供
 import { useUi, type RightPanelTab } from '../../stores/ui'
-import { ReviewPanel } from '../../features/review/ReviewPanel'
 import { StatsPanel } from '../../features/stats/StatsPanel'
 import { AnnotationsPanel } from '../../features/annotations/AnnotationsPanel'
 import { GlossaryPanel } from '../../features/glossary/GlossaryPanel'
@@ -8,7 +7,6 @@ import WordsPanel from '../../features/words/WordsPanel'
 
 const TITLES: Record<Exclude<RightPanelTab, null>, string> = {
   annotations: '批注',
-  review: '生词复习',
   stats: '统计',
   glossary: '术语表',
   words: '生词库',
@@ -31,7 +29,6 @@ export default function RightPanel() {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {rightTab === 'annotations' && <AnnotationsPanel />}
-        {rightTab === 'review' && <ReviewPanel />}
         {rightTab === 'stats' && <StatsPanel />}
         {rightTab === 'glossary' && <GlossaryPanel />}
         {rightTab === 'words' && <WordsPanel />}

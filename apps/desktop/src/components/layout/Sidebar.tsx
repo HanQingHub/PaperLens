@@ -1,8 +1,8 @@
 // 左侧栏：单一元素，宽度在 56px ↔ 208px 间平滑过渡，展开时原位推挤（压缩）右侧内容，
 // 无任何悬浮覆盖层。折叠态悬停 150ms 后原位展开预览，移出 250ms 后收回；
 // 点击底部按钮固定展开/收起（状态持久化）。
-import { useRef, useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useUi } from '../../stores/ui'
 import { useUpdater } from '../../stores/updater'
 import logoUrl from '../../assets/logo.png'
@@ -27,6 +27,7 @@ const icons = {
 function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => void }) {
   const { rightTab, openPanel } = useUi()
   const navigate = useNavigate()
+  const location = useLocation()
   const hasUpdate = useUpdater((s) => s.update !== null && s.phase !== 'idle')
 
   const itemCls = (active: boolean) => `pl-nav-item${active ? ' pl-nav-item--active' : ''}`
@@ -45,10 +46,10 @@ function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => voi
           <span className="pl-nav-icon"><Icon path={icons.library} /></span>
           <span className="pl-side-label">文库</span>
         </NavLink>
-        <button onClick={() => openPanel('review')} className={itemCls(rightTab === 'review')} title="生词复习">
+        <NavLink to="/review" className={({ isActive }) => itemCls(isActive || location.pathname === '/review')} title="生词复习">
           <span className="pl-nav-icon"><Icon path={icons.review} /></span>
           <span className="pl-side-label">生词复习</span>
-        </button>
+        </NavLink>
         <button onClick={() => openPanel('stats')} className={itemCls(rightTab === 'stats')} title="阅读统计">
           <span className="pl-nav-icon"><Icon path={icons.chart} /></span>
           <span className="pl-side-label">阅读统计</span>
@@ -78,13 +79,20 @@ function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => voi
 }
 
 export default function Sidebar() {
-  const { sidebarCollapsed, toggleSidebar } = useUi()
+  const { sidebarCollapsed, toggleSidebar, setSidebarAnimating } = useUi()
   const [peek, setPeek] = useState(false)
   const enterTimer = useRef(0)
   const leaveTimer = useRef(0)
 
   // 展开 = 固定展开 或 折叠态悬停预览；两种态共用同一元素，宽度平滑过渡
   const expanded = !sidebarCollapsed || peek
+
+  // 通知 LibraryPage 在侧栏动画期间禁用卡片入场动画（280ms > 250ms 动画）
+  useEffect(() => {
+    setSidebarAnimating(true)
+    const t = window.setTimeout(() => setSidebarAnimating(false), 280)
+    return () => window.clearTimeout(t)
+  }, [expanded, setSidebarAnimating])
 
   // 悬停预览：进入延迟 150ms（指针扫过不触发），离开延迟 250ms（移向内容区不误收）
   const enter = () => {

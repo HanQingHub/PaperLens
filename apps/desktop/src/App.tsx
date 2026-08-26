@@ -1,8 +1,9 @@
 import { useEffect, useMemo } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useAuth, applyTheme } from './stores/auth'
+import { useUi } from './stores/ui'
 import { setUnauthorizedHandler } from './api/client'
 import { toast } from './features/shared/Toast'
 import AppShell from './components/layout/AppShell'
@@ -14,6 +15,7 @@ import WizardPage from './features/wizard/WizardPage'
 import LibraryPage from './features/library/LibraryPage'
 import ReaderPage from './features/reader/ReaderPage'
 import SettingsPage from './features/settings/SettingsPage'
+import ReviewPage from './features/review/ReviewPage'
 import UpdaterBoot from './features/updater/UpdaterBoot'
 
 /** 主题色 → [r,g,b]（0-1），供 WebGL uniform 使用 */
@@ -84,6 +86,13 @@ export default function App() {
     }
   }, [])
 
+  const location = useLocation()
+  useEffect(() => {
+    if (location.pathname === '/review') {
+      useUi.getState().closePanel()
+    }
+  }, [location.pathname])
+
   if (!booted) {
     if (bootError) {
       return (
@@ -149,6 +158,7 @@ export default function App() {
         <Route element={<AppShell />}>
           <Route path="/" element={<LibraryPage />} />
           <Route path="/reader/:paperId" element={<ReaderPage />} />
+          <Route path="/review" element={<ReviewPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
