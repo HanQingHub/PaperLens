@@ -28,7 +28,7 @@ export default function AppShell() {
   return (
     <div className="relative flex h-full overflow-hidden bg-bg text-text">
       {showWaves && (
-        <div className="pointer-events-none absolute inset-0 z-0 opacity-60" aria-hidden>
+        <div className="pointer-events-none absolute inset-0 z-0 opacity-20" aria-hidden>
           <Waves
             lineColor={accent}
             waveSpeedX={0.02}
