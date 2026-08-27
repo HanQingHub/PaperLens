@@ -310,17 +310,19 @@ export default function LibraryPage() {
 
   // ── 上传 ──
   const handleFiles = async (files: File[], projectId: number | null = selectedProjectId) => {
-    const pdfs = files.filter((f) => f.name.toLowerCase().endsWith('.pdf'))
-    if (pdfs.length === 0) {
-      toast('仅支持 PDF 文件', 'error')
+    const docs = files.filter((f) => f.name.toLowerCase().endsWith('.pdf') || f.name.toLowerCase().endsWith('.md') || f.name.toLowerCase().endsWith('.markdown'))
+    if (docs.length === 0) {
+      toast('仅支持 PDF / Markdown 文件', 'error')
       return
     }
     setUploading(true)
     try {
-      for (const f of pdfs) {
-        const scanned = await detectScanned(f).catch(() => false)
+      for (const f of docs) {
+        const isMd = f.name.toLowerCase().endsWith('.md') || f.name.toLowerCase().endsWith('.markdown')
+        const scanned = isMd ? false : await detectScanned(f).catch(() => false)
         const r = await api.uploadPaper(f, projectId, scanned)
-        toast(`已上传：${r.paper.title}${scanned ? '（扫描版，已自动进入 OCR 队列）' : ''}`, 'ok')
+        if (isMd) toast(`已上传：${r.paper.title}（Markdown）`, 'ok')
+        else toast(`已上传：${r.paper.title}${scanned ? '（扫描版，已自动进入 OCR 队列）' : ''}`, 'ok')
       }
       refreshPapers()
       refreshProjects()
@@ -641,7 +643,7 @@ export default function LibraryPage() {
           </div>
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           {selectedProjectId && (
             <span className="badge badge-accent">
               {projects.find((p) => p.id === selectedProjectId)?.name}
@@ -669,7 +671,7 @@ export default function LibraryPage() {
           <input
             ref={fileInput}
             type="file"
-            accept="application/pdf"
+            accept="application/pdf,.pdf,.md,.markdown"
             multiple
             className="hidden"
             onChange={(e) => {
@@ -703,9 +705,9 @@ export default function LibraryPage() {
               <span>＋</span> arXiv
             </button>
           )}
-          <button className="btn btn-primary" onClick={() => fileInput.current?.click()} disabled={uploading}>
+          <button className="btn btn-primary h-7 gap-1.5 whitespace-nowrap px-3.5 text-xs" onClick={() => fileInput.current?.click()} disabled={uploading}>
             {uploading ? <span className="spinner" /> : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M17 8l-5-5-5 5 M12 3v12" /></svg>}
-            {uploading ? '上传中…' : '选择 PDF'}
+            {uploading ? '上传中…' : '选择 PDF / Markdown'}
           </button>
         </div>
       </div>
@@ -889,13 +891,13 @@ function EmptyState({ hasQuery, onUpload }: { hasQuery: boolean; onUpload: () =>
           <div>
             <p className="text-[15px] font-medium">文库还是空的</p>
             <p className="mt-1 text-xs leading-5 text-text-faint">
-              拖拽 PDF 到页面任意位置，或点击下方按钮上传
+              拖拽 PDF / Markdown 到页面任意位置，或点击下方按钮上传
               <br />
-              支持多选 · 扫描版将自动 OCR
+              支持多选 · 扫描版将自动 OCR · Markdown 即时预览
             </p>
           </div>
-          <button className="btn btn-primary" onClick={onUpload}>
-            选择 PDF 上传
+          <button className="btn btn-primary whitespace-nowrap" onClick={onUpload}>
+            选择 PDF / Markdown 上传
           </button>
         </>
       )}

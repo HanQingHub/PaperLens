@@ -33,10 +33,12 @@ interface PageViewProps {
   renderScale?: number
   /** 预渲染（渲染但不可见，防白闪） */
   prerender?: boolean
+  /** 文档世代：切换文档时使旧 pdf 的渲染任务失效 */
+  generation?: number
 }
 
 // memo：父级（OCR 轮询/进度保存等）触发的重渲染不再波及页面子树
-const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, prerender = false }: PageViewProps) {
+const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, prerender = false, generation }: PageViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textDivRef = useRef<HTMLDivElement>(null)
   const pageRef = useRef<HTMLDivElement>(null)
@@ -164,8 +166,8 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
       // 已绘制内容入 LRU，供回滚/重挂载即时显示
       if (cVisible && paintedRef.current) stashPageBitmap(pageIndex, cVisible)
     }
-    // hiScale 为防抖提交值：缩放过程中本 effect 不会反复触发
-  }, [pdf, pageIndex, hiScale, active, ocrMode])
+    // hiScale 为防抖提交值：缩放过程中本 effect 不会反复触发；generation 变化使旧 pdf 任务失效
+  }, [pdf, pageIndex, hiScale, active, ocrMode, generation])
 
   // ── 词高亮 / 搜索高亮（渲染完成或版本变化时，空闲时段执行避免阻塞首帧）──
   const applyHl = useCallback(() => {

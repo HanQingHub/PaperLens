@@ -469,3 +469,12 @@
 .pl-dnd-indicator--after::before {
   right: 0;
 }
+.pl-card--md {
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--panel));
+}
+.pl-card--md .pl-card-glow { opacity: 0.45; }
+.pl-card--md::after {
+  background: linear-gradient(90deg, var(--accent), transparent);
+  opacity: 0.9;
+}

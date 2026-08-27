@@ -39,7 +39,10 @@ class Project(Base):
 
 class Paper(Base):
     __tablename__ = "papers"
-    __table_args__ = (Index("ix_papers_user_id", "user_id"),)
+    __table_args__ = (
+        Index("ix_papers_user_id", "user_id"),
+        Index("ix_papers_file_type", "file_type"),
+    )
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"))
@@ -50,6 +53,8 @@ class Paper(Base):
     doi: Mapped[Optional[str]] = mapped_column(Text)
     arxiv_id: Mapped[Optional[str]] = mapped_column(Text)
     file_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    file_type: Mapped[str] = mapped_column(Text, nullable=False, default="pdf", server_default="pdf")  # pdf | markdown
+    orig_filename: Mapped[Optional[str]] = mapped_column(Text)
     page_count: Mapped[Optional[int]] = mapped_column(Integer)
     open_count: Mapped[int] = mapped_column(Integer, default=0)
     is_scanned: Mapped[int] = mapped_column(Integer, default=0)

@@ -93,14 +93,15 @@ export default function PaperCard({
     return () => document.removeEventListener('mousedown', close)
   }, [menuOpen])
 
+  const isMd = (paper.file_type ?? 'pdf') === 'markdown'
   return (
     <div
       data-card
-      className={`panel group relative flex cursor-pointer flex-col gap-2 p-3.5 pl-paper-card ${enterIdx != null ? 'pl-card-enter' : ''} ${
+      className={`panel group relative flex cursor-pointer flex-col gap-2 p-3.5 pl-paper-card ${isMd ? 'pl-card--md' : ''} ${enterIdx != null ? 'pl-card-enter' : ''} ${
         isDragging ? 'pl-card-dragging' : ''
       } ${insertSide ? `pl-dnd-indicator--${insertSide}` : ''}`}
       style={{
-        '--pl-hue': String(hueOf(paper)),
+        '--pl-hue': String(isMd ? 212 : hueOf(paper)),
         ...(enterIdx != null ? { animationDelay: `${Math.min(enterIdx, 24) * 30}ms` } : {}),
       } as CSSProperties}
       onClick={(e) => {
@@ -123,7 +124,10 @@ export default function PaperCard({
       <div className="pl-card-glow" aria-hidden />
       {selected && <div className="pointer-events-none absolute inset-0 rounded-[var(--radius-panel,10px)] border-2 border-accent bg-[var(--accent-soft)]/30" aria-hidden />}
       <div className="flex items-start justify-between gap-2">
-        <h3 className="line-clamp-2 flex-1 text-[13.5px] font-medium leading-5">{paper.title}</h3>
+        <h3 className="line-clamp-2 flex-1 text-[13.5px] font-medium leading-5">
+          {isMd && <span className="mr-1.5 inline-flex items-center gap-1 rounded bg-accent px-1 py-0.5 text-[10px] leading-none text-white">MD</span>}
+          {paper.title}
+        </h3>
         <div className="flex shrink-0 items-center gap-0.5">
           {(paper.annotation_count ?? 0) > 0 && (
             <span className="pl-anno-badge" title={`${paper.annotation_count} 条批注`}>
@@ -168,21 +172,25 @@ export default function PaperCard({
       </div>
 
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-text-faint">
-        {paper.authors && <span className="line-clamp-1 max-w-full">{paper.authors.split(/[;,]/)[0].trim()}{paper.authors.includes(';') || paper.authors.includes(',') ? ' 等' : ''}</span>}
+        {isMd ? (
+          <span className="badge badge-accent">Markdown</span>
+        ) : (
+          paper.authors && <span className="line-clamp-1 max-w-full">{paper.authors.split(/[;,]/)[0].trim()}{paper.authors.includes(';') || paper.authors.includes(',') ? ' 等' : ''}</span>
+        )}
         {paper.year && <span>{paper.year}</span>}
-        <span>{paper.page_count} 页</span>
+        <span>{isMd ? `${paper.page_count} 行` : `${paper.page_count} 页`}</span>
         {paper.open_count > 0 && <span>打开 {paper.open_count} 次</span>}
         {paper.venue && <span className="line-clamp-1 italic">{paper.venue}</span>}
         {paper.arxiv_id && <span className="badge">arXiv:{paper.arxiv_id}</span>}
       </div>
 
-      {(paper.tags.length > 0 || paper.is_scanned || paper.ocr_status !== 'none') && (
+      {(paper.tags.length > 0 || (!isMd && (paper.is_scanned || paper.ocr_status !== 'none'))) && (
         <div className="flex flex-wrap items-center gap-1.5">
           {paper.tags.slice(0, 4).map((t) => (
             <span key={t} className="badge">{t}</span>
           ))}
           {paper.tags.length > 4 && <span className="text-[11px] text-text-faint">+{paper.tags.length - 4}</span>}
-          <OcrBadge paper={paper} progress={ocrProgress} />
+          {!isMd && <OcrBadge paper={paper} progress={ocrProgress} />}
         </div>
       )}
 

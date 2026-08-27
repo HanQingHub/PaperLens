@@ -92,7 +92,11 @@ export function takePageBitmap(pageIndex: number): ImageBitmap | null {
   return bmp
 }
 
-/** 文档切换时清空缓存 */
+export function clearRenderQueue() {
+  queue.length = 0
+}
+
+ /** 文档切换时清空缓存 */
 export function clearPageBitmaps() {
   for (const bmp of bitmapCache.values()) bmp.close()
   bitmapCache.clear()

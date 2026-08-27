@@ -6,5 +6,6 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.{ts,tsx}'],
+    deps: { inline: [/react-markdown/, /remark-/, /rehype-/, /unified/, /micromark/, /mdast/, /highlight\.js/] },
   },
 })

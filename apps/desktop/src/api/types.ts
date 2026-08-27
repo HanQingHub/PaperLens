@@ -30,6 +30,8 @@ export interface Paper {
   doi: string | null
   arxiv_id: string | null
   file_hash: string
+  file_type: 'pdf' | 'markdown'
+  orig_filename?: string | null
   page_count: number
   open_count: number
   is_scanned: boolean

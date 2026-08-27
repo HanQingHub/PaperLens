@@ -15,7 +15,8 @@ import { RENDER_DEBOUNCE_MS, PROGRESS_SAVE_THROTTLE_MS, ZOOM_STEP_RATIO, mapOcrP
 import '../../lib/pdfjsSetup'
 import PageView from './PageView'
 import ThumbnailRail from './ThumbnailRail'
-import { clearPageBitmaps } from './renderScheduler'
+import MarkdownReader from './MarkdownReader'
+import { clearPageBitmaps, clearRenderQueue } from './renderScheduler'
 import SelectionToolbar, { type SelectionActions } from './SelectionToolbar'
 import TranslateCard, { type TranslateRequest } from './TranslateCard'
 import { clearIrregularCache } from './lemma'
@@ -120,6 +121,9 @@ export default function ReaderPage() {
   const lastSave = useRef(0)
   const restoreRef = useRef<{ page: number; ratio: number } | null>(null)
   const [ocrBump, setOcrBump] = useState(0)
+  const [loadGen, setLoadGen] = useState(0)
+  const loadGenRef = useRef(0)
+  const [reloadKey, setReloadKey] = useState(0)
 
   // ── 两阶段缩放：scale 立即驱动布局与 CSS 位图拉伸（即时、零重渲染），
   // renderScale 防抖 180ms 提交后才触发 canvas/textLayer 高清重渲染。
@@ -160,80 +164,140 @@ export default function ReaderPage() {
   }, [scale])
 
   // ── 文档加载（file-token 一次性取回全文，避免长会话 token 过期）──
+  // 世代令牌 + Abort + 重试：根治旧 pdf 已销毁仍被子组件使用的 sendWithPromise 空指针
   useEffect(() => {
     if (!Number.isFinite(pid)) return
+    const gen = ++loadGenRef.current
+    setLoadGen(gen)
     useReader.getState().reset()
-    clearIrregularCache() // 文档切换：清空不规则词形缓存（跨文档无复用价值）
-    clearPageBitmaps() // 文档切换：清空位图缓存
+    clearIrregularCache()
+    clearPageBitmaps()
+    clearRenderQueue()
     let cancelled = false
     let task: ReturnType<typeof getDocument> | null = null
-    ;(async () => {
-      try {
-        const [p, tk] = await Promise.all([loadPaperCached(pid), api.fileToken(pid)])
-        if (cancelled) return
-        const res = await fetch(pdfFileUrl(pid, tk.token))
-        if (!res.ok) throw new Error(`PDF 加载失败（HTTP ${res.status}）`)
-        const data = new Uint8Array(await res.arrayBuffer())
-        if (cancelled) return
-        task = getDocument({
-          data,
-          cMapUrl: `${import.meta.env.BASE_URL}cmaps/`,
-          cMapPacked: true,
-        })
-        const doc = await task.promise
-        if (cancelled) return
-        // 懒解析：只同步解析首屏页拿真实尺寸，其余按首页宽高比占位，
-        // 后台分批回填（大 PDF 的全页 getPage 是打开耗时主项）。
-        // 占位数组恒为 full-length，所有高度数学消费方无需感知。
-        const firstCount = Math.min(FIRST_PARSE_PAGES, doc.numPages)
-        const firstPages = await Promise.all(
-          Array.from({ length: firstCount }, (_, i) => doc!.getPage(i + 1)),
+    const abort = new AbortController()
+
+    const isAbort = (e: unknown) => /aborted|destroyed/i.test(String((e as Error)?.message ?? e ?? ''))
+    const isWorkerRace = (e: unknown) => {
+      const s = String((e as Error)?.message ?? e ?? '') + ' ' + String((e as Error)?.stack ?? '') + ' ' + String((e as { detail?: unknown })?.detail ?? '')
+      return /sendWithPromise|messageHandler|Worker was destroyed/i.test(s)
+    }
+
+    const loadOnce = async () => {
+      const p = await loadPaperCached(pid)
+      if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+      // Markdown 分流：无需 fileToken / getDocument，直接标记就绪
+      if ((p as unknown as { file_type?: string }).file_type === 'markdown') {
+        // 用极简占位尺寸，阅读器将走 MarkdownReader 分支
+        const fullSizes = [{ w: 860, h: 1200 }]
+        useReader.getState().setDoc(p, null as unknown as import('pdfjs-dist').PDFDocumentProxy, fullSizes, 1)
+        const prog = await api.readingProgress(pid).catch(() => null)
+        if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+        restoreRef.current = { page: Math.max(1, prog?.page_no ?? 1), ratio: prog?.scroll_y ?? 0 }
+        return
+      }
+      const tk = await api.fileToken(pid)
+      if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+      const res = await fetch(pdfFileUrl(pid, tk.token), { signal: abort.signal })
+      if (!res.ok) throw new Error(`PDF 加载失败（HTTP ${res.status}）`)
+      const data = new Uint8Array(await res.arrayBuffer())
+      if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+      task = getDocument({
+        data,
+        cMapUrl: `${import.meta.env.BASE_URL}cmaps/`,
+        cMapPacked: true,
+      })
+      const doc = await task.promise
+      if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) {
+        task.destroy().catch(() => {})
+        return
+      }
+      const firstCount = Math.min(FIRST_PARSE_PAGES, doc.numPages)
+      const firstPages = await Promise.all(
+        Array.from({ length: firstCount }, async (_, i) => {
+          try {
+            return await doc!.getPage(i + 1)
+          } catch (e) {
+            if (isWorkerRace(e)) throw e
+            throw e
+          }
+        }),
+      )
+      if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+      const sizes = firstPages.map((pg) => {
+        const vp = pg.getViewport({ scale: 1 })
+        return { w: vp.width, h: vp.height }
+      })
+      const first = sizes[0] ?? { w: 612, h: 792 }
+      const fullSizes = Array.from({ length: doc.numPages }, (_, i) => sizes[i] ?? first)
+      useReader.getState().setDoc(p, doc!, fullSizes, doc.numPages)
+
+      const BATCH = 16
+      for (let start = firstCount; start < doc!.numPages; start += BATCH) {
+        if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+        const end = Math.min(start + BATCH, doc!.numPages)
+        const batch = await Promise.all(
+          Array.from({ length: end - start }, async (_, i) => {
+            try {
+              return await doc!.getPage(start + i + 1)
+            } catch (e) {
+              if (isWorkerRace(e)) throw e
+              throw e
+            }
+          }),
         )
-        if (cancelled) return
-        const sizes = firstPages.map((pg) => {
+        if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+        const real = batch.map((pg) => {
           const vp = pg.getViewport({ scale: 1 })
           return { w: vp.width, h: vp.height }
         })
-        const first = sizes[0] ?? { w: 612, h: 792 }
-        // 等比占位：未解析页沿用首页尺寸（学术 PDF 尺寸一致；回填后前缀恒定）
-        const fullSizes = Array.from({ length: doc.numPages }, (_, i) => sizes[i] ?? first)
-        useReader.getState().setDoc(p, doc!, fullSizes, doc.numPages)
+        useReader.getState().appendPageSizes(start, real)
+        await new Promise((r) => setTimeout(r, 0))
+      }
 
-        // 后台分批回填真实尺寸：顺序解析保证已解析前缀高度恒定，
-        // 当前视口之前的页不再变化 → 视口内容不位移
-        const BATCH = 16
-        for (let start = firstCount; start < doc!.numPages; start += BATCH) {
-          if (cancelled) return
-          const end = Math.min(start + BATCH, doc!.numPages)
-          const batch = await Promise.all(
-            Array.from({ length: end - start }, (_, i) => doc!.getPage(start + i + 1)),
-          )
-          if (cancelled) return
-          const real = batch.map((pg) => {
-            const vp = pg.getViewport({ scale: 1 })
-            return { w: vp.width, h: vp.height }
-          })
-          useReader.getState().appendPageSizes(start, real)
-          // 让出主线程，避免大批量解析挤掉渲染帧
-          await new Promise((r) => setTimeout(r, 0))
+      const prog = await api.readingProgress(pid).catch(() => null)
+      if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+      const rp = Math.max(1, Math.min(prog?.page_no ?? 1, doc!.numPages))
+      const ratio = Math.max(0, Math.min(1, prog?.scroll_y ?? 0))
+      await saveProgress(pid, rp, ratio, true).catch(() => {})
+      restoreRef.current = { page: rp, ratio }
+    }
+
+    ;(async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await loadOnce()
+          break
+        } catch (e) {
+          if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+          const race = isWorkerRace(e) || isAbort(e)
+          console.error(`[Reader] getDocument failed (attempt ${attempt + 1}/2) pid=${pid}`, e)
+          if (race && attempt === 0) {
+            await new Promise((r) => setTimeout(r, 200))
+            try {
+              await (task as unknown as { destroy: () => Promise<void> })?.destroy()
+            } catch {
+              /* ignore */
+            }
+            task = null
+            continue
+          }
+          if (!cancelled) useReader.getState().setLoadError(e instanceof Error ? e.message : '加载失败')
+          break
         }
-
-        // 打开计数 + 读取旧进度（PUT open=true 会写回当前值，不覆盖）
-        const prog = await api.readingProgress(pid).catch(() => null)
-        if (cancelled) return
-        const rp = Math.max(1, Math.min(prog?.page_no ?? 1, doc!.numPages))
-        const ratio = Math.max(0, Math.min(1, prog?.scroll_y ?? 0))
-        await saveProgress(pid, rp, ratio, true).catch(() => {})
-        restoreRef.current = { page: rp, ratio }
-      } catch (e) {
-        if (!cancelled) useReader.getState().setLoadError(e instanceof Error ? e.message : '加载失败')
       }
     })()
+
     return () => {
       cancelled = true
-      task?.destroy()
+      abort.abort()
+      ;(task as unknown as { destroy: () => Promise<void> } | null)?.destroy()?.catch(() => {})
+      // 卸载即清 store：已销毁的 pdf 若留在 store，会被下一次挂载首帧 render 的
+      // effect 闭包捕获（reset 在 effect 里执行，晚于 render），同步调用其方法即抛
+      // messageHandler 空指针（sendWithPromise）冒泡至 ErrorBoundary
+      useReader.getState().reset()
     }
-  }, [pid])
+  }, [pid, reloadKey])
 
   // 恢复阅读位置（文档就绪后）
   const scrollToPosition = useCallback((pageNo: number, ratio: number) => {
@@ -272,10 +336,15 @@ export default function ReaderPage() {
     setOutlineMissing(false)
     if (!pdf) return
     let cancelled = false
-    pdf
-      .getOutline()
-      .then((o) => !cancelled && setOutlineMissing(!o || o.length === 0))
-      .catch(() => !cancelled && setOutlineMissing(true))
+    try {
+      pdf
+        .getOutline()
+        .then((o) => !cancelled && setOutlineMissing(!o || o.length === 0))
+        .catch(() => !cancelled && setOutlineMissing(true))
+    } catch {
+      // 文档已销毁时 getOutline 同步抛 messageHandler 空指针，.catch 捕不到同步 throw
+      setOutlineMissing(true)
+    }
     return () => {
       cancelled = true
     }
@@ -677,13 +746,25 @@ export default function ReaderPage() {
 
   // ── 渲染：isStale 防止切换文档时闪现旧内容（useEffect reset 在首帧后才执行）──
   const isStale = paper != null && paper.id !== pid
+  const isMd = !isStale && (paper as unknown as { file_type?: string })?.file_type === 'markdown'
   if (loadError && !isStale) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 bg-bg-soft">
         <p className="text-sm text-danger">{loadError}</p>
-        <button className="btn" onClick={() => navigate('/')}>
-          返回文库
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              useReader.getState().setLoadError(null)
+              setReloadKey((k) => k + 1)
+            }}
+          >
+            重试
+          </button>
+          <button className="btn" onClick={() => navigate('/')}>
+            返回文库
+          </button>
+        </div>
       </div>
     )
   }
@@ -702,104 +783,109 @@ export default function ReaderPage() {
           {!isStale && paper?.is_favorite && <span className="text-[11px] text-accent">★</span>}
         </div>
 
-        {/* 页码 */}
-        <PageIndicator numPages={numPages} onCommit={gotoPage} />
+        {!isMd && <PageIndicator numPages={numPages} onCommit={gotoPage} />}
 
-        {/* 缩放 */}
-        <span className="mx-1 h-4 w-px bg-border-strong" />
-        <button className="rd-tbtn" title="缩小 (Ctrl+-)" onClick={() => zoomBy(1 / 1.2)}>
-          <I d={icons.minus} />
-        </button>
-        <span className="w-10 text-center text-[11px] tabular-nums text-text-faint">{Math.round(scale * 100)}%</span>
-        <button className="rd-tbtn" title="放大 (Ctrl+=)" onClick={() => zoomBy(1.2)}>
-          <I d={icons.plus} />
-        </button>
-        <button className="rd-tbtn" title="适应宽度 (Ctrl+0)" onClick={fitWidth}>
-          <I d={icons.fit} />
-        </button>
+        {!isMd && (
+          <>
+            <span className="mx-1 h-4 w-px bg-border-strong" />
+            <button className="rd-tbtn" title="缩小 (Ctrl+-)" onClick={() => zoomBy(1 / 1.2)}>
+              <I d={icons.minus} />
+            </button>
+            <span className="w-10 text-center text-[11px] tabular-nums text-text-faint">{Math.round(scale * 100)}%</span>
+            <button className="rd-tbtn" title="放大 (Ctrl+=)" onClick={() => zoomBy(1.2)}>
+              <I d={icons.plus} />
+            </button>
+            <button className="rd-tbtn" title="适应宽度 (Ctrl+0)" onClick={fitWidth}>
+              <I d={icons.fit} />
+            </button>
 
-        {/* 模式切换 */}
-        <span className="mx-1 h-4 w-px bg-border-strong" />
-        <div className="flex items-center rounded-md border border-border p-0.5">
-          <button
-            className={`rd-seg ${mode === 'single' ? 'rd-seg-on' : ''}`}
-            title="单页模式（←/→ 翻页）"
-            onClick={() => useReader.getState().setMode('single')}
-          >
-            <I d={icons.single} size={12} />
-          </button>
-          <button
-            className={`rd-seg ${mode === 'continuous' ? 'rd-seg-on' : ''}`}
-            title="连续滚动"
-            onClick={() => useReader.getState().setMode('continuous')}
-          >
-            <I d={icons.scroll} size={12} />
-          </button>
-        </div>
-
-        <span className="mx-1 h-4 w-px bg-border-strong" />
-        <button
-          className={`rd-tbtn ${outlineOpen ? 'rd-tbtn-on' : ''}`}
-          title="目录大纲"
-          onClick={() => useReader.getState().toggleOutline()}
-        >
-          <I d={icons.outline} />
-        </button>
-        <button
-          className={`rd-tbtn ${searchOpen ? 'rd-tbtn-on' : ''}`}
-          title="页内搜索 (Ctrl+F)"
-          onClick={() => useReader.getState().toggleSearch()}
-        >
-          <I d={icons.search} />
-        </button>
-        <button className="rd-tbtn" title="批注与摘录面板" onClick={() => openPanel('annotations')}>
-          <span className="relative">
-            <I d={icons.note} />
-            {annotationsCount > 0 && (
-              <span className="absolute -right-1.5 -top-1.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-accent px-0.5 text-[8px] font-semibold text-white">
-                {annotationsCount}
-              </span>
-            )}
-          </span>
-        </button>
-        <button className="rd-tbtn" title="生词库" onClick={() => openPanel('words')}>
-          <I d={icons.words} />
-        </button>
-        <button className="rd-tbtn" title="本文术语表" onClick={() => openPanel('glossary')}>
-          <I d={icons.book} />
-        </button>
-
-        {/* 导出菜单 */}
-        <div className="relative">
-          <button className="rd-tbtn" title="导出批注" onClick={() => setExportOpen((v) => !v)}>
-            <I d={icons.export} />
-          </button>
-          {exportOpen && (
-            <div className="menu-pop w-44 p-2">
-              <div className="mb-1.5 flex items-center gap-1.5">
-                <span className="w-8 text-[11px] text-text-faint">颜色</span>
-                <select className="input flex-1 py-0.5 text-[11px]" value={exportColor} onChange={(e) => setExportColor(e.target.value)}>
-                  <option value="">全部</option>
-                  <option value="yellow">黄</option>
-                  <option value="green">绿</option>
-                  <option value="blue">蓝</option>
-                  <option value="pink">粉</option>
-                  <option value="purple">紫</option>
-                </select>
-              </div>
-              <div className="mb-2 flex items-center gap-1.5">
-                <span className="w-8 text-[11px] text-text-faint">类型</span>
-                <select className="input flex-1 py-0.5 text-[11px]" value={exportType} onChange={(e) => setExportType(e.target.value)}>
-                  <option value="">全部</option>
-                  <option value="word_note">笔记</option>
-                  <option value="sentence">高亮</option>
-                </select>
-              </div>
-              <button onClick={exportPdf}>写回 PDF 副本</button>
-              <button onClick={exportMd}>Markdown 列表</button>
+            <span className="mx-1 h-4 w-px bg-border-strong" />
+            <div className="flex items-center rounded-md border border-border p-0.5">
+              <button
+                className={`rd-seg ${mode === 'single' ? 'rd-seg-on' : ''}`}
+                title="单页模式（←/→ 翻页）"
+                onClick={() => useReader.getState().setMode('single')}
+              >
+                <I d={icons.single} size={12} />
+              </button>
+              <button
+                className={`rd-seg ${mode === 'continuous' ? 'rd-seg-on' : ''}`}
+                title="连续滚动"
+                onClick={() => useReader.getState().setMode('continuous')}
+              >
+                <I d={icons.scroll} size={12} />
+              </button>
             </div>
-          )}
-        </div>
+
+            <span className="mx-1 h-4 w-px bg-border-strong" />
+            <button
+              className={`rd-tbtn ${outlineOpen ? 'rd-tbtn-on' : ''}`}
+              title="目录大纲"
+              onClick={() => useReader.getState().toggleOutline()}
+            >
+              <I d={icons.outline} />
+            </button>
+            <button
+              className={`rd-tbtn ${searchOpen ? 'rd-tbtn-on' : ''}`}
+              title="页内搜索 (Ctrl+F)"
+              onClick={() => useReader.getState().toggleSearch()}
+            >
+              <I d={icons.search} />
+            </button>
+            <button className="rd-tbtn" title="批注与摘录面板" onClick={() => openPanel('annotations')}>
+              <span className="relative">
+                <I d={icons.note} />
+                {annotationsCount > 0 && (
+                  <span className="absolute -right-1.5 -top-1.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-accent px-0.5 text-[8px] font-semibold text-white">
+                    {annotationsCount}
+                  </span>
+                )}
+              </span>
+            </button>
+            <button className="rd-tbtn" title="生词库" onClick={() => openPanel('words')}>
+              <I d={icons.words} />
+            </button>
+            <button className="rd-tbtn" title="本文术语表" onClick={() => openPanel('glossary')}>
+              <I d={icons.book} />
+            </button>
+
+            <div className="relative">
+              <button className="rd-tbtn" title="导出批注" onClick={() => setExportOpen((v) => !v)}>
+                <I d={icons.export} />
+              </button>
+              {exportOpen && (
+                <div className="menu-pop w-44 p-2">
+                  <div className="mb-1.5 flex items-center gap-1.5">
+                    <span className="w-8 text-[11px] text-text-faint">颜色</span>
+                    <select className="input flex-1 py-0.5 text-[11px]" value={exportColor} onChange={(e) => setExportColor(e.target.value)}>
+                      <option value="">全部</option>
+                      <option value="yellow">黄</option>
+                      <option value="green">绿</option>
+                      <option value="blue">蓝</option>
+                      <option value="pink">粉</option>
+                      <option value="purple">紫</option>
+                    </select>
+                  </div>
+                  <div className="mb-2 flex items-center gap-1.5">
+                    <span className="w-8 text-[11px] text-text-faint">类型</span>
+                    <select className="input flex-1 py-0.5 text-[11px]" value={exportType} onChange={(e) => setExportType(e.target.value)}>
+                      <option value="">全部</option>
+                      <option value="word_note">笔记</option>
+                      <option value="sentence">高亮</option>
+                    </select>
+                  </div>
+                  <button onClick={exportPdf}>写回 PDF 副本</button>
+                  <button onClick={exportMd}>Markdown 列表</button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+        {isMd && (
+          <span className="ml-auto text-[11px] text-text-faint">
+            Markdown · {paper?.page_count ?? 0} 行
+          </span>
+        )}
       </div>
 
       {/* ── 主区域 ── */}
@@ -809,6 +895,10 @@ export default function ReaderPage() {
           <div className="flex h-full flex-col items-center justify-center gap-3 text-text-faint">
             <div className="spinner spinner-lg" />
             <span className="text-xs">正在打开论文…</span>
+          </div>
+        ) : isMd ? (
+          <div className="h-full overflow-auto">
+            <MarkdownReader paperId={pid} />
           </div>
         ) : (
           <div
@@ -836,28 +926,28 @@ export default function ReaderPage() {
                         </div>
                       )
                     }
-                    return <PageView key={i} pdf={pdf!} pageIndex={i} active renderScale={renderScale} />
+                    return <PageView key={i} pdf={pdf!} pageIndex={i} active renderScale={renderScale} generation={loadGen} />
                   })
                 : pdf &&
                   pageSizes[currentPage - 1] && (
-                    <PageView pdf={pdf} pageIndex={currentPage - 1} active renderScale={renderScale} />
+                    <PageView pdf={pdf} pageIndex={currentPage - 1} active renderScale={renderScale} generation={loadGen} />
                   )}
             </div>
           </div>
         )}
 
         {/* 大纲抽屉 */}
-        {outlineOpen && !loading && !isStale && <OutlineDrawer onGoto={(p) => gotoPage(p, false)} />}
+        {!isMd && outlineOpen && !loading && !isStale && <OutlineDrawer onGoto={(p) => gotoPage(p, false)} />}
 
         {/* 页内搜索 */}
-        {searchOpen && !loading && !isStale && (
-          <div className={outlineMissing ? 'absolute right-16 top-2 z-30' : 'absolute right-3 top-2 z-30'}>
+        {!isMd && searchOpen && !loading && !isStale && (
+          <div className={outlineMissing ? 'absolute right-20 top-2 z-30' : 'absolute right-3 top-2 z-30'}>
             <SearchBar onEnterPage={(i) => scrollToPosition(i + 1, 0)} />
           </div>
         )}
 
         {/* OCR 状态条 */}
-        {!loading && !isStale && paper && (
+        {!isMd && !loading && !isStale && paper && (
           <OcrBanner
             paper={paper}
             status={ocrStatus}
@@ -869,7 +959,7 @@ export default function ReaderPage() {
         )}
 
         {/* 连线模式提示 */}
-        {linking && !linking.cardDraft && (
+        {!isMd && linking && !linking.cardDraft && (
           <div className="glass pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-full border border-border-strong px-4 py-1.5 text-xs text-text-soft shadow-[var(--shadow-1)]">
             从锚点按住拖动到页边任意位置松开落卡 · Esc 取消
           </div>
@@ -877,16 +967,16 @@ export default function ReaderPage() {
         </div>
 
         {/* 缩略图导航条（无大纲 PDF 的页级跳转兜底） */}
-        {!loading && !isStale && outlineMissing && pdf && numPages > 0 && (
-          <ThumbnailRail pdf={pdf} numPages={numPages} currentPage={currentPage} onGoto={(p) => gotoPage(p, false)} />
+        {!isMd && !loading && !isStale && outlineMissing && pdf && numPages > 0 && (
+          <ThumbnailRail pdf={pdf} numPages={numPages} currentPage={currentPage} generation={loadGen} onGoto={(p) => gotoPage(p, false)} />
         )}
       </div>
 
       {/* ── 浮动层 ── */}
-      {toolbarVisible && selection && (
+      {!isMd && toolbarVisible && selection && (
         <SelectionToolbar onTranslate={onTranslate} onToast={(m) => toast(m)} actionsRef={actionsRef} />
       )}
-      <TranslateCard paperId={pid} request={translateReq} onClose={() => setTranslateReq(null)} onToast={(m) => toast(m)} />
+      {!isMd && <TranslateCard paperId={pid} request={translateReq} onClose={() => setTranslateReq(null)} onToast={(m) => toast(m)} />}
     </div>
   )
 }

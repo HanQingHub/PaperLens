@@ -28,7 +28,9 @@ def paper_dict(p: Paper, annotation_count: int | None = None) -> dict:
         "id": p.id, "user_id": p.user_id, "project_id": p.project_id, "title": p.title,
         "authors": p.authors, "venue": p.venue, "year": p.year, "doi": p.doi,
         "arxiv_id": p.arxiv_id,
-        "file_hash": p.file_hash, "page_count": p.page_count, "open_count": p.open_count,
+        "file_hash": p.file_hash, "file_type": getattr(p, "file_type", "pdf") or "pdf",
+        "orig_filename": getattr(p, "orig_filename", None),
+        "page_count": p.page_count, "open_count": p.open_count,
         "is_scanned": bool(p.is_scanned), "ocr_status": p.ocr_status,
         "tags": json.loads(p.tags) if p.tags else [],
         "note": p.note, "is_favorite": bool(p.is_favorite),
@@ -281,13 +283,106 @@ async def upload(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="仅支持 PDF 文件")
-    paper = await _import_pdf_bytes(
-        await file.read(), user, db, project_id=project_id, is_scanned=is_scanned,
-        filename=file.filename,
-    )
+    if not file.filename or not file.filename.lower().endswith((".pdf", ".md", ".markdown")):
+        raise HTTPException(status_code=400, detail="仅支持 PDF / Markdown 文件")
+    data = await file.read()
+    if file.filename.lower().endswith((".md", ".markdown")):
+        if len(data) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Markdown 文件需 ≤5MB")
+        try:
+            data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="Markdown 需为 UTF-8 编码")
+        paper = await _import_markdown_bytes(
+            data, user, db, project_id=project_id, filename=file.filename,
+        )
+    else:
+        paper = await _import_pdf_bytes(
+            data, user, db, project_id=project_id, is_scanned=is_scanned,
+            filename=file.filename,
+        )
     return {"paper": paper_dict(paper)}
+
+
+def _paper_file_path(file_hash: str, file_type: str) -> Path:
+    ext = "md" if file_type == "markdown" else "pdf"
+    return get_settings().files_dir / f"{file_hash}.{ext}"
+
+
+def _resolve_existing_dest(digest: str) -> Path | None:
+    settings = get_settings()
+    for ext in ("pdf", "md"):
+        p = settings.files_dir / f"{digest}.{ext}"
+        if p.exists():
+            return p
+    return None
+
+
+async def _import_markdown_bytes(
+    data: bytes,
+    user: User,
+    db: Session,
+    *,
+    project_id: int | None = None,
+    filename: str | None = None,
+) -> Paper:
+    settings = get_settings()
+    settings.ensure_dirs()
+    if project_id is not None:
+        proj = db.get(Project, project_id)
+        if proj is None or proj.user_id != user.id:
+            raise HTTPException(status_code=404, detail="项目不存在")
+    import hashlib
+
+    digest = hashlib.sha256(data).hexdigest()
+    dest = settings.files_dir / f"{digest}.md"
+    existing = _resolve_existing_dest(digest)
+    if existing is None:
+        dest.write_bytes(data)
+    else:
+        dest = existing
+    text = data.decode("utf-8-sig")
+    line_count = max(1, text.count("\n") + 1)
+    return await _create_paper_record(
+        db, user, project_id, digest, dest, text, filename, line_count, file_type="markdown",
+    )
+
+
+async def _create_paper_record(
+    db: Session,
+    user: User,
+    project_id: int | None,
+    digest: str,
+    dest: Path,
+    text: str | None,
+    filename: str | None,
+    page_count: int,
+    file_type: str,
+) -> Paper:
+    with write_lock:
+        ref = db.get(FileRef, digest)
+        if ref is None:
+            db.add(FileRef(file_hash=digest, ref_count=1))
+        else:
+            ref.ref_count += 1
+        max_order = db.query(func.max(Paper.sort_order)).filter(
+            Paper.user_id == user.id, Paper.project_id == project_id
+        ).scalar()
+        title_fallback = Path(filename).stem if filename else "未命名文档"
+        paper = Paper(
+            user_id=user.id, project_id=project_id,
+            title=title_fallback,
+            authors=None, file_hash=digest, file_type=file_type,
+            orig_filename=filename, page_count=page_count,
+            year=None, doi=None, arxiv_id=None,
+            is_scanned=0, ocr_status="none",
+            tags="[]", created_at=now_iso(),
+            sort_order=0 if max_order is None else max_order + 1,
+        )
+        db.add(paper)
+        db.commit()
+        db.refresh(paper)
+    return paper
 
 
 async def _import_pdf_bytes(
@@ -311,9 +406,12 @@ async def _import_pdf_bytes(
     import hashlib
 
     digest = hashlib.sha256(data).hexdigest()
-    dest = settings.files_dir / f"{digest}.pdf"
-    if not dest.exists():
+    dest = _paper_file_path(digest, "pdf")
+    existing = _resolve_existing_dest(digest)
+    if existing is None:
         dest.write_bytes(data)
+    else:
+        dest = existing
 
     meta = await asyncio.to_thread(extract_pdf_meta, dest)
 
@@ -331,7 +429,8 @@ async def _import_pdf_bytes(
         paper = Paper(
             user_id=user.id, project_id=project_id,
             title=meta.title or title_fallback,
-            authors=meta.authors, file_hash=digest, page_count=meta.page_count,
+            authors=meta.authors, file_hash=digest, file_type="pdf", orig_filename=filename,
+            page_count=meta.page_count,
             year=meta.year, doi=meta.doi, arxiv_id=meta.arxiv_id,
             is_scanned=int(is_scanned),
             ocr_status="pending" if is_scanned else "none",
@@ -455,7 +554,9 @@ def get_paper(paper: Paper = Depends(get_owned_paper)):
 @router.post("/{paper_id}/extract-meta")
 async def extract_meta(paper: Paper = Depends(get_owned_paper), db: Session = Depends(get_db)):
     """从论文 PDF 重跑元数据提取；仅填充当前为空（None/空串）的字段，绝不覆盖已有值。"""
-    path = get_settings().files_dir / f"{paper.file_hash}.pdf"
+    if getattr(paper, "file_type", "pdf") == "markdown":
+        raise HTTPException(status_code=400, detail="Markdown 无需元数据识别")
+    path = _paper_file_path(paper.file_hash, "pdf")
     if not path.exists():
         raise HTTPException(status_code=404, detail="PDF 文件缺失，无法识别")
     meta = await asyncio.to_thread(extract_pdf_meta, path)
@@ -469,6 +570,51 @@ async def extract_meta(paper: Paper = Depends(get_owned_paper), db: Session = De
     db.commit()
     db.refresh(paper)
     return paper_dict(paper)
+
+
+class MarkdownPatch(BaseModel):
+    content: str
+
+
+@router.get("/{paper_id}/markdown")
+def get_markdown(paper: Paper = Depends(get_owned_paper), db: Session = Depends(get_db)):
+    if getattr(paper, "file_type", "pdf") != "markdown":
+        raise HTTPException(status_code=400, detail="仅 Markdown 支持此操作")
+    p = _paper_file_path(paper.file_hash, "markdown")
+    # 兼容旧存量曾以 .pdf 后缀存 md 内容
+    if not p.exists():
+        alt = get_settings().files_dir / f"{paper.file_hash}.pdf"
+        if alt.exists():
+            p = alt
+        else:
+            raise HTTPException(status_code=404, detail="文件不存在")
+    p = ensure_within(get_settings().files_dir, p)
+    try:
+        content = p.read_text(encoding="utf-8-sig")
+    except Exception:
+        raise HTTPException(status_code=500, detail="读取 Markdown 失败")
+    return {"content": content}
+
+
+@router.patch("/{paper_id}/markdown")
+def patch_markdown(body: MarkdownPatch, paper: Paper = Depends(get_owned_paper), db: Session = Depends(get_db)):
+    if getattr(paper, "file_type", "pdf") != "markdown":
+        raise HTTPException(status_code=400, detail="仅 Markdown 支持此操作")
+    if len(body.content.encode("utf-8")) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Markdown 需 ≤5MB")
+    p = _paper_file_path(paper.file_hash, "markdown")
+    if not p.exists():
+        alt = get_settings().files_dir / f"{paper.file_hash}.pdf"
+        if alt.exists():
+            p = alt
+    p = ensure_within(get_settings().files_dir, p)
+    with write_lock:
+        p.write_text(body.content, encoding="utf-8")
+        # 同步 page_count 为行数
+        paper.page_count = max(1, body.content.count("\n") + 1)
+        db.commit()
+        db.refresh(paper)
+    return {"ok": True, "paper": paper_dict(paper)}
 
 
 class PaperPatch(BaseModel):
@@ -529,7 +675,9 @@ def _start_ocr(db: Session, paper: Paper) -> None:
     from app.main import app
 
     settings = get_settings()
-    pdf = settings.files_dir / f"{paper.file_hash}.pdf"
+    pdf = _paper_file_path(paper.file_hash, getattr(paper, "file_type", "pdf") or "pdf")
+    if getattr(paper, "file_type", "pdf") != "pdf":
+        return
     paper.ocr_status = "pending"
     app.state.ocr_manager.enqueue(paper.id, pdf, paper.page_count or 1)
 
@@ -562,8 +710,12 @@ def delete_paper(paper: Paper = Depends(get_owned_paper), db: Session = Depends(
             ref.ref_count -= 1
             if ref.ref_count <= 0:
                 db.delete(ref)
-                f = get_settings().files_dir / f"{paper.file_hash}.pdf"
+                ext = "md" if getattr(paper, "file_type", "pdf") == "markdown" else "pdf"
+                f = get_settings().files_dir / f"{paper.file_hash}.{ext}"
                 f.unlink(missing_ok=True)
+                # 兼容旧孤儿：若另一后缀存在亦清理
+                other = "pdf" if ext == "md" else "md"
+                (get_settings().files_dir / f"{paper.file_hash}.{other}").unlink(missing_ok=True)
         db.delete(paper)
         db.commit()
     return None
@@ -598,6 +750,7 @@ def _range_file(path: Path, request: Request, consume_token: bool, token: str, p
         "Accept-Ranges": "bytes",
         "Content-Disposition": f'inline; filename="{path.name}"',
     }
+    media = "text/markdown" if path.suffix.lower() == ".md" else "application/pdf"
     if range_header and range_header.startswith("bytes="):
         try:
             spec = range_header[6:].split(",")[0].strip()
@@ -608,13 +761,13 @@ def _range_file(path: Path, request: Request, consume_token: bool, token: str, p
             if start > end or start >= size:
                 return StreamingResponse(iter([]), status_code=416, headers={"Content-Range": f"bytes */{size}"})
             headers["Content-Range"] = f"bytes {start}-{end}/{size}"
-            return StreamingResponse(iter_file(start, end), status_code=206, media_type="application/pdf", headers=headers)
+            return StreamingResponse(iter_file(start, end), status_code=206, media_type=media, headers=headers)
         except ValueError:
             pass
     if consume_token:
         file_tokens.consume(token, paper_id, full_get=True)
     headers["Content-Length"] = str(size)
-    return StreamingResponse(iter_file(0, size - 1), status_code=200, media_type="application/pdf", headers=headers)
+    return StreamingResponse(iter_file(0, size - 1), status_code=200, media_type=media, headers=headers)
 
 
 @router.get("/{paper_id}/file")
@@ -625,7 +778,13 @@ def get_paper_file(paper_id: int, token: str = "", request: Request = None, db: 
     if not token:
         raise HTTPException(status_code=401, detail="缺少文件 token")
     settings = get_settings()
-    path = ensure_within(settings.files_dir, settings.files_dir / f"{paper.file_hash}.pdf")
+    ext = "md" if getattr(paper, "file_type", "pdf") == "markdown" else "pdf"
+    path = ensure_within(settings.files_dir, settings.files_dir / f"{paper.file_hash}.{ext}")
     if not path.exists():
-        raise HTTPException(status_code=404, detail="文件不存在")
+        # 兼容旧库：pdf 曾无后缀区分
+        alt = settings.files_dir / f"{paper.file_hash}.pdf"
+        if alt.exists():
+            path = alt
+        else:
+            raise HTTPException(status_code=404, detail="文件不存在")
     return _range_file(path, request, consume_token=True, token=token, paper_id=paper.id)

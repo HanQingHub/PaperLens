@@ -110,6 +110,9 @@ export const api = {
   importArxiv: (arxivId: string) =>
     request<Paper>('/papers/arxiv', { method: 'POST', body: JSON.stringify({ arxiv_id: arxivId }) }),
   paperTags: () => request<{ name: string; count: number }[]>('/papers/tags'),
+  getMarkdown: (id: number) => request<{ content: string }>(`/papers/${id}/markdown`),
+  patchMarkdown: (id: number, content: string) =>
+    request<{ ok: boolean; paper: Paper }>(`/papers/${id}/markdown`, { method: 'PATCH', body: JSON.stringify({ content }) }),
 
   // ── 账号资料 / 查词历史 ──
   updateProfile: (displayName: string) =>
