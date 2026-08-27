@@ -82,6 +82,9 @@ export default function ReaderPage() {
   const pid = Number(params.paperId)
   const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement>(null)
+  // 卸载时 flush 用独立 scrollTop 快照（程序化 scrollTop 赋值不触发 scroll 事件，
+  // 且不依赖 cleanup 时 scrollRef.current 是否已被 React 置 null）
+  const scrollTopRef = useRef<number | null>(null)
 
   // ── reader store ──
   const paper = useReader((s) => s.paper)
@@ -120,6 +123,9 @@ export default function ReaderPage() {
   const rafScroll = useRef(0)
   const lastSave = useRef(0)
   const restoreRef = useRef<{ page: number; ratio: number } | null>(null)
+  // restoreRef 赋值发生在 setDoc（引发 loading/numPages 变化）之后，effect 依赖不足以触发重跑；
+  // 用 restoreTick 状态在赋值后主动 bump，让恢复 effect 消费 restoreRef（修复"重开回第一页"）
+  const [restoreTick, setRestoreTick] = useState(0)
   const [ocrBump, setOcrBump] = useState(0)
   const [loadGen, setLoadGen] = useState(0)
   const loadGenRef = useRef(0)
@@ -191,6 +197,7 @@ export default function ReaderPage() {
         // 用极简占位尺寸，阅读器将走 MarkdownReader 分支
         const fullSizes = [{ w: 860, h: 1200 }]
         useReader.getState().setDoc(p, null as unknown as import('pdfjs-dist').PDFDocumentProxy, fullSizes, 1)
+        useUi.getState().setLastPaper(pid)
         const prog = await api.readingProgress(pid).catch(() => null)
         if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
         restoreRef.current = { page: Math.max(1, prog?.page_no ?? 1), ratio: prog?.scroll_y ?? 0 }
@@ -231,6 +238,7 @@ export default function ReaderPage() {
       const first = sizes[0] ?? { w: 612, h: 792 }
       const fullSizes = Array.from({ length: doc.numPages }, (_, i) => sizes[i] ?? first)
       useReader.getState().setDoc(p, doc!, fullSizes, doc.numPages)
+      useUi.getState().setLastPaper(pid)
 
       const BATCH = 16
       for (let start = firstCount; start < doc!.numPages; start += BATCH) {
@@ -261,6 +269,7 @@ export default function ReaderPage() {
       const ratio = Math.max(0, Math.min(1, prog?.scroll_y ?? 0))
       await saveProgress(pid, rp, ratio, true).catch(() => {})
       restoreRef.current = { page: rp, ratio }
+      setRestoreTick((t) => t + 1)
     }
 
     ;(async () => {
@@ -292,6 +301,14 @@ export default function ReaderPage() {
       cancelled = true
       abort.abort()
       ;(task as unknown as { destroy: () => Promise<void> } | null)?.destroy()?.catch(() => {})
+      // 卸载前刷新一次进度：读独立 scrollTopRef（程序化恢复不触发 scroll 事件，null=本次未滚动，跳过避免 ratio=0 覆盖）
+      const st0 = useReader.getState()
+      const pg = st0.mode === 'continuous' ? st0.pageSizes[st0.currentPage - 1] : undefined
+      if (pg && scrollTopRef.current !== null) {
+        const top = pageTopOf(st0.currentPage - 1, st0.pageSizes, st0.scale)
+        const ratio = Math.max(0, Math.min(1, (scrollTopRef.current - top) / Math.max(1, pg.h * st0.scale)))
+        saveProgress(pid, st0.currentPage, ratio).catch(() => {})
+      }
       // 卸载即清 store：已销毁的 pdf 若留在 store，会被下一次挂载首帧 render 的
       // effect 闭包捕获（reset 在 effect 里执行，晚于 render），同步调用其方法即抛
       // messageHandler 空指针（sendWithPromise）冒泡至 ErrorBoundary
@@ -320,7 +337,7 @@ export default function ReaderPage() {
     restoreRef.current = null
     const t = requestAnimationFrame(() => scrollToPosition(page, ratio))
     return () => cancelAnimationFrame(t)
-  }, [loading, numPages, scrollToPosition])
+  }, [loading, numPages, restoreTick, scrollToPosition])
 
   // ── 批注加载 ──
   useEffect(() => {
@@ -659,6 +676,7 @@ export default function ReaderPage() {
       const st = useReader.getState()
       if (!el || st.mode !== 'continuous' || !st.pageSizes.length) return
       const viewTop = el.scrollTop
+      scrollTopRef.current = viewTop
       const viewBot = viewTop + el.clientHeight
       const mid = viewTop + el.clientHeight / 2
       let acc = 0
@@ -761,7 +779,7 @@ export default function ReaderPage() {
           >
             重试
           </button>
-          <button className="btn" onClick={() => navigate('/')}>
+          <button className="btn" onClick={() => { useUi.getState().clearLastPaper(); navigate('/') }}>
             返回文库
           </button>
         </div>
@@ -773,7 +791,7 @@ export default function ReaderPage() {
     <div className={`relative flex h-full flex-col overflow-hidden bg-bg-soft ${linking ? 'reader-linking' : ''}`}>
       {/* ── 阅读器顶栏 ── */}
       <div className="glass z-20 flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
-        <button className="rd-tbtn" title="返回文库" onClick={() => navigate('/')}>
+        <button className="rd-tbtn" title="返回文库" onClick={() => { useUi.getState().clearLastPaper(); navigate('/') }}>
           <I d={icons.back} />
         </button>
         <div className="mx-1 flex min-w-0 flex-1 items-center gap-2">

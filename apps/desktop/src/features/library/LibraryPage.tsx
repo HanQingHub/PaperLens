@@ -59,6 +59,9 @@ export default function LibraryPage() {
   const [arxivOpen, setArxivOpen] = useState(false)
   const [arxivInput, setArxivInput] = useState('')
   const [arxivBusy, setArxivBusy] = useState(false)
+  const [mdOpen, setMdOpen] = useState(false)
+  const [mdTitle, setMdTitle] = useState('')
+  const [mdBusy, setMdBusy] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   // FLIP：cols 变化导致网格重排时，卡片从旧位置平滑滑到新位置（消除挤压瞬移跳变）。
   // 仅作用于位移；visibleItems 切片（展开其余）不参与。动效关闭时直接跳过。
@@ -476,6 +479,25 @@ export default function LibraryPage() {
     }
   }
 
+  const createMarkdown = async () => {
+    if (mdBusy) return // 防重入
+    const title = mdTitle.trim()
+    if (!title) return
+    setMdBusy(true)
+    try {
+      const p = await api.createMarkdown(title, selectedProjectId ?? undefined)
+      toast(`已创建：${p.title}（Markdown）`, 'ok')
+      setMdOpen(false)
+      setMdTitle('')
+      refreshPapers()
+      refreshProjects()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '创建失败', 'error')
+    } finally {
+      setMdBusy(false)
+    }
+  }
+
   /** 全库标签聚合（独立端点，不受当前 q/tag 筛选影响——否则筛选后下拉互斥死锁） */
   const [allTags, setAllTags] = useState<{ name: string; count: number }[]>([])
   useEffect(() => {
@@ -679,6 +701,35 @@ export default function LibraryPage() {
               e.target.value = ''
             }}
           />
+          {mdOpen ? (
+            <div className="relative w-44">
+              <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px] font-medium text-accent">新建</span>
+              <input
+                className="input h-7 pr-7 pl-11! text-[13px]"
+                placeholder="Markdown 标题"
+                value={mdTitle}
+                autoFocus
+                onChange={(e) => setMdTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') createMarkdown()
+                  if (e.key === 'Escape') setMdOpen(false)
+                }}
+                onBlur={() => {
+                  if (!mdBusy && !mdTitle) setMdOpen(false)
+                }}
+              />
+              {mdBusy && (
+                <span className="spinner absolute right-2 top-1/2 -translate-y-1/2" style={{ width: 12, height: 12, borderWidth: 1.5 }} />
+              )}
+            </div>
+          ) : (
+            <button className="btn h-7 gap-1 whitespace-nowrap px-2.5 text-xs" onClick={() => setMdOpen(true)} disabled={uploading} title="新建 Markdown 文件">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8" />
+              </svg>
+              Markdown
+            </button>
+          )}
           {arxivOpen ? (
             <div className="relative w-44">
               <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px] font-medium text-accent">arXiv</span>

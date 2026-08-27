@@ -1,7 +1,7 @@
 {
   "name": "paperlens-desktop",
   "private": true,
-  "version": "0.6.3",
+  "version": "0.6.4",
   "author": "筝青寒",
   "type": "module",
   "scripts": {

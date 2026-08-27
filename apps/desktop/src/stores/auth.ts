@@ -2,7 +2,7 @@
 import { create } from 'zustand'
 import { api, ApiError, setToken, waitForBackend } from '../api/client'
 import type { AppSettings, User } from '../api/types'
-import { upsertAccount, removeAccount } from '../features/auth/AuthPage'
+import { upsertAccount, removeAccount } from '../features/auth/accounts'
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'warm',

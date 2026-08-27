@@ -109,6 +109,8 @@ export const api = {
   fileToken: (id: number) => request<{ token: string; url: string }>(`/papers/${id}/file-token`, { method: 'POST' }),
   importArxiv: (arxivId: string) =>
     request<Paper>('/papers/arxiv', { method: 'POST', body: JSON.stringify({ arxiv_id: arxivId }) }),
+  createMarkdown: (title: string, projectId?: number) =>
+    request<Paper>('/papers/markdown', { method: 'POST', body: JSON.stringify({ title, project_id: projectId ?? null }) }),
   paperTags: () => request<{ name: string; count: number }[]>('/papers/tags'),
   getMarkdown: (id: number) => request<{ content: string }>(`/papers/${id}/markdown`),
   patchMarkdown: (id: number, content: string) =>

@@ -14,8 +14,14 @@ interface Props {
 
 type Mode = 'preview' | 'edit' | 'split'
 
+const MD_FONT_SIZES = [12, 13, 14, 15, 16, 18, 20, 22, 24] as const
+
 export default function MarkdownReader({ paperId }: Props) {
   const [mode, setMode] = useState<Mode>(() => (localStorage.getItem('pl_md_mode') as Mode) || 'preview')
+  const [mdFont, setMdFont] = useState<number>(() => {
+    const v = Number(localStorage.getItem('pl_md_fontsize'))
+    return (MD_FONT_SIZES as readonly number[]).includes(v) ? v : 14
+  })
   const [content, setContent] = useState('')
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(true)
@@ -25,6 +31,10 @@ export default function MarkdownReader({ paperId }: Props) {
   useEffect(() => {
     localStorage.setItem('pl_md_mode', mode)
   }, [mode])
+
+  useEffect(() => {
+    localStorage.setItem('pl_md_fontsize', String(mdFont))
+  }, [mdFont])
 
   useEffect(() => {
     let cancelled = false
@@ -113,6 +123,31 @@ export default function MarkdownReader({ paperId }: Props) {
             分栏
           </button>
         </div>
+        <div className="ml-2 flex shrink-0 items-center rounded-md border border-border p-0.5">
+          <button
+            className="rd-seg text-[10px] leading-none"
+            title="减小字号 (A−)"
+            disabled={mdFont <= MD_FONT_SIZES[0]}
+            onClick={() =>
+              setMdFont((f) => MD_FONT_SIZES[Math.max(0, MD_FONT_SIZES.indexOf(f as (typeof MD_FONT_SIZES)[number]) - 1)] ?? f)
+            }
+            aria-label="减小字号"
+          >
+            A−
+          </button>
+          <span className="min-w-9 shrink-0 text-center text-[11px] tabular-nums text-text-faint">{mdFont}px</span>
+          <button
+            className="rd-seg text-[10px] leading-none"
+            title="增大字号 (A＋)"
+            disabled={mdFont >= MD_FONT_SIZES[MD_FONT_SIZES.length - 1]}
+            onClick={() =>
+              setMdFont((f) => MD_FONT_SIZES[Math.min(MD_FONT_SIZES.length - 1, MD_FONT_SIZES.indexOf(f as (typeof MD_FONT_SIZES)[number]) + 1)] ?? f)
+            }
+            aria-label="增大字号"
+          >
+            A＋
+          </button>
+        </div>
         <span className="ml-2 shrink-0 text-xs text-text-faint">{draft.length} 字符</span>
         <div className="ml-auto flex items-center gap-1.5">
           {draft !== content && <span className="text-xs text-accent">● 未保存</span>}
@@ -126,7 +161,8 @@ export default function MarkdownReader({ paperId }: Props) {
         {(mode === 'edit' || mode === 'split') && (
           <div className={`${mode === 'split' ? 'w-1/2 border-r border-border' : 'w-full'} flex min-h-0 flex-col`}>
             <textarea
-              className="h-full w-full resize-none border-0 bg-bg p-4 font-mono text-[13px] leading-6 text-text outline-none"
+              className="h-full w-full resize-none border-0 bg-bg p-4 font-mono leading-6 text-text outline-none"
+              style={{ fontSize: mdFont }}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={onKeyDown}
@@ -137,7 +173,7 @@ export default function MarkdownReader({ paperId }: Props) {
         )}
         {(mode === 'preview' || mode === 'split') && (
           <div className={`${mode === 'split' ? 'w-1/2' : 'w-full'} overflow-auto bg-bg`}>
-            <div className="markdown-body">
+            <div className="markdown-body" style={{ fontSize: mdFont }}>
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeSlug, rehypeHighlight]}

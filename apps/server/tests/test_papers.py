@@ -350,3 +350,29 @@ def test_upload_uniform_font_falls_back_to_filename(client, tmp_path):
         pages=(("Just a uniform body line",), ("Another uniform body line here",)),
     )
     assert paper["title"] == "uniform-font-fallback"
+
+
+def test_create_markdown(client, tmp_path, data_dir):
+    """新建空 Markdown：落库 + 物理文件唯一（同名不共享）+ 初始内容含标题。"""
+    token = register(client)
+    r = client.post("/api/papers/markdown", json={"title": "我的笔记"}, headers=auth(token))
+    assert r.status_code == 201, r.text
+    p = r.json()
+    assert p["file_type"] == "markdown"
+    assert p["title"] == "我的笔记"
+    assert (data_dir / "files" / f"{p['file_hash']}.md").exists()
+
+    # 同名再建：物理文件必须唯一（digest 含 uuid 注释），避免 PATCH 写穿互相污染
+    r2 = client.post("/api/papers/markdown", json={"title": "我的笔记"}, headers=auth(token))
+    p2 = r2.json()
+    assert p2["id"] != p["id"]
+    assert p2["file_hash"] != p["file_hash"]
+
+    # 内容校验：首行 # 标题，且不含 uuid 泄露给用户可见预览（注释在预览不可见，属文件内部）
+    r = client.get(f"/api/papers/{p['id']}/markdown", headers=auth(token))
+    assert r.json()["content"].startswith("# 我的笔记")
+    # PATCH 后另一篇不受影响（物理隔离）
+    client.patch(f"/api/papers/{p['id']}/markdown",
+                 json={"content": "# 我的笔记\n\n改了这篇"}, headers=auth(token))
+    r3 = client.get(f"/api/papers/{p2['id']}/markdown", headers=auth(token))
+    assert "改了这篇" not in r3.json()["content"]

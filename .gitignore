@@ -4,6 +4,7 @@ apps/desktop/dist/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/server-dist/
 apps/desktop/src-tauri/ocr-dist/
+apps/desktop/src-tauri/resources/
 apps/desktop/node_modules/
 node_modules/
 

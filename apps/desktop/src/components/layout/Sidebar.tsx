@@ -25,12 +25,25 @@ const icons = {
 
 /** 导航内容：标签始终渲染，折叠时由 CSS 渐隐（宽度过渡期间无布局跳变） */
 function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => void }) {
-  const { rightTab, openPanel } = useUi()
+  const { rightTab, openPanel, lastPaperId, clearLastPaper } = useUi()
   const navigate = useNavigate()
   const location = useLocation()
   const hasUpdate = useUpdater((s) => s.update !== null && s.phase !== 'idle')
 
   const itemCls = (active: boolean) => `pl-nav-item${active ? ' pl-nav-item--active' : ''}`
+
+  // 文库导航：在读（/reader/*）时点击 = 等同「返回文库」（清除记忆回列表）；
+  // 在设置/复习等非文库页点击时，若本会话有打开过的论文则恢复阅读，否则进列表。
+  const onLibraryClick = (e: React.MouseEvent) => {
+    if (location.pathname.startsWith('/reader/')) {
+      clearLastPaper()
+      return // 默认跳 /，显式退出
+    }
+    if (location.pathname !== '/' && lastPaperId != null) {
+      e.preventDefault()
+      navigate(`/reader/${lastPaperId}`)
+    }
+  }
 
   return (
     <>
@@ -42,7 +55,7 @@ function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => voi
 
       {/* 导航 */}
       <nav className="flex flex-col gap-0.5 overflow-hidden p-2">
-        <NavLink to="/" className={({ isActive }) => itemCls(isActive)} title="文库">
+        <NavLink to="/" onClick={onLibraryClick} className={({ isActive }) => itemCls(isActive || location.pathname.startsWith('/reader/'))} title="文库">
           <span className="pl-nav-icon"><Icon path={icons.library} /></span>
           <span className="pl-side-label">文库</span>
         </NavLink>

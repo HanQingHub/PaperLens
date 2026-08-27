@@ -130,7 +130,7 @@
   padding: 12px 0;
   overflow-x: auto;
   font-family: 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 13px;
+  font-size: 0.92em;
   line-height: 1.6;
   background: transparent;
   color: inherit;
@@ -160,7 +160,7 @@
 
 /* 表格 — 对标 p1/p2 症状→根因速查表 */
 .markdown-body .md-table-wrap { overflow-x: auto; margin: 16px 0; border-radius: 8px; border: 1px solid var(--border); }
-.markdown-body table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 520px; }
+.markdown-body table { width: 100%; border-collapse: collapse; font-size: 0.92em; min-width: 520px; }
 .markdown-body th {
   background: var(--panel-soft);
   font-weight: 650;

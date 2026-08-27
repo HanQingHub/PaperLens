@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -543,6 +543,26 @@ async def import_arxiv(body: ArxivIn, user: User = Depends(get_current_user),
     if len(resp.content) < 1024 or not resp.content[:5] == b"%PDF-":
         raise HTTPException(status_code=502, detail="arXiv 返回内容不是有效 PDF")
     paper = await _import_pdf_bytes(resp.content, user, db, filename=f"arXiv {base_id}.pdf")
+    return paper_dict(paper)
+
+
+class CreateMarkdownIn(BaseModel):
+    title: str = Field(default="未命名文档", min_length=1, max_length=200)
+    project_id: int | None = None
+
+
+@router.post("/markdown", status_code=201)
+async def create_markdown(body: CreateMarkdownIn, user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    """在文库新建一个空 Markdown 文件。内容嵌入 uuid 注释保证物理文件唯一（即使同名），
+    预览不可见；PATCH 写同一 file_hash 文件不重算 hash，故必须内容唯一避免跨论文共享。"""
+    import uuid
+
+    content = f"# {body.title}\n\n"
+    data = (content + f"<!-- paperlens:{uuid.uuid4().hex[:8]} -->\n").encode("utf-8")
+    paper = await _import_markdown_bytes(
+        data, user, db, project_id=body.project_id, filename=f"{body.title}.md",
+    )
     return paper_dict(paper)
 
 
