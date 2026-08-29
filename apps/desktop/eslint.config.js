@@ -8,19 +8,9 @@ export default tseslint.config(
     files: ['src/**/*.{ts,tsx}'],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
+      // 测试文件不在 tsconfig.app 内（tsc -b 不查测试），由 src/__tests__/tsconfig.json 供 project service 解析
       parserOptions: {
-        projectService: {
-          allowDefaultProject: [
-            "src/__tests__/coords.test.ts",
-            "src/__tests__/dnd.test.ts",
-            "src/__tests__/hoverCardPos.test.ts",
-            "src/__tests__/librarySort.test.ts",
-            "src/__tests__/markdownEdit.test.ts",
-            "src/__tests__/ocrOverlay.test.ts",
-            "src/__tests__/ocrPollStatus.test.ts",
-            "src/__tests__/sentenceContext.test.ts",
-          ],
-        },
+        projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
     },

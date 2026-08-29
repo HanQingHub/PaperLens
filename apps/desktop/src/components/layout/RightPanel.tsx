@@ -3,13 +3,11 @@ import { useUi, type RightPanelTab } from '../../stores/ui'
 import { StatsPanel } from '../../features/stats/StatsPanel'
 import { AnnotationsPanel } from '../../features/annotations/AnnotationsPanel'
 import { GlossaryPanel } from '../../features/glossary/GlossaryPanel'
-import WordsPanel from '../../features/words/WordsPanel'
 
 const TITLES: Record<Exclude<RightPanelTab, null>, string> = {
   annotations: '批注',
   stats: '统计',
   glossary: '术语表',
-  words: '生词库',
 }
 
 export default function RightPanel() {
@@ -31,7 +29,6 @@ export default function RightPanel() {
         {rightTab === 'annotations' && <AnnotationsPanel />}
         {rightTab === 'stats' && <StatsPanel />}
         {rightTab === 'glossary' && <GlossaryPanel />}
-        {rightTab === 'words' && <WordsPanel />}
       </div>
     </aside>
   )

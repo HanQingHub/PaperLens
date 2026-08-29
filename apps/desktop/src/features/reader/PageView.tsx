@@ -336,6 +336,7 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
   // ── 生词悬停释义卡 + 高亮词点击查询（去 i 化：caret 探针 + 词边界反查）──
   const [hoverWord, setHoverWord] = useState<{ lemma: string; rect: DOMRect } | null>(null)
   const hoverTimer = useRef(0)
+  const hoverCardRef = useRef<HTMLDivElement | null>(null)
   const hideHover = useCallback(() => {
     window.clearTimeout(hoverTimer.current)
     setHoverWord(null)
@@ -528,8 +529,17 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
         hideHover()
         onStageMouseDown(e)
       }}
-      onMouseOver={onWordHover}
-      onMouseOut={hideHover}
+      onMouseOver={(e) => {
+        // 指针在悬停卡内移动时不重算 hover（卡内中文文本会 wordAtPoint 落空而误收卡）
+        if (hoverCardRef.current?.contains(e.target as Node)) return
+        onWordHover(e)
+      }}
+      onMouseOut={(e) => {
+        // 指针从词语移入悬停卡（卡片与词之间有间隙）时不收卡，保证卡内按钮可达
+        const rt = e.relatedTarget as Node | null
+        if (rt && hoverCardRef.current?.contains(rt)) return
+        hideHover()
+      }}
       onClick={(e) => {
         // 高亮生词词元 → 释义查询闭环；其余点击走句子批注浮条命中
         if (!onWordClick(e)) onStageClick(e)
@@ -653,7 +663,9 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
       </div>
 
       {/* 生词悬停释义卡（fixed 定位，挂页内但相对视口） */}
-      {visible && hoverWord && <WordHoverCard lemma={hoverWord.lemma} anchorRect={hoverWord.rect} onClose={hideHover} />}
+      {visible && hoverWord && (
+        <WordHoverCard lemma={hoverWord.lemma} anchorRect={hoverWord.rect} onClose={hideHover} cardRef={hoverCardRef} />
+      )}
     </div>
   )
 })

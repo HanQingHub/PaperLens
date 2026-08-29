@@ -82,7 +82,7 @@ export interface Word {
   group_name: string | null
   ease: number
   interval_days: number
-  due_at: string
+  due_at: string | null
   review_count: number
   first_seen_at: string
   last_seen_at: string

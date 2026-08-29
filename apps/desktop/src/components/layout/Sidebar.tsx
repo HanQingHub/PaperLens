@@ -25,7 +25,7 @@ const icons = {
 
 /** 导航内容：标签始终渲染，折叠时由 CSS 渐隐（宽度过渡期间无布局跳变） */
 function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => void }) {
-  const { rightTab, openPanel, lastPaperId, clearLastPaper } = useUi()
+  const { rightTab, openPanel, openReview, lastPaperId, clearLastPaper } = useUi()
   const navigate = useNavigate()
   const location = useLocation()
   const hasUpdate = useUpdater((s) => s.update !== null && s.phase !== 'idle')
@@ -59,7 +59,7 @@ function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => voi
           <span className="pl-nav-icon"><Icon path={icons.library} /></span>
           <span className="pl-side-label">文库</span>
         </NavLink>
-        <NavLink to="/review" className={({ isActive }) => itemCls(isActive || location.pathname === '/review')} title="生词复习">
+        <NavLink to="/review" onClick={() => openReview('review')} className={({ isActive }) => itemCls(isActive || location.pathname === '/review')} title="生词复习">
           <span className="pl-nav-icon"><Icon path={icons.review} /></span>
           <span className="pl-side-label">生词复习</span>
         </NavLink>

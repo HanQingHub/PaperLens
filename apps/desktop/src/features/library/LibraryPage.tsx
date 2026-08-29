@@ -7,9 +7,10 @@ import { api } from '../../api/client'
 import type { Paper, Project } from '../../api/types'
 import { useAuth } from '../../stores/auth'
 import { useLibraryUi } from '../../stores/libraryUi'
-import type { LibraryView } from './sort'
+import type { LibraryView, SortKey } from './sort'
 import { ConfirmModal } from '../shared/Modal'
 import { toast } from '../shared/Toast'
+import Dropdown from '../shared/Dropdown'
 import ProjectRail from './ProjectRail'
 import PaperCard, { type OcrProgress } from './PaperCard'
 import EditPaperModal from './EditPaperModal'
@@ -23,6 +24,12 @@ const VIEW_TABS: { key: LibraryView; label: string }[] = [
   { key: 'project', label: '项目分类' },
   { key: 'recent', label: '最近打开' },
   { key: 'favorite', label: '收藏' },
+]
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'created', label: '按上传时间' },
+  { key: 'title', label: '按标题' },
+  { key: 'last_opened', label: '按最近打开' },
 ]
 
 export default function LibraryPage() {
@@ -52,8 +59,6 @@ export default function LibraryPage() {
   const [cols, setCols] = useState(4)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [tagFilter, setTagFilter] = useState<string | null>(null)
-  const [tagMenuOpen, setTagMenuOpen] = useState(false)
-  const tagMenuRef = useRef<HTMLDivElement>(null)
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false)
   const [arxivOpen, setArxivOpen] = useState(false)
@@ -507,23 +512,6 @@ export default function LibraryPage() {
       .catch(() => {})
   }, [papers])
 
-  // 标签下拉 OutsideClick/Esc 关闭（ref 含触发按钮 + 面板，避免按钮点开后立即被 outside 误关）
-  useEffect(() => {
-    if (!tagMenuOpen) return
-    const onDown = (e: MouseEvent) => {
-      if (!tagMenuRef.current?.contains(e.target as Node)) setTagMenuOpen(false)
-    }
-    const onEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setTagMenuOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onEsc)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onEsc)
-    }
-  }, [tagMenuOpen])
-
   /** groupKey 传入时（project 视图）卡片启用拖拽；其他视图纯展示 */
   const cardList = (list: Paper[], groupKey?: GroupKey) =>
     list.map((p, idx) => (
@@ -614,56 +602,28 @@ export default function LibraryPage() {
           {view === 'project' ? (
             <span className="rounded-md bg-panel px-2.5 py-1 text-accent shadow-sm font-medium">手动排序</span>
           ) : (
-            <select
-              className="rounded-md bg-transparent px-2.5 py-1 text-xs outline-none"
-              value={sort}
-              onChange={(e) => setSort(e.target.value as typeof sort)}
-              title="排序"
-            >
-              <option value="created">按上传时间</option>
-              <option value="title">按标题</option>
-              <option value="last_opened">按最近打开</option>
-            </select>
+            <Dropdown
+              triggerClass="rounded-md px-2.5 py-1 text-xs text-text-faint transition-colors hover:text-text-soft"
+              label={SORT_OPTIONS.find((o) => o.key === sort)?.label}
+              items={SORT_OPTIONS.map((o) => ({ key: o.key, label: o.label, active: o.key === sort }))}
+              onSelect={(k) => setSort(k as SortKey)}
+            />
           )}
           <div className="h-4 w-px bg-border" />
-          <div className="relative" ref={tagMenuRef}>
-            <button
-              className={`rounded-md px-2.5 py-1 ${tagFilter ? 'bg-panel text-accent shadow-sm font-medium' : 'text-text-faint hover:text-text-soft'}`}
-              onClick={() => setTagMenuOpen((v) => !v)}
-              aria-expanded={tagMenuOpen}
-            >
-              {tagFilter ? `#${tagFilter}` : '标签'} ▾
-            </button>
-            {tagMenuOpen && (
-              <div className="absolute right-0 z-20 mt-1 max-h-56 w-48 overflow-auto rounded-lg border bg-panel p-1 shadow">
-                <button
-                  className="w-full rounded px-2 py-1 text-left text-xs hover:bg-bg-soft"
-                  onClick={() => {
-                    setTagFilter(null)
-                    setTagMenuOpen(false)
-                  }}
-                >
-                  全部标签
-                </button>
-                {allTags.map((t) => (
-                  <button
-                    key={t.name}
-                    className="flex w-full justify-between rounded px-2 py-1 text-left text-xs hover:bg-bg-soft"
-                    onClick={() => {
-                      setTagFilter(t.name)
-                      setTagMenuOpen(false)
-                    }}
-                  >
-                    <span>#{t.name}</span>
-                    <span className="text-text-faint">{t.count}</span>
-                  </button>
-                ))}
-                {allTags.length === 0 && (
-                  <span className="block px-2 py-1 text-xs text-text-faint">暂无标签</span>
-                )}
-              </div>
-            )}
-          </div>
+          <Dropdown
+            className="relative"
+            triggerClass={`rounded-md px-2.5 py-1 ${
+              tagFilter ? 'bg-panel text-accent shadow-sm font-medium' : 'text-text-faint transition-colors hover:text-text-soft'
+            }`}
+            label={tagFilter ? `#${tagFilter}` : '标签'}
+            items={[
+              { key: '__all', label: '全部标签', active: !tagFilter },
+              ...allTags.map((t) => ({ key: t.name, label: `#${t.name}`, hint: t.count, active: tagFilter === t.name })),
+            ]}
+            onSelect={(k) => setTagFilter(k === '__all' ? null : k)}
+            panelClass="right-0 top-full mt-1 max-h-56 w-48 overflow-auto"
+            emptyText="暂无标签"
+          />
         </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">

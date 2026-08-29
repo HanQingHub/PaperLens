@@ -883,7 +883,15 @@ export default function ReaderPage() {
                 )}
               </span>
             </button>
-            <button className="rd-tbtn" title="生词库" onClick={() => openPanel('words')}>
+            <button
+              className="rd-tbtn"
+              title="生词库"
+              onClick={() => {
+                useUi.getState().closePanel() // 先收右侧面板，避免跳转后 paint 前闪现一帧面板
+                useUi.getState().openReview('library')
+                navigate('/review')
+              }}
+            >
               <I d={icons.words} />
             </button>
             <button className="rd-tbtn" title="本文术语表" onClick={() => openPanel('glossary')}>
