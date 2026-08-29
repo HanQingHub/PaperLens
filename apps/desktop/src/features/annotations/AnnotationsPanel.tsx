@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, patchAnnotation, saveBlobWithDialog } from '../../api/client'
 import { parseAnchor, type Annotation, type Excerpt } from '../../api/types'
 import { useReaderBus } from '../../stores/readerBus'
+import { useReader } from '../../stores/readerStore'
 import { toast } from '../shared/Toast'
 
 const COLOR_HEX: Record<string, string> = {
@@ -98,6 +99,9 @@ export function AnnotationsPanel() {
     try {
       await api.deleteAnnotation(id)
       setAnnotations((list) => list.filter((x) => x.id !== id))
+      if (paperId != null && useReaderBus.getState().paperId === paperId) {
+        useReader.getState().removeAnnotation(id)
+      }
       bumpAnnotations()
       toast('批注已删除', 'ok')
     } catch (e) {

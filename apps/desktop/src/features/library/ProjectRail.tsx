@@ -212,11 +212,9 @@ export default function ProjectRail({ projects, activeProjectId, onSelect, onCha
               ) : (
                 <>
                   <span className="flex-1 truncate">{p.name}</span>
-                  {p.paper_count != null && (
-                    <span className="pl-rail-badge" title={`${p.paper_count} 篇论文`}>
-                      {p.paper_count}
-                    </span>
-                  )}
+                  <span className="pl-rail-badge" title={`${p.paper_count ?? 0} 篇论文`}>
+                    {p.paper_count ?? 0}
+                  </span>
                   <button
                     className="hidden shrink-0 rounded px-1 text-xs text-text-faint hover:text-danger group-hover:block"
                     title="删除项目"

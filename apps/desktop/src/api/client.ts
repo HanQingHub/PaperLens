@@ -164,7 +164,7 @@ export const api = {
   },
 
   // ── 批注 ──
-  annotations: (paperId: number) => request<Annotation[]>(`/papers/${paperId}/annotations`),
+  annotations: (paperId: number, opts?: { signal?: AbortSignal }) => request<Annotation[]>(`/papers/${paperId}/annotations`, { signal: opts?.signal }),
   updateAnnotation: (id: number, patch: Partial<Annotation>) =>
     request<Annotation>(`/annotations/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteAnnotation: (id: number) => request<void>(`/annotations/${id}`, { method: 'DELETE' }),

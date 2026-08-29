@@ -271,7 +271,7 @@ export default function LibraryPage() {
     onUpload: (files, projectId) => handleFiles(files, projectId),
     onRefresh: fetchPapers,
     onCountsChange: (movedIds, toProject) => {
-      // 乐观计数：跨组移动后本地增减 paper_count，免全量重拉闪烁
+      // 乐观计数：跨组移动后本地增减 paper_count，免全量重拉闪烁；权威以 onProjectsRefresh 重拉为准
       setProjects((ps) =>
         ps.map((proj) => {
           let c = proj.paper_count ?? 0
@@ -281,6 +281,7 @@ export default function LibraryPage() {
         }),
       )
     },
+    onProjectsRefresh: refreshProjects,
   })
   // 受控刷新入口：持久化在途时抑制（P0-1），结束后补一次收敛
   const refreshPapers = dnd.refresh

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -10,8 +11,11 @@ from app.api.deps import get_current_user
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-def project_dict(p: Project) -> dict:
-    return {"id": p.id, "name": p.name, "sort_order": p.sort_order, "created_at": p.created_at}
+def project_dict(p: Project, paper_count: int | None = None) -> dict:
+    d = {"id": p.id, "name": p.name, "sort_order": p.sort_order, "created_at": p.created_at}
+    if paper_count is not None:
+        d["paper_count"] = paper_count
+    return d
 
 
 class ProjectIn(BaseModel):
@@ -31,7 +35,13 @@ def list_projects(user: User = Depends(get_current_user), db: Session = Depends(
         .order_by(Project.sort_order, Project.id)
         .all()
     )
-    return [project_dict(p) for p in rows]
+    counts = dict(
+        db.query(Paper.project_id, func.count(Paper.id))
+        .filter(Paper.user_id == user.id, Paper.project_id.is_not(None))
+        .group_by(Paper.project_id)
+        .all()
+    )
+    return [project_dict(p, counts.get(p.id, 0)) for p in rows]
 
 
 @router.post("", status_code=201)
@@ -42,7 +52,7 @@ def create_project(body: ProjectIn, user: User = Depends(get_current_user), db: 
     p = Project(user_id=user.id, name=name, sort_order=body.sort_order, created_at=now_iso())
     db.add(p)
     db.commit()
-    return project_dict(p)
+    return project_dict(p, 0)
 
 
 def _owned_project(db: Session, user: User, project_id: int) -> Project:
@@ -63,13 +73,14 @@ def patch_project(project_id: int, body: ProjectPatch, user: User = Depends(get_
     if body.sort_order is not None:
         p.sort_order = body.sort_order
     db.commit()
-    return project_dict(p)
+    cnt = db.query(func.count(Paper.id)).filter(Paper.user_id == user.id, Paper.project_id == p.id).scalar() or 0
+    return project_dict(p, cnt)
 
 
 @router.delete("/{project_id}", status_code=204)
 def delete_project(project_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     p = _owned_project(db, user, project_id)
-    if db.query(Paper).filter(Paper.project_id == p.id).count() > 0:
+    if db.query(Paper).filter(Paper.project_id == p.id, Paper.user_id == user.id).count() > 0:
         raise HTTPException(status_code=409, detail="项目下仍有论文，无法删除")
     db.delete(p)
     db.commit()

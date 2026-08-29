@@ -31,10 +31,12 @@ interface Options {
   onRefresh: () => Promise<void> | void
   /** 跨组移动成功后的乐观计数回调（movedIds, 目标组）；组内重排不触发 */
   onCountsChange?: (movedIds: number[], toProject: GroupKey) => void
+  /** 跨组移动成功后的权威项目计数重拉（读时聚合） */
+  onProjectsRefresh?: () => Promise<void> | void
 }
 
 export function useLibraryDnd({
-  papers, groups, enabled, pageUploadProjectId, onPapersChange, onUpload, onRefresh, onCountsChange,
+  papers, groups, enabled, pageUploadProjectId, onPapersChange, onUpload, onRefresh, onCountsChange, onProjectsRefresh,
 }: Options) {
   const [draggingId, setDraggingId] = useState<number | null>(null)
   const [overGroupKey, setOverGroupKey] = useState<GroupKey | null>(null)
@@ -58,6 +60,9 @@ export function useLibraryDnd({
   onRefreshRef.current = onRefresh
   const onCountsChangeRef = useRef(onCountsChange)
   onCountsChangeRef.current = onCountsChange
+  const onProjectsRefreshRef = useRef(onProjectsRefresh)
+  onProjectsRefreshRef.current = onProjectsRefresh
+  const pendingProjectsRefreshRef = useRef(false)
 
   // 拖拽状态机 ref（drop 时读取，绕过 React 批处理时序）
   const draggingIdRef = useRef<number | null>(null)
@@ -98,12 +103,18 @@ export function useLibraryDnd({
       persistingRef.current = false
       const failed = results.some((r) => r.status === 'rejected')
       const skipped = skippedRefreshRef.current
+      const needProjectsRefresh = pendingProjectsRefreshRef.current
       skippedRefreshRef.current = false
+      pendingProjectsRefreshRef.current = false
       if (failed) {
         toast('排序保存失败', 'error')
         onRefreshRef.current()
+        if (needProjectsRefresh) onProjectsRefreshRef.current?.()
       } else if (skipped) {
         onRefreshRef.current()
+        if (needProjectsRefresh) onProjectsRefreshRef.current?.()
+      } else if (needProjectsRefresh) {
+        onProjectsRefreshRef.current?.()
       }
     })
   }, [])
@@ -145,7 +156,10 @@ export function useLibraryDnd({
     if (patches.length === 0) return // 拖回原位：no-op
     // 乐观更新（即时重排），再异步持久化
     onPapersChangeRef.current(papersRef.current.map((p) => changes.get(p.id) ?? p))
-    if (src.key !== tgt.key) onCountsChangeRef.current?.([paperId], toGroup)
+    if (src.key !== tgt.key) {
+      onCountsChangeRef.current?.([paperId], toGroup)
+      pendingProjectsRefreshRef.current = true
+    }
     persist(patches)
   }, [persist])
 

@@ -130,6 +130,8 @@ export default function ReaderPage() {
   const [loadGen, setLoadGen] = useState(0)
   const loadGenRef = useRef(0)
   const [reloadKey, setReloadKey] = useState(0)
+  const annotationsVersion = useReaderBus((s) => s.annotationsVersion)
+  const fetchAnnoSeq = useRef(0)
 
   // ── 两阶段缩放：scale 立即驱动布局与 CSS 位图拉伸（即时、零重渲染），
   // renderScale 防抖 180ms 提交后才触发 canvas/textLayer 高清重渲染。
@@ -339,14 +341,23 @@ export default function ReaderPage() {
     return () => cancelAnimationFrame(t)
   }, [loading, numPages, restoreTick, scrollToPosition])
 
-  // ── 批注加载 ──
+  // ── 批注加载（合并 pid + annotationsVersion 单 effect，避免双 GET 竞态）──
   useEffect(() => {
     if (!Number.isFinite(pid)) return
+    const seq = ++fetchAnnoSeq.current
+    const ctrl = new AbortController()
     api
-      .annotations(pid)
-      .then((list) => useReader.getState().setAnnotations(list.map(parseAnnotation)))
-      .catch(() => {})
-  }, [pid])
+      .annotations(pid, { signal: ctrl.signal })
+      .then((list) => {
+        if (seq !== fetchAnnoSeq.current) return
+        if (ctrl.signal.aborted) return
+        useReader.getState().setAnnotations(list.map(parseAnnotation))
+      })
+      .catch((e: unknown) => {
+        if ((e as Error)?.name === 'AbortError') return
+      })
+    return () => { ctrl.abort() }
+  }, [pid, annotationsVersion])
 
   // ── 大纲探测：无大纲 → 缩略图导航条兜底 ──
   useEffect(() => {
