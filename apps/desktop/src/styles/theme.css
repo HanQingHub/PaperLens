@@ -284,38 +284,56 @@ h1, h2, h3, h4, button, input, textarea, select {
   }
 }
 
-/* ── 生词三档高亮（FR-6）──────────────────────────────────
-   inline-block + line-height 收紧背景到字形高度：
-   pdfjs 文本层行高 = ascent-descent+lineGap ≈ 1.22×字号，
-   inline 背景会铺满整行盒导致高亮比字高约半字。
-   0.85em 对齐批注高亮基准（选区 rect 高度 ≈ 0.8-0.9×字号，
-   实测 LoRA PDF：正文 10pt，批注 rect 高 8-10pt），
-   且覆盖降部字母（g/y/p）不被截断。baseline 对齐不漂移。 */
-.hl-stage-0 {
-  display: inline-block;
-  line-height: 0.85em;
-  background: rgba(245, 167, 66, 0.35);
-  border-radius: 2px;
-  cursor: pointer;
+/* ── 词带 SVG 层（v5：::highlight 退役，几何钳制到行盒）────────────
+   生词/搜索高亮由 PageView 的 .word-hl-svg 承载（z-index 1，
+   canvas 之下 textLayer(2) 之上）；类名即 highlightGeometry.HlName。
+   高亮强度档 highlight_style(1|2|3) 编码在 name 中（9 个静态类）。 */
+.word-hl-svg {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
 }
-.hl-stage-1 {
-  display: inline-block;
-  line-height: 0.85em;
-  background: rgba(243, 213, 91, 0.35);
-  border-radius: 2px;
-  cursor: pointer;
+.word-hl-svg rect {
+  shape-rendering: crispEdges;
 }
-.hl-stage-2 {
-  border-bottom: 2px dotted #7fb069;
-  cursor: pointer;
+.word-hl-svg .hl-stage-0-s1 { fill: rgba(245, 167, 66, 0.18); }
+.word-hl-svg .hl-stage-0-s2 { fill: rgba(245, 167, 66, 0.35); }
+.word-hl-svg .hl-stage-0-s3 { fill: rgba(245, 167, 66, 0.55); }
+.word-hl-svg .hl-stage-1-s1 { fill: rgba(243, 213, 91, 0.18); }
+.word-hl-svg .hl-stage-1-s2 { fill: rgba(243, 213, 91, 0.35); }
+.word-hl-svg .hl-stage-1-s3 { fill: rgba(243, 213, 91, 0.55); }
+/* stage-2：下划线态（虚线画在行盒底缘，基线处/之下） */
+.word-hl-svg line.hl-stage-2 {
+  stroke: #7fb069;
+  stroke-width: 2;
+  stroke-dasharray: 2 2;
+  fill: none;
 }
+.word-hl-svg .search-hit { fill: rgba(245, 197, 92, 0.5); }
+.word-hl-svg .search-hit-current { fill: rgba(51, 101, 138, 0.55); }
 
-/* ── 批注五色（FR-7）────────────────────────────────────── */
-.anno-yellow { background: rgba(255, 224, 138, 0.55); }
-.anno-green  { background: rgba(168, 213, 162, 0.55); }
-.anno-blue   { background: rgba(169, 211, 232, 0.55); }
-.anno-pink   { background: rgba(245, 184, 196, 0.55); }
-.anno-purple { background: rgba(201, 182, 228, 0.55); }
+/* ── 设置页三档预览专用（独立类，不随词带层方案变动）──────── */
+.hl-preview-0 { border-radius: 2px; }
+.hl-preview-1 { border-radius: 2px; }
+.hl-preview-2 { border-bottom: 2px dotted #7fb069; }
+.hl-pv1.hl-preview-0 { background: rgba(245, 167, 66, 0.18); }
+.hl-pv2.hl-preview-0 { background: rgba(245, 167, 66, 0.35); }
+.hl-pv3.hl-preview-0 { background: rgba(245, 167, 66, 0.55); }
+.hl-pv1.hl-preview-1 { background: rgba(243, 213, 91, 0.18); }
+.hl-pv2.hl-preview-1 { background: rgba(243, 213, 91, 0.35); }
+.hl-pv3.hl-preview-1 { background: rgba(243, 213, 91, 0.55); }
+
+/* ── 批注五色（FR-7）──────────────────────────────────────
+   fill 供 SVG 批注高亮（AnnotationOverlay），background 供
+   HTML 色点（HighlightPopover / SelectionToolbar 预览） */
+.anno-yellow { fill: rgba(255, 224, 138, 0.55); background: rgba(255, 224, 138, 0.55); }
+.anno-green  { fill: rgba(168, 213, 162, 0.55); background: rgba(168, 213, 162, 0.55); }
+.anno-blue   { fill: rgba(169, 211, 232, 0.55); background: rgba(169, 211, 232, 0.55); }
+.anno-pink   { fill: rgba(245, 184, 196, 0.55); background: rgba(245, 184, 196, 0.55); }
+.anno-purple { fill: rgba(201, 182, 228, 0.55); background: rgba(201, 182, 228, 0.55); }
 
 [data-theme="dark"] .anno-yellow,
 [data-theme="dark"] .anno-green,
@@ -378,8 +396,11 @@ h1, h2, h3, h4, button, input, textarea, select {
   user-select: none;
   cursor: default;
 }
+/* 选区原生样式透明化：蓝块由 SelectionOverlay 经 mergeClientRects 渲染
+   （每行 1 块，消除原生 ::selection 的双层/逐词碎片）。文字本就 transparent
+   （canvas 绘制字形），此处只关掉选区底色。 */
 .textLayer ::selection {
-  background: rgba(51, 101, 138, 0.35);
+  background: transparent;
   color: transparent;
 }
 .textLayer br::selection {
@@ -513,12 +534,8 @@ h1, h2, h3, h4, button, input, textarea, select {
 .heat-l4 { background: color-mix(in srgb, var(--accent) 82%, var(--panel-soft)); border-color: transparent; }
 
 /* 生词三档样式强度（FR-11 高亮强度档，可与 hl-stage-* 组合） */
-.hl-strength-1.hl-stage-0 { background: rgba(245, 167, 66, 0.18); }
-.hl-strength-2.hl-stage-0 { background: rgba(245, 167, 66, 0.35); }
-.hl-strength-3.hl-stage-0 { background: rgba(245, 167, 66, 0.55); }
-.hl-strength-1.hl-stage-1 { background: rgba(243, 213, 91, 0.18); }
-.hl-strength-2.hl-stage-1 { background: rgba(243, 213, 91, 0.35); }
-.hl-strength-3.hl-stage-1 { background: rgba(243, 213, 91, 0.55); }
+/* v5：.hl-strength-* 元素级规则已删除——唯一消费者 highlightFallback.CLASS_MAP
+   随回退层退役，档位改由 .word-hl-svg 的 hl-stage-N-sM 类承载 */
 
 /* 卡片菜单下拉 */
 .menu-pop {
@@ -559,13 +576,6 @@ h1, h2, h3, h4, button, input, textarea, select {
 
 /* ── 阅读器追加（reader agent）────────────────────────────── */
 
-/* 词级高亮包裹元素（<i>，避开 .textLayer span 的 absolute 定位） */
-.textLayer i,
-.ocr-layer i {
-  font-style: normal;
-  display: inline;
-}
-
 /* OCR 叠加层 */
 .ocr-layer {
   position: absolute;
@@ -593,23 +603,16 @@ h1, h2, h3, h4, button, input, textarea, select {
   line-height: 1.15;
   overflow: hidden;
 }
+/* OCR 层选区同样透明化（SelectionOverlay 兜底），防止与叠加层蓝块双层叠加 */
 .ocr-layer ::selection {
-  background: rgba(51, 101, 138, 0.35);
+  background: transparent;
+  color: transparent;
+}
+.ocr-line ::selection {
+  background: transparent;
 }
 
-/* 页内搜索命中（同为文本层内嵌，背景同样收紧到字形高度） */
-.search-hit {
-  display: inline-block;
-  line-height: 0.85em;
-  background: rgba(245, 197, 92, 0.5);
-  border-radius: 2px;
-}
-.search-hit-current {
-  display: inline-block;
-  line-height: 0.85em;
-  background: rgba(51, 101, 138, 0.55);
-  outline: 1px solid var(--accent);
-}
+/* 页内搜索命中：由 .word-hl-svg 的 .search-hit(-current) 矩形承载（v5） */
 
 /* 批注层 */
 .anno-layer {
@@ -618,12 +621,15 @@ h1, h2, h3, h4, button, input, textarea, select {
   z-index: 3;
   pointer-events: none;
 }
-.anno-rect {
+/* 句子批注高亮：SVG 单填充容器（填色来自 .anno-* 五色，盒型由 clipPath 决定）。
+   点击命中由 PageView stage 层判定，不接收事件；
+   每批注一个 clipPath（多行 rect 子路径）裁剪单个填色 rect——
+   行间残留重叠处单次填充，无半透明叠加暗条 */
+.anno-rect-svg {
   position: absolute;
-  /* 点击命中由 PageView stage 层判定（见高亮删除功能），rect 不再接收事件，
-     避免被 z-index:2 的 textLayer 压制导致点击时好时坏，同时不干扰划词 */
+  left: 0;
+  top: 0;
   pointer-events: none;
-  border-radius: 2px;
 }
 .anno-anchor {
   position: absolute;
@@ -738,6 +744,18 @@ h1, h2, h3, h4, button, input, textarea, select {
 }
 .flash-anim {
   animation: anchorFlash 0.5s ease-out 3;
+}
+/* SVG 批注高亮定位闪烁：box-shadow 对 SVG 无效，改整体透明度闪烁 */
+svg.flash-anim {
+  animation: annoSvgFlash 0.5s ease-out 3;
+}
+@keyframes annoSvgFlash {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 /* ── 阅读器顶栏控件 ─────────────────────────────────────── */

@@ -95,6 +95,11 @@ interface ReaderState {
   selection: SelectionInfo | null
   toolbarVisible: boolean
 
+  /** 竞态守卫：词点击（click 阶段）置位，ReaderPage.onMouseUp 的 setTimeout
+   *  回调读到后跳过并复位——否则会用 below=first.top>64 覆写 onWordClick
+   *  刚写入的 toolbarBelow，造成顶部 64px 内工具条翻转 */
+  suppressSelection: boolean
+
   highlightVersion: number
   annotations: ReaderAnnotation[]
 
@@ -125,6 +130,7 @@ interface ReaderState {
   setRenderRange: (r: [number, number]) => void
   setSelection: (s: SelectionInfo | null) => void
   setToolbarVisible: (v: boolean) => void
+  setSuppressSelection: (v: boolean) => void
   bumpHighlight: () => void
   setAnnotations: (list: ReaderAnnotation[]) => void
   upsertAnnotation: (a: ReaderAnnotation) => void
@@ -159,6 +165,7 @@ export const useReader = create<ReaderState>((set) => ({
 
   selection: null,
   toolbarVisible: false,
+  suppressSelection: false,
 
   highlightVersion: 0,
   annotations: [],
@@ -197,6 +204,7 @@ export const useReader = create<ReaderState>((set) => ({
   setRenderRange: (r) => set({ renderRange: r }),
   setSelection: (s) => set({ selection: s, toolbarVisible: !!s }),
   setToolbarVisible: (v) => set({ toolbarVisible: v }),
+  setSuppressSelection: (v) => set({ suppressSelection: v }),
   bumpHighlight: () => set((s) => ({ highlightVersion: s.highlightVersion + 1 })),
   setAnnotations: (list) => set({ annotations: list }),
   upsertAnnotation: (a) =>
@@ -231,6 +239,7 @@ export const useReader = create<ReaderState>((set) => ({
       renderRange: [0, 4],
       selection: null,
       toolbarVisible: false,
+      suppressSelection: false,
       annotations: [],
       ocrBlocks: new Map(),
       ocrStatus: 'none',

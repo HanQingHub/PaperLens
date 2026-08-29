@@ -10,8 +10,18 @@ import { TextLayer } from 'pdfjs-dist'
 import { useReader } from '../../stores/readerStore'
 import { useAuth } from '../../stores/auth'
 import { useWords } from '../../stores/words'
-import { applyHighlights, type HighlightOptions } from './highlight'
-import { cssPointToPdf, clientRectsInPage, clientRectsToPdf, linkPath, pdfPointToCss, rectCenter } from '../../shared/coords'
+import { computeWordHighlights, type HighlightOptions, type WordBucket } from './highlight'
+import {
+  capBandHeight,
+  extractLineBands,
+  fitRunToInk,
+  separateVertically,
+  type InkMap,
+  type LineBand,
+} from '../../shared/highlightGeometry'
+import SelectionOverlay from './SelectionOverlay'
+import { lookupHit } from './lemma'
+import { cssPointToPdf, clientRectsInPage, clientRectsToPdf, linkPath, mergeClientRects, pdfPointToCss, rectCenter } from '../../shared/coords'
 import { scheduleRender, stashPageBitmap, takePageBitmap } from './renderScheduler'
 import { OcrOverlay } from './ocrOverlay'
 import { ensurePageText, extractSentenceContext, ocrPageText } from './readerUtils'
@@ -23,6 +33,11 @@ import { DraftCard } from '../annotations/NoteCard'
 const MAX_CANVAS_DIM = 4096
 /** DPR 上限：高分屏不再无限制放大位图 */
 const MAX_DPR = 2
+/** 墨迹图素上限：防御性内存上限（MAX_CANVAS_DIM=4096 下正常不可触发），
+ * 超限等比降采样而非断供 */
+const INK_MAX_PX = 25_000_000
+/** 词边界反查（wordAtPoint 用，与 highlight.ts 的 WORD_RE 同口径） */
+const WORD_RE_PAGE = /[A-Za-z][A-Za-z'-]*/g
 
 interface PageViewProps {
   pdf: PDFDocumentProxy
@@ -42,6 +57,8 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textDivRef = useRef<HTMLDivElement>(null)
   const pageRef = useRef<HTMLDivElement>(null)
+  /** 舞台容器（带 transform: scale(stretch)），供可视→舞台坐标换算与回退层挂载 */
+  const stageRef = useRef<HTMLDivElement>(null)
   const [rendered, setRendered] = useState(false)
   /** textLayer 换入计数：触发词高亮重扫（rendered 在贴缓存位图时已为 true） */
   const [layerVersion, setLayerVersion] = useState(0)
@@ -170,54 +187,218 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
   }, [pdf, pageIndex, hiScale, active, ocrMode, generation])
 
   // ── 词高亮 / 搜索高亮（渲染完成或版本变化时，空闲时段执行避免阻塞首帧）──
-  const applyHl = useCallback(() => {
-    const container = pageRef.current
-    if (!container) return
-    const opts: HighlightOptions = {
-      stageMap,
-      enabled: settings.highlight_enabled,
-      searchTerms: searchTerm ? new Set([searchTerm]) : undefined,
-      currentTerm: searchFocusPage === pageIndex ? searchTerm : null,
+  // v5：computeWordHighlights 产出舞台坐标矩形分桶（零 Range/注册表持有，无清理函数），
+  // 词带按 canvas 墨迹拟合，消除回退字体度量与 canvas 字形的基线/advance 错位
+  const [wordHl, setWordHl] = useState<WordBucket[]>([])
+  // 行盒 bands：SelectionOverlay / AnnotationOverlay 渲染前钳制基准（舞台坐标）
+  const [lineBands, setLineBands] = useState<LineBand[]>([])
+  const lastBandsRef = useRef('')
+
+  // canvas 墨迹（按 layerVersion 缓存）：词带/行带墨迹标定的数据源。
+  // OCR 页画布是扫描图（满页"墨迹"）→ 不构建，走 ocr-line 盒回退。
+  // INK_MAX_PX 为防御性内存上限（MAX_CANVAS_DIM=4096 下正常不可触发），
+  // 超限时等比降采样而非断供——墨迹缺失会回退行盒几何（垂直偏移观感）
+  const inkRef = useRef<{ version: number; ink: InkMap | null; scale: number }>({ version: -1, ink: null, scale: 1 })
+  const getInk = useCallback((): { ink: InkMap | null; scale: number } => {
+    if (ocrMode) return { ink: null, scale: 1 }
+    if (inkRef.current.version === layerVersion) {
+      return { ink: inkRef.current.ink, scale: inkRef.current.scale }
     }
-    applyHighlights(container, opts)
-  }, [stageMap, settings.highlight_enabled, searchTerm, searchFocusPage, pageIndex])
+    const canvas = canvasRef.current
+    let ink: InkMap | null = null
+    let scale = 1
+    if (canvas && canvas.width > 0) {
+      const c2d = canvas.getContext('2d')
+      if (c2d) {
+        try {
+          let w = canvas.width
+          let h = canvas.height
+          const total = w * h
+          if (total > INK_MAX_PX) {
+            const k = Math.sqrt(INK_MAX_PX / total)
+            w = Math.max(1, Math.floor(w * k))
+            h = Math.max(1, Math.floor(h * k))
+          }
+          let data: Uint8ClampedArray
+          if (w === canvas.width && h === canvas.height) {
+            data = c2d.getImageData(0, 0, w, h).data
+          } else {
+            const off = document.createElement('canvas')
+            off.width = w
+            off.height = h
+            const octx = off.getContext('2d')
+            if (!octx) throw new Error('2d context unavailable')
+            octx.drawImage(canvas, 0, 0, w, h)
+            data = octx.getImageData(0, 0, w, h).data
+          }
+          ink = { data, width: w, height: h }
+          scale = w / (canvas.clientWidth || canvas.width)
+        } catch {
+          ink = null
+        }
+      }
+    }
+    inkRef.current = { version: layerVersion, ink, scale }
+    return { ink, scale }
+  }, [ocrMode, layerVersion])
+
+  // canvas 墨迹（渲染期读取，按 layerVersion 缓存）：除词带拟合外，还下发给
+  // 批注/选区层做矩形左右缘吸附（落库几何含文本层 advance 漂移）
+  const { ink: pageInk, scale: pageInkScale } = rendered ? getInk() : { ink: null, scale: 1 }
 
   useEffect(() => {
-    if (!rendered) return
-    const w = window as unknown as {
+    if (!rendered) { setWordHl([]); return }
+    const w = window as Window & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
       cancelIdleCallback?: (id: number) => void
     }
     let idle = 0
     let timer = 0
+    const run = () => {
+      const page = pageRef.current
+      const stage = stageRef.current
+      if (!page || !stage) return
+      const sRect = stage.getBoundingClientRect()
+      const layoutW = stage.offsetWidth || sRect.width
+      const stretch = layoutW > 0 ? sRect.width / layoutW : 1
+      const { ink, scale: inkScale } = getInk()
+      const opts: HighlightOptions = {
+        stageMap,
+        enabled: settings.highlight_enabled,
+        strength: settings.highlight_style,
+        searchTerms: searchTerm ? new Set([searchTerm]) : undefined,
+        currentTerm: searchFocusPage === pageIndex ? searchTerm : null,
+      }
+      setWordHl(computeWordHighlights(
+        page,
+        { stageLeft: sRect.left, stageTop: sRect.top, stageWidth: layoutW, stretch, lineBands, ink: ink ?? undefined, inkScale },
+        opts,
+      ))
+    }
     if (typeof w.requestIdleCallback === 'function') {
-      idle = w.requestIdleCallback(() => applyHl(), { timeout: 400 })
+      idle = w.requestIdleCallback(run, { timeout: 400 })
     } else {
-      timer = window.setTimeout(applyHl, 0)
+      timer = window.setTimeout(run, 0)
     }
     return () => {
       if (idle) w.cancelIdleCallback?.(idle)
       if (timer) window.clearTimeout(timer)
     }
-  }, [rendered, layerVersion, highlightVersion, applyHl, ocrBlocks])
+  }, [rendered, layerVersion, highlightVersion, stageMap, settings.highlight_enabled,
+      settings.highlight_style, searchTerm, searchFocusPage, pageIndex, ocrBlocks, getInk, lineBands])
 
-  // ── 生词悬停释义卡 + 高亮词点击查询（页容器级委托，textLayer 与 OCR 层通吃）──
+  // 行盒 bands 提取（textLayer 换入 / OCR 就绪 / 倍率变化后），并做墨迹垂直修正：
+  // span 行盒按 PDF 字体 ascent 定位，canvas 字形降部/基线常露出带外（垂直偏移根因）
+  // 等值短路：内容未变时保持旧引用，避免下游 memo 组件白渲染一次
+  useEffect(() => {
+    if (!rendered) {
+      lastBandsRef.current = ''
+      setLineBands([])
+      return
+    }
+    const page = pageRef.current
+    const stage = stageRef.current
+    if (!page || !stage) return
+    const sRect = stage.getBoundingClientRect()
+    const layoutW = stage.offsetWidth || sRect.width
+    const stretch = layoutW > 0 ? sRect.width / layoutW : 1
+    const els = ocrMode
+      ? [...page.querySelectorAll<HTMLElement>('.ocr-line')]
+      : [...page.querySelectorAll<HTMLElement>('.textLayer span')]
+        .filter((el) => !el.classList.contains('endOfContent'))
+    let bands = extractLineBands(
+      els,
+      (vy) => (vy - sRect.top) / (stretch || 1),
+      (vx) => (vx - sRect.left) / (stretch || 1),
+    )
+    const { ink, scale: inkScale } = getInk()
+    if (ink) {
+      bands = bands.map((b) => {
+        const run = fitRunToInk(ink, { top: b.top, bottom: b.bottom }, b.left ?? 0, b.right ?? layoutW, b.bottom - b.top, inkScale)
+        return run ? { ...b, top: run.top, bottom: run.bottom } : b
+      })
+    }
+    // 墨迹带高≈行距：封顶到 0.84×行距并分离 —— 行间保留可见白隙；词/选区/批注
+    // 三类高亮统一钳到此带（同高 + 不相交），深色叠涂与高度不一致几何上不可能。
+    // separateVertically 带 width：水平前置条件真实生效（第二道防线）
+    bands = capBandHeight(bands)
+    bands = separateVertically(bands.map((b) => ({
+      ...b,
+      width: b.left != null && b.right != null ? b.right - b.left : undefined,
+    })))
+    const sig = bands.map((b) => `${b.top},${b.bottom}`).join(';')
+    if (sig !== lastBandsRef.current) {
+      lastBandsRef.current = sig
+      setLineBands(bands)
+    }
+  }, [rendered, layerVersion, ocrMode, hiScale, getInk])
+
+  // ── 生词悬停释义卡 + 高亮词点击查询（去 i 化：caret 探针 + 词边界反查）──
   const [hoverWord, setHoverWord] = useState<{ lemma: string; rect: DOMRect } | null>(null)
   const hoverTimer = useRef(0)
   const hideHover = useCallback(() => {
     window.clearTimeout(hoverTimer.current)
     setHoverWord(null)
   }, [])
+
+  interface WordHit { word: string; lemma: string; rect: DOMRect; range: Range }
+
+  /** 点击/悬停坐标 → 词命中（caret 探针取词内偏移，再按词边界反查整词） */
+  function wordAtPoint(x: number, y: number): WordHit | null {
+    let range: Range | null = null
+    if (typeof document.caretRangeFromPoint === 'function') {
+      range = document.caretRangeFromPoint(x, y) as Range | null
+    } else if (typeof (document as unknown as { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null }).caretPositionFromPoint === 'function') {
+      const pos = (document as unknown as { caretPositionFromPoint: (x: number, y: number) => { offsetNode: Node; offset: number } | null }).caretPositionFromPoint(x, y)
+      if (pos && pos.offsetNode) {
+        range = document.createRange()
+        range.setStart(pos.offsetNode, pos.offset)
+        range.collapse(true)
+      }
+    }
+    if (!range || !range.startContainer || range.startContainer.nodeType !== Node.TEXT_NODE) return null
+    const tn = range.startContainer as Text
+    const off = range.startOffset
+    const text = tn.textContent ?? ''
+    WORD_RE_PAGE.lastIndex = 0
+    let m: RegExpExecArray | null
+    let word = ''
+    let s = -1
+    let e = -1
+    while ((m = WORD_RE_PAGE.exec(text)) !== null) {
+      if (off >= m.index && off <= m.index + m[0].length) {
+        word = m[0]
+        s = m.index
+        e = s + word.length
+        break
+      }
+    }
+    if (!word || s < 0) return null
+    const hit = lookupHit(word, useWords.getState().stageMap)
+    if (!hit) return null
+    const r = new Range()
+    r.setStart(tn, s)
+    r.setEnd(tn, e)
+    const rect = r.getBoundingClientRect() // 视觉后盒，已含 scaleX
+    if (!rect || rect.width < 1 || rect.height < 1) return null
+    // 跨页过滤：rect 中心必须落在本页盒内
+    const pageBox = pageRef.current?.getBoundingClientRect()
+    if (pageBox) {
+      const cy = (rect.top + rect.bottom) / 2
+      if (cy < pageBox.top || cy > pageBox.bottom) return null
+    }
+    return { word, lemma: hit.lemma, rect, range: r }
+  }
+
   const onWordHover = useCallback(
     (e: React.MouseEvent) => {
-      const el = (e.target as HTMLElement).closest<HTMLElement>('i[data-lemma]')
-      if (!el?.dataset.lemma) return
+      const hit = wordAtPoint(e.clientX, e.clientY)
+      if (!hit) { hideHover(); return }
       window.clearTimeout(hoverTimer.current)
-      const lemma = el.dataset.lemma
-      const rect = el.getBoundingClientRect()
+      const { lemma, rect } = hit
       hoverTimer.current = window.setTimeout(() => setHoverWord({ lemma, rect }), 300)
     },
-    [],
+    [hideHover],
   )
   // textLayer 换入/重扫后旧矩形失准，立即收卡（S5）
   useEffect(() => {
@@ -226,26 +407,32 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
 
   const onWordClick = useCallback(
     async (e: React.MouseEvent): Promise<boolean> => {
-      const el = (e.target as HTMLElement).closest<HTMLElement>('i[data-lemma]')
-      if (!el?.dataset.lemma || !pageRef.current) return false
+      const hit = wordAtPoint(e.clientX, e.clientY)
+      if (!hit || !pageRef.current) return false
       e.stopPropagation() // 不冒泡到 onStageClick 的句子浮条命中测试
       hideHover()
-      // 先建真实 DOM 选区：通过滚动容器 onMouseUp 的延迟折叠检查（R3），
-      // 且 SelectionToolbar 定位依赖真实选区存在
-      const range = document.createRange()
-      range.selectNodeContents(el)
+      // 竞态守卫（B5/N5）：写 readerStore 而非本地 ref——ReaderPage.onMouseUp
+      // 的 setTimeout 回调（click 之后执行）读到后跳过并复位，
+      // 否则其 below=first.top>64 会覆写这里写入的 toolbarBelow
+      const store = useReader.getState()
+      store.setSuppressSelection(true)
+      // 兜底复位：覆盖 await 抛错等异常路径，防永久抑制
+      window.setTimeout(() => { useReader.getState().setSuppressSelection(false) }, 500)
+
+      // 先建真实 DOM 选区：SelectionToolbar 定位依赖真实选区存在
       const sel = window.getSelection()
       sel?.removeAllRanges()
-      sel?.addRange(range)
+      sel?.addRange(hit.range)
       const st = useReader.getState()
       const size = st.pageSizes[pageIndex]
-      if (!size) return true
+      if (!size) { st.setSuppressSelection(false); return true }
       const baseGeom = { baseW: size.w, baseH: size.h, scale: st.scale }
-      const visibleRects = clientRectsInPage(el.getClientRects(), pageRef.current.getBoundingClientRect())
-      const rects = clientRectsToPdf(visibleRects, pageRef.current, baseGeom)
-      const first = visibleRects[0]
-      const text = (el.textContent ?? '').trim()
-      if (!first || !rects.length || !text) return true
+      const visibleRects = clientRectsInPage(hit.range.getClientRects(), pageRef.current.getBoundingClientRect())
+      const mergedRects = mergeClientRects(visibleRects, 1.0, baseGeom.scale)
+      const rects = clientRectsToPdf(mergedRects, pageRef.current, baseGeom)
+      const first = mergedRects[0]
+      const text = hit.word.trim()
+      if (!first || !rects.length || !text) { st.setSuppressSelection(false); return true }
       const fullText = ocrBlocks ? ocrPageText(ocrBlocks) : await ensurePageText(pdf, pageIndex)
       const ctx = extractSentenceContext(fullText, text)
       useReader.getState().setSelection({
@@ -362,6 +549,7 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
       {/* 舞台：以高清倍率 hiScale 布局全部页内层；缩放未提交期间仅改 transform，
           canvas 位图 / 文本层 / OCR / 批注全部零重排（GPU 合成拉伸） */}
       <div
+        ref={stageRef}
         className="absolute left-0 top-0"
         style={{
           width: stageW,
@@ -388,6 +576,34 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
           </div>
         )}
 
+        {/* 词带层：生词/搜索高亮，span 零污染，几何钳制到行盒（z-index 1 < textLayer 的 2） */}
+        {wordHl.length > 0 && (
+          <svg className="word-hl-svg" width={stageW} height={stageH}>
+            {wordHl.map((b) => b.name === 'hl-stage-2'
+              ? b.rects.map((r, i) => (
+                  <line
+                    key={`${b.name}-${i}`}
+                    x1={r.left}
+                    x2={r.left + r.width}
+                    y1={r.top + r.height}
+                    y2={r.top + r.height}
+                    className="hl-stage-2"
+                  />
+                ))
+              : b.rects.map((r, i) => (
+                  <rect
+                    key={`${b.name}-${i}`}
+                    x={r.left}
+                    y={r.top}
+                    width={r.width}
+                    height={r.height}
+                    className={b.name}
+                  />
+                ))
+            )}
+          </svg>
+        )}
+
         {/* 批注层：句子高亮 + 信息操作条 + word_note 锚点/连线/卡片 */}
         {rendered && (
           <AnnotationOverlay
@@ -395,9 +611,27 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
             geom={stageGeom}
             cssW={stageW}
             cssH={stageH}
+            lineBands={lineBands}
+            ink={pageInk ?? undefined}
+            inkScale={pageInkScale}
             locateId={locateAnnotationId}
             popoverId={popoverId}
             onClosePopover={() => setPopoverId(null)}
+          />
+        )}
+
+        {/* 选区 Live 视觉兜底：::selection 透明后由本层渲染每行 1 块的蓝块 */}
+        {rendered && (
+          <SelectionOverlay
+            pageIndex={pageIndex}
+            geom={stageGeom}
+            stageW={stageW}
+            stageH={stageH}
+            pageRef={pageRef}
+            stageRef={stageRef}
+            lineBands={lineBands}
+            ink={pageInk ?? undefined}
+            inkScale={pageInkScale}
           />
         )}
 

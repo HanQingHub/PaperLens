@@ -430,9 +430,9 @@ export default function SettingsPage() {
             </div>
           </Row>
           <div className="mt-1 rounded-lg border border-border bg-panel-soft px-3.5 py-2.5 text-[13px] leading-6">
-            预览：The <span className={`hl-stage-0 hl-strength-${settings.highlight_style}`}>attention</span> mechanism and{' '}
-            <span className={`hl-stage-1 hl-strength-${settings.highlight_style}`}>gradient</span> descent…
-            <span className="hl-stage-2"> convergence</span>
+            预览：The <span className={`hl-preview-0 hl-pv${settings.highlight_style}`}>attention</span> mechanism and{' '}
+            <span className={`hl-preview-1 hl-pv${settings.highlight_style}`}>gradient</span> descent…
+            <span className="hl-preview-2"> convergence</span>
           </div>
           <Row label="仅标注当前论文出现过的词" hint="开启后仅高亮本文出现的生词，减少视觉噪音">
             <Toggle checked={settings.highlight_only_current_paper} onChange={(v) => save({ highlight_only_current_paper: v })} />

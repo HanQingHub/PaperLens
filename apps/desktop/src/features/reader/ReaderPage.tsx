@@ -10,7 +10,7 @@ import { parseAnnotation, useReader } from '../../stores/readerStore'
 import { useReaderBus } from '../../stores/readerBus'
 import { useWords } from '../../stores/words'
 import { useUi } from '../../stores/ui'
-import { clientRectsInPage, clientRectsToPdf } from '../../shared/coords'
+import { clientRectsInPage, clientRectsToPdf, mergeClientRects } from '../../shared/coords'
 import { RENDER_DEBOUNCE_MS, PROGRESS_SAVE_THROTTLE_MS, ZOOM_STEP_RATIO, mapOcrPollStatus } from './constants'
 import '../../lib/pdfjsSetup'
 import PageView from './PageView'
@@ -541,6 +541,16 @@ export default function ReaderPage() {
     const st = useReader.getState()
     if (st.linking) return
     window.setTimeout(async () => {
+      // 竞态守卫（B5/N5）：守卫必须在 setTimeout 内部首位——mouseup 早于 click，
+      // 标志由 onWordClick 在 click 阶段写入，此处（click 之后）才读得到。
+      // 命中则复位并跳过：onWordClick 已写入单词 selection（toolbarBelow: true），
+      // 不拦的话下面 below=first.top>64 会覆写它，顶部 64px 内工具条翻转。
+      const guard = useReader.getState()
+      if (guard.suppressSelection) {
+        guard.setSuppressSelection(false)
+        return
+      }
+
       const sel = window.getSelection()
       const cur = useReader.getState()
       if (!sel || sel.isCollapsed || !sel.toString().trim()) {
@@ -559,8 +569,10 @@ export default function ReaderPage() {
       const range = sel.getRangeAt(0)
       // 跨页选区：只换算基准页内的矩形，相邻页部分用本页原点换算必错位
       const visibleRects = clientRectsInPage(range.getClientRects(), pageEl.getBoundingClientRect())
-      const rects = clientRectsToPdf(visibleRects, pageEl, geom)
-      const first = visibleRects[0]
+      // 同行碎片矩形合并为单行矩形：消除逐词 <i> 边界产生的竖缝与重叠暗条
+      const mergedRects = mergeClientRects(visibleRects, 1.0, geom.scale)
+      const rects = clientRectsToPdf(mergedRects, pageEl, geom)
+      const first = mergedRects[0]
       if (!first || !rects.length) return
       const blocks = cur.ocrBlocks.get(pageIndex)
       const fullText = blocks ? ocrPageText(blocks) : cur.pdf ? await ensurePageText(cur.pdf, pageIndex) : ''

@@ -56,6 +56,8 @@ export const OcrOverlay = memo(function OcrOverlay({
               style={{
                 left: css.left,
                 top: css.top,
+                width: css.width,
+                height: css.height,
                 fontSize: ocrLineFontSize(line, geom),
               }}
             >

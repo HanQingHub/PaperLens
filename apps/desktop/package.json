@@ -1,7 +1,7 @@
 {
   "name": "paperlens-desktop",
   "private": true,
-  "version": "0.6.5",
+  "version": "0.6.6",
   "author": "筝青寒",
   "type": "module",
   "scripts": {
@@ -39,6 +39,7 @@
     "eslint": "^9.18.0",
     "eslint-plugin-react-hooks": "^5.1.0",
     "globals": "^15.14.0",
+    "jsdom": "^30.0.1",
     "tailwindcss": "^4.1.0",
     "typescript": "~5.9.0",
     "typescript-eslint": "^8.22.0",

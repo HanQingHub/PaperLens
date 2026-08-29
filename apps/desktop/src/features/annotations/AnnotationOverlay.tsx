@@ -4,7 +4,8 @@ import { memo, useEffect, useMemo, useState } from 'react'
 import { api, patchAnnotation } from '../../api/client'
 import { useReader, parseAnnotation, type ReaderAnnotation } from '../../stores/readerStore'
 import { useReaderBus } from '../../stores/readerBus'
-import { cardEdgeX, linkPath, pdfPointToCss, pdfRectToCss, rectCenter } from '../../shared/coords'
+import { cardEdgeX, linkPath, mergePdfRects, pdfPointToCss, pdfRectToCss, rectCenter } from '../../shared/coords'
+import { fitRectEdgesToInk, fitRectVertical, type InkMap, type LineBand } from '../../shared/highlightGeometry'
 import { FLASH_ANIM_MS } from '../../shared/constants'
 import { toast } from '../shared/Toast'
 import NoteCard from './NoteCard'
@@ -16,6 +17,9 @@ const AnnotationOverlay = memo(function AnnotationOverlay({
   geom,
   cssW,
   cssH,
+  lineBands,
+  ink,
+  inkScale,
   locateId,
   popoverId,
   onClosePopover,
@@ -24,6 +28,13 @@ const AnnotationOverlay = memo(function AnnotationOverlay({
   geom: { baseW: number; baseH: number; scale: number }
   cssW: number
   cssH: number
+  /** 行盒 bands（舞台坐标）：句子高亮行渲染前钳制，与词带/选区等高 */
+  lineBands: LineBand[]
+  /** 页面 canvas 墨迹：矩形左右缘吸附到真实字形边界（落库几何含文本层
+   * advance 漂移，半字切割根因）；OCR 页/超大 canvas 无墨迹 → 跳过 */
+  ink?: InkMap
+  /** canvas 像素 / 舞台 px */
+  inkScale?: number
   locateId: number | null
   /** 当前打开信息条的 sentence 批注 id（PageView 命中判定写入） */
   popoverId: number | null
@@ -96,21 +107,46 @@ const AnnotationOverlay = memo(function AnnotationOverlay({
 
   return (
     <>
-      {/* 句子五色高亮（点击命中判定在 PageView stage 层，rect 不再接收事件） */}
-      {sentences.map((a) =>
-        a.rects.map((r, i) => {
-          const css = pdfRectToCss(r, geom)
-          return (
-            <div
-              key={`${a.id}-${i}`}
-              data-anno-id={a.id}
+      {/* 句子五色高亮（点击命中判定在 PageView stage 层，rect 不再接收事件）。
+          渲染前按行合并（吸收历史数据中的同行碎片/重叠/双层 rect），再钳制到
+          行盒 band（新旧数据行高归一，与词带/选区等高）；多行矩形 → 单个
+          clipPath → 裁剪单个填色 rect：重叠处单次填充，无半透明 α 叠加暗条
+          与竖缝（pdf.js 官方 highlight editor 同款方案） */}
+      {sentences.map((a) => {
+        const rects = mergePdfRects(a.rects).map((r) => {
+          // 垂直=块内字符墨迹（行带框架内）；水平缘吸附真实字形（落库几何含漂移）
+          const c = fitRectVertical(ink, pdfRectToCss(r, geom), lineBands, inkScale ?? 0)
+          return ink && inkScale ? fitRectEdgesToInk(ink, c, c.height, inkScale) : c
+        })
+        if (!rects.length) return null
+        const clipId = `anno-clip-${a.id}`
+        return (
+          <svg
+            key={a.id}
+            data-anno-id={a.id}
+            className="anno-rect-svg"
+            width={cssW}
+            height={cssH}
+          >
+            <title>{a.text || a.anchorText}</title>
+            <defs>
+              <clipPath id={clipId}>
+                {rects.map((c, i) => (
+                  <rect key={i} x={c.left} y={c.top} width={c.width} height={c.height} rx={2} />
+                ))}
+              </clipPath>
+            </defs>
+            <rect
+              x={0}
+              y={0}
+              width={cssW}
+              height={cssH}
               className={`anno-rect anno-${a.color}`}
-              style={{ left: css.left, top: css.top, width: css.width, height: css.height }}
-              title={a.text || a.anchorText}
+              clipPath={`url(#${clipId})`}
             />
-          )
-        }),
-      )}
+          </svg>
+        )
+      })}
 
       {/* 高亮信息操作条（点击高亮块浮现） */}
       {popoverId != null && (() => {
