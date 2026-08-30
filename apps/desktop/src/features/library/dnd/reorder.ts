@@ -51,6 +51,22 @@ export function sortOrderDiff(papers: Paper[], movedIds: number[] = []): PaperOr
   return out
 }
 
+/** 收藏分区钳制：收藏只能在收藏区，非收藏只能在非收藏区（见计划 4.2.2） */
+export function clampInsertIndexByFav(tgtItems: Paper[], moved: Paper, rawIdx: number): number {
+  if (tgtItems.length === 0) return 0
+  const favCount = tgtItems.filter((p) => p.is_favorite).length
+  const movedInTgt = tgtItems.some((p) => p.id === moved.id)
+  const effFav = movedInTgt && moved.is_favorite ? favCount - 1 : favCount
+  const clamped = Math.max(0, Math.min(rawIdx, tgtItems.length))
+  if (moved.is_favorite) {
+    const maxRaw = movedInTgt ? effFav + 1 : effFav
+    return Math.min(clamped, maxRaw)
+  } else {
+    const minRaw = effFav
+    return Math.max(clamped, minRaw)
+  }
+}
+
 /**
  * 跨组移动：源组移除、目标组插入 insertIndex（越界自动收敛到组尾），
  * 两组均重排为连续 sort_order（0..n-1）。project_id 由调用方随后指定。

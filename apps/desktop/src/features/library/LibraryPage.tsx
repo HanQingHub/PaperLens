@@ -234,7 +234,9 @@ export default function LibraryPage() {
       byKey.get(key)!.push(p)
     }
     const itemsOf = (key: GroupKey) =>
-      (byKey.get(key) ?? []).slice().sort((a, b) => a.sort_order - b.sort_order || a.id - b.id)
+      (byKey.get(key) ?? [])
+        .slice()
+        .sort((a, b) => (b.is_favorite ? 1 : 0) - (a.is_favorite ? 1 : 0) || a.sort_order - b.sort_order || a.id - b.id)
     const groups: DndGroup[] = projects.map((project) => ({
       key: project.id,
       project,
@@ -251,7 +253,7 @@ export default function LibraryPage() {
         ? []
         : papers
             .filter((p) => p.project_id === selectedProjectId)
-            .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id),
+            .sort((a, b) => (b.is_favorite ? 1 : 0) - (a.is_favorite ? 1 : 0) || a.sort_order - b.sort_order || a.id - b.id),
     [papers, selectedProjectId],
   )
 

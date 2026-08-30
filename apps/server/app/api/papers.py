@@ -479,7 +479,7 @@ def list_papers(
     elif sort == "last_opened":
         query = query.order_by(Paper.last_opened_at.is_(None), Paper.last_opened_at.desc())
     elif sort == "manual":
-        query = query.order_by(Paper.sort_order.asc(), Paper.id.asc())
+        query = query.order_by(Paper.is_favorite.desc(), Paper.sort_order.asc(), Paper.id.asc())
     else:
         query = query.order_by(Paper.created_at.desc(), Paper.id.desc())
     # 批注计数一次聚合（每 paper 一行的子查询，outerjoin 不产生行膨胀）

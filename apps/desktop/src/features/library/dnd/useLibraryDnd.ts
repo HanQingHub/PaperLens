@@ -8,9 +8,10 @@ import { toast } from '../../shared/Toast'
 import { PAPER_DRAG_MIME, type CardDragProps, type GroupKey } from './types'
 import { dragKind } from './guard'
 import {
-  moveAcrossGroups, reorderItems, sortOrderDiff,
+  clampInsertIndexByFav, moveAcrossGroups, reorderItems, sortOrderDiff,
   type PaperOrderPatch,
 } from './reorder'
+}
 
 export interface DndGroup {
   key: GroupKey
@@ -137,18 +138,21 @@ export function useLibraryDnd({
     if (src == null || tgt == null) return
     const fromIdx = src.items.findIndex((p) => p.id === paperId)
     if (fromIdx === -1) return
+    const movedPaper = src.items[fromIdx] ?? papersRef.current.find((p) => p.id === paperId)
+    if (!movedPaper) return
+    const effInsert = clampInsertIndexByFav(tgt.items, movedPaper, insertIndex)
 
     let patches: PaperOrderPatch[]
     let changes: Map<number, Paper>
     if (src.key === tgt.key) {
-      // 组内排序：重排为连续 sort_order 后仅 PATCH 变化项
-      const nextItems = reorderItems(src.items, fromIdx, insertIndex)
+      // 组内排序：重排为连续 sort_order 后仅 PATCH 变化项（已钳制不跨收藏分区）
+      const nextItems = reorderItems(src.items, fromIdx, effInsert)
         .map((p, i) => ({ ...p, sort_order: i }))
       patches = sortOrderDiff(nextItems)
       changes = new Map(nextItems.map((p) => [p.id, p]))
     } else {
       // 跨组：源组移除、目标组插入，两组重排；被移卡片 project_id 指向目标组
-      const moved = moveAcrossGroups(src.items, tgt.items, paperId, insertIndex)
+      const moved = moveAcrossGroups(src.items, tgt.items, paperId, effInsert)
       const nextTgt = moved.target.map((p) => (p.id === paperId ? { ...p, project_id: toGroup } : p))
       patches = [...sortOrderDiff(moved.source), ...sortOrderDiff(nextTgt, [paperId])]
       changes = new Map([...moved.source, ...nextTgt].map((p) => [p.id, p]))

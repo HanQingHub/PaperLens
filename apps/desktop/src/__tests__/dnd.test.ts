@@ -4,7 +4,7 @@ import type { Paper } from '../api/types'
 import { PAPER_DRAG_MIME, PROJECT_DRAG_MIME } from '../features/library/dnd/types'
 import { dragKind } from '../features/library/dnd/guard'
 import {
-  computeInsertIndex, moveAcrossGroups, nextSortOrder, reorderItems, sortOrderDiff,
+  clampInsertIndexByFav, computeInsertIndex, moveAcrossGroups, nextSortOrder, reorderItems, sortOrderDiff,
 } from '../features/library/dnd/reorder'
 
 let seq = 0
@@ -153,5 +153,39 @@ describe('moveAcrossGroups', () => {
     const { source, target } = moveAcrossGroups(src, tgt, 99, 0)
     expect(source).toBe(src)
     expect(target).toBe(tgt)
+  })
+})
+
+describe('clampInsertIndexByFav', () => {
+  function favPaper(id: number, fav: boolean, project_id: number | null = 1): Paper {
+    const p = makePaper(id, 0, project_id)
+    p.is_favorite = fav
+    return p
+  }
+  it('收藏在混合组内移动：不跨到非收藏区', () => {
+    const tgt = [favPaper(1, true), favPaper(2, true), favPaper(3, false), favPaper(4, false)]
+    expect(clampInsertIndexByFav(tgt, favPaper(1, true), 4)).toBe(2)
+    expect(clampInsertIndexByFav(tgt, favPaper(1, true), 2)).toBe(2)
+  })
+  it('非收藏不跨到收藏区', () => {
+    const tgt = [favPaper(1, true), favPaper(2, true), favPaper(3, false), favPaper(4, false)]
+    expect(clampInsertIndexByFav(tgt, favPaper(3, false), 0)).toBe(2)
+    expect(clampInsertIndexByFav(tgt, favPaper(3, false), 4)).toBe(4)
+  })
+  it('空组 → 0', () => {
+    expect(clampInsertIndexByFav([], favPaper(9, true), 5)).toBe(0)
+  })
+  it('收藏插入全非收藏组：仅允许 0', () => {
+    const tgt = [favPaper(1, false), favPaper(2, false)]
+    expect(clampInsertIndexByFav(tgt, favPaper(9, true), 1)).toBe(0)
+  })
+  it('非收藏插入全收藏组：钳到末尾', () => {
+    const tgt = [favPaper(1, true), favPaper(2, true)]
+    expect(clampInsertIndexByFav(tgt, favPaper(9, false), 0)).toBe(2)
+  })
+  it('新收藏插入混合组：允许收藏区内任意', () => {
+    const tgt = [favPaper(1, true), favPaper(2, true), favPaper(3, false)]
+    expect(clampInsertIndexByFav(tgt, favPaper(9, true), 1)).toBe(1)
+    expect(clampInsertIndexByFav(tgt, favPaper(9, true), 3)).toBe(2)
   })
 })
