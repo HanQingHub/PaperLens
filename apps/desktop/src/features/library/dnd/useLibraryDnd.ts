@@ -11,7 +11,6 @@ import {
   clampInsertIndexByFav, moveAcrossGroups, reorderItems, sortOrderDiff,
   type PaperOrderPatch,
 } from './reorder'
-}
 
 export interface DndGroup {
   key: GroupKey
