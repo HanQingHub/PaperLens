@@ -16,6 +16,7 @@
 
 mod proxy;
 mod registry;
+mod shortcut;
 mod sidecar;
 mod update_cleanup;
 mod updater_check;
@@ -67,7 +68,11 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![updater_check::startup_check, get_data_dir])
+        .invoke_handler(tauri::generate_handler![
+            updater_check::startup_check,
+            shortcut::fix_shortcut,
+            get_data_dir
+        ])
         .setup(|app| {
             // 撤销 tao 在顶层窗口注册的 OLE FileDropHandler。tao 默认 drag_and_drop=true
             // 且 tauri 未暴露关闭入口（dragDropEnabled 仅控制 wry 的 webview 层 handler），

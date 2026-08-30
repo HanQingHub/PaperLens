@@ -74,3 +74,11 @@ export function installUpdate(u: RemoteUpdate): Promise<void> {
 export function runStartupCheck(): Promise<StartupCheckResult> {
   return invoke<StartupCheckResult>('startup_check')
 }
+
+/**
+ * 快捷方式自愈：把残留的桌面/开始菜单 .lnk 校正到注册表登记的安装目录。
+ * 仅在启动自检发现 versionMismatch 时调用；非 Windows 返回空清单。
+ */
+export function fixShortcuts(): Promise<string[]> {
+  return invoke<string[]>('fix_shortcut')
+}

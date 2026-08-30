@@ -37,6 +37,10 @@ def main() -> None:
     # 暴露 Server 实例：POST /api/shutdown 经 should_exit 触发优雅退出
     app.state.uvicorn_server = server
     server.run()
+    # lifespan 启动失败（端口占用/迁移失败）时 uvicorn 只记日志便以 0 退出
+    # （非零 STARTUP_FAILURE 仅 CLI 入口生效）——这里显式非零，让壳层可感知
+    if not server.started:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

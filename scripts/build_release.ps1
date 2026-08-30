@@ -78,6 +78,15 @@ if ($Version -and $Version -notmatch '^v?\d+\.\d+\.\d+$') {
 $Version = $conf.version
 Write-Host "==> 发布版本 v$Version"
 
+# 版本规约（手册 §一）：0.X.0 次版本必须双发全量包+更新包——启动自检对
+# resources 缺失的引导是"下载全量安装包覆盖安装"，缺 full 包等于修复路径断裂。
+if ($SkipFull) {
+  if ($Version -match '^\d+\.\d+\.0$') {
+    throw "发布红线：$Version 为次版本（0.X.0），必须发布全量包（去掉 -SkipFull）"
+  }
+  Write-Warning '本版本不发全量包：startup_check 的 missingResources 引导将没有可下载的修复包'
+}
+
 # ── 2. 测试闸门（构建前：apps/server + apps/ocr-worker 全量 pytest）──
 if (-not $SkipTests) {
   if (-not $PyVenv) {

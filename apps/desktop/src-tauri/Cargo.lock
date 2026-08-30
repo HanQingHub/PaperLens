@@ -2536,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "paperlens-desktop"
-version = "0.6.9"
+version = "0.7.0"
 dependencies = [
  "filetime",
  "getrandom 0.2.17",
@@ -2549,6 +2549,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "windows",
  "windows-sys 0.59.0",
 ]
 

@@ -524,6 +524,15 @@ Function .onInit
     !endif
 
     Call RestorePreviousInstallLocation
+    ; A restored install location may point to a drive that no longer exists
+    ; (removed/remapped drive letter). Installing there would strand the new
+    ; exe and leave shortcuts pointing at a stale target, so fall back to the
+    ; per-user default when the drive root is gone (1 = DRIVE_NO_ROOT_DIR).
+    ${GetRoot} $INSTDIR $R8
+    System::Call 'kernel32::GetDriveType(t $R8) i .R0'
+    ${If} $R0 = 1
+      StrCpy $INSTDIR "$LOCALAPPDATA\${PRODUCTNAME}"
+    ${EndIf}
   ${EndIf}
 
 
@@ -943,6 +952,28 @@ Function CreateOrUpdateStartMenuShortcut
     StrCpy $R0 1
   ${EndIf}
 
+  ; Update mode: an existing shortcut whose target no longer matches (empty
+  ; MainBinaryName from pre-0.2.1 installs, or a drifted install location)
+  ; must be retargeted instead of silently skipped — a stale target launches
+  ; the old binary with old bundled resources.
+  ${If} $UpdateMode = 1
+    !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    Pop $0
+    ${If} $0 = 0
+    ${AndIf} ${FileExists} "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
+      !insertmacro SetShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+      StrCpy $R0 1
+    ${EndIf}
+
+    !insertmacro IsShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    Pop $0
+    ${If} $0 = 0
+    ${AndIf} ${FileExists} "$SMPROGRAMS\${PRODUCTNAME}.lnk"
+      !insertmacro SetShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+      StrCpy $R0 1
+    ${EndIf}
+  ${EndIf}
+
   ${If} $R0 = 1
     Return
   ${EndIf}
@@ -973,6 +1004,21 @@ Function CreateOrUpdateDesktopShortcut
   Pop $0
   ${If} $0 = 1
     !insertmacro SetShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    Return
+  ${EndIf}
+
+  ; Update mode: an existing shortcut whose target no longer matches (empty
+  ; MainBinaryName from pre-0.2.1 installs, or a drifted install location)
+  ; must be retargeted instead of silently skipped — a stale target launches
+  ; the old binary with old bundled resources, whose sidecar then fights the
+  ; new install over the fixed backend port.
+  ${If} $UpdateMode = 1
+  ${AndIf} ${FileExists} "$DESKTOP\${PRODUCTNAME}.lnk"
+    !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    Pop $0
+    ${If} $0 = 0
+      !insertmacro SetShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
+    ${EndIf}
     Return
   ${EndIf}
 

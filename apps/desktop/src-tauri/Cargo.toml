@@ -1,6 +1,6 @@
 [package]
 name = "paperlens-desktop"
-version = "0.6.9"
+version = "0.7.0"
 description = "PaperLens desktop shell (Tauri v2 thin shell)"
 authors = ["筝青寒"]
 edition = "2021"
@@ -36,6 +36,15 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 
 [target.'cfg(windows)'.dependencies]
+# 快捷方式自愈（shortcut.rs）用的 ShellLink COM 封装；crate 已随 tauri/wry
+# 在依赖树中（见 Cargo.lock windows 0.61.x），仅按需开启 feature
+windows = { version = "0.61", default-features = false, features = [
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    # IShellLinkW::GetPath 的 WIN32_FIND_DATAW 参数类型所在 feature：
+    # 该方法被用于跳过已正确的 .lnk，避免无谓重写
+    "Win32_Storage_FileSystem",
+] }
 windows-sys = { version = "0.59", features = [
     "Win32_System_JobObjects",
     "Win32_System_Threading",

@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import Modal from '../shared/Modal'
 import { toast } from '../shared/Toast'
-import { updaterAvailable, type StartupCheckResult } from '../../api/updaterCore'
+import { fixShortcuts, updaterAvailable, type StartupCheckResult } from '../../api/updaterCore'
 import { bootStartupCheck, setUpdaterNotify, useUpdater } from '../../stores/updater'
 import UpdateDialog from './UpdateDialog'
 
@@ -47,7 +47,17 @@ export default function UpdaterBoot() {
 
     // 启动自检：失败静默，不阻塞启动（验收标准 5）
     bootStartupCheck().then((r) => {
-      if (r && (r.versionMismatch || r.missingResources.length > 0)) setWarning(r)
+      if (!r) return
+      if (r.versionMismatch) {
+        // 快捷方式自愈：版本不一致多因上次更新把安装目录挪走而旧 .lnk 未校正，
+        // 旧 exe 被 .lnk 拉起时会走到这里——把快捷方式修向注册表登记的新安装
+        fixShortcuts()
+          .then((fixed) => {
+            if (fixed.length > 0) console.info('[updater] shortcut self-heal:', fixed)
+          })
+          .catch((e) => console.warn('[updater] shortcut self-heal failed:', e))
+      }
+      if (r.versionMismatch || r.missingResources.length > 0) setWarning(r)
     })
 
     // 后台自动检查：延迟 3s，策略为“关闭”时不查
