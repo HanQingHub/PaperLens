@@ -12,6 +12,7 @@
 //! - `sidecar`: backend process management (token handshake, Job Object)
 //! - `proxy`: system-proxy injection
 //! - `updater_check`: startup self-check
+//! - `shortcut`: shortcut self-heal (retarget stale .lnk to registered install)
 //! - `update_cleanup`: stale updater temp package cleanup
 
 mod proxy;
