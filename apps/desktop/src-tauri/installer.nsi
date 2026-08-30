@@ -528,10 +528,17 @@ Function .onInit
     ; (removed/remapped drive letter). Installing there would strand the new
     ; exe and leave shortcuts pointing at a stale target, so fall back to the
     ; per-user default when the drive root is gone (1 = DRIVE_NO_ROOT_DIR).
-    ${GetRoot} $INSTDIR $R8
-    System::Call 'kernel32::GetDriveType(t $R8) i .R0'
-    ${If} $R0 = 1
-      StrCpy $INSTDIR "$LOCALAPPDATA\${PRODUCTNAME}"
+    ; NOTE: build the root as first-2-chars + "\" — FileFunc ${GetRoot} returns
+    ; "D:" without the trailing slash, and GetDriveType treats that drive-
+    ; relative form as DRIVE_NO_ROOT_DIR, wrongly triggering the fallback.
+    StrCpy $R8 $INSTDIR 2
+    StrCpy $R9 $INSTDIR 1 1
+    ${If} $R9 == ":"
+      StrCpy $R8 "$R8\"
+      System::Call 'kernel32::GetDriveType(t "$R8") i .R0'
+      ${If} $R0 = 1
+        StrCpy $INSTDIR "$LOCALAPPDATA\${PRODUCTNAME}"
+      ${EndIf}
     ${EndIf}
   ${EndIf}
 
