@@ -189,6 +189,8 @@ export type TranslateEvent =
   | { event: 'error'; code: 'llm_loading_timeout' | 'llm_timeout' | 'internal' | 'text_too_long'; detail: string }
   | { event: 'ping' }
 
+export type AppIconVariant = 'orbit' | 'diamond'
+
 export interface AppSettings {
   theme: 'warm' | 'light' | 'dark' | 'system'
   font_scale: number
@@ -199,6 +201,7 @@ export interface AppSettings {
   llm_model_id: string | null
   llm_unload_policy: number // 分钟；0=用完即卸 -1=常驻
   animations: boolean
+  app_icon: AppIconVariant
 }
 
 // ── LLM 模型下载 SSE 事件（llm.py /download：progress|done|error）──

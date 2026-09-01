@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useAuth } from '../../stores/auth'
 import Threads from '../../components/shared/Threads'
 import StrokeText from '../../components/shared/StrokeText'
+import { APP_ICONS, resolveAppIcon } from '../appIcon/variants'
 import { type SavedAccount, loadAccounts, removeAccount } from './accounts'
 
 /** 主题色 → Threads RGB + StrokeText hex，对齐 App.tsx useThemeColors 逻辑 */
@@ -27,6 +28,9 @@ export default function AuthPage() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const { accentRgb, accentHex, textHex } = useAuthTheme()
+  // subscribe to app_icon for reactive update
+  useAuth((s) => s.settings.app_icon)
+  const appIcon = resolveAppIcon()
   const accounts = loadAccounts()
 
   const submit = async (e: React.FormEvent) => {
@@ -66,19 +70,22 @@ export default function AuthPage() {
         <Threads color={accentRgb} amplitude={1} distance={0} enableMouseInteraction={false} />
       </div>
       <div className="fade-in relative flex flex-col items-center">
-        <div className="mb-6 flex w-[min(520px,80vw)] justify-center">
-          <StrokeText
-            text="PAPERLENS"
-            strokeColor={accentHex}
-            fillColor={textHex}
-            fontSize={72}
-            fontWeight={800}
-            letterSpacing={2}
-            drawDuration={1.4}
-            fillDelay={0.15}
-            fillMode="wipe"
-            trigger="mount"
-          />
+        <div className="mb-6 flex flex-col items-center gap-4">
+          <img src={APP_ICONS[appIcon]} alt="" className="h-16 w-16 rounded-2xl shadow-sm object-contain" />
+          <div className="flex w-[min(520px,80vw)] justify-center">
+            <StrokeText
+              text="PAPERLENS"
+              strokeColor={accentHex}
+              fillColor={textHex}
+              fontSize={72}
+              fontWeight={800}
+              letterSpacing={2}
+              drawDuration={1.4}
+              fillDelay={0.15}
+              fillMode="wipe"
+              trigger="mount"
+            />
+          </div>
         </div>
 
         <form onSubmit={submit} className="panel pl-auth-card w-[380px] p-6">

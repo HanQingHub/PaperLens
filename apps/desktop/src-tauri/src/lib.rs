@@ -15,6 +15,7 @@
 //! - `shortcut`: shortcut self-heal (retarget stale .lnk to registered install)
 //! - `update_cleanup`: stale updater temp package cleanup
 
+mod app_icon;
 mod proxy;
 mod registry;
 mod shortcut;
@@ -72,6 +73,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             updater_check::startup_check,
             shortcut::fix_shortcut,
+            app_icon::get_app_icon,
+            app_icon::set_app_icon,
             get_data_dir
         ])
         .setup(|app| {

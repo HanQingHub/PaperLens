@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   llm_model_id: null,
   llm_unload_policy: 10,
   animations: true,
+  app_icon: 'orbit',
 }
 
 /** 布尔兼容：历史脏数据可能是 "True"/"1" 等 */
@@ -33,6 +34,7 @@ export function coerceSettings(raw: Partial<AppSettings> | null | undefined): Ap
   s.highlight_only_current_paper = truthy(s.highlight_only_current_paper)
   s.animations = truthy(s.animations)
   if (!s.theme || !['warm', 'light', 'dark', 'system'].includes(s.theme)) s.theme = 'warm'
+  if (s.app_icon !== 'orbit' && s.app_icon !== 'diamond') s.app_icon = 'orbit'
   return s
 }
 

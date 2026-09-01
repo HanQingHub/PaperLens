@@ -48,11 +48,8 @@ export default function AppShell() {
               右栏展开时账号+退出登录直接贴紧面板左缘（用户要求零间隙） */}
           <header
             data-tauri-drag-region
-            className={`glass sticky top-0 z-30 flex h-11 shrink-0 items-center justify-between pl-3 ${rightTab ? 'pr-3' : 'pr-20'}`}
+            className={`glass sticky top-0 z-30 flex h-11 shrink-0 items-center justify-end pl-3 ${rightTab ? 'pr-3' : 'pr-20'}`}
           >
-            <div className="flex items-center gap-2 text-xs text-text-faint">
-              <span className="font-serif text-sm font-semibold tracking-wide text-accent">PaperLens</span>
-            </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-text-soft">{user?.display_name ?? user?.username}</span>
               <button className="btn btn-ghost px-2 py-1 text-xs" onClick={logout}>

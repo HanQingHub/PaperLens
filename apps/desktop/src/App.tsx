@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { isTauri } from '@tauri-apps/api/core'
+import { invoke, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useAuth, applyTheme } from './stores/auth'
 import { useUi } from './stores/ui'
@@ -10,6 +10,7 @@ import AppShell from './components/layout/AppShell'
 import WindowControls from './components/layout/WindowControls'
 import Threads from './components/shared/Threads'
 import StrokeText from './components/shared/StrokeText'
+import { APP_ICONS, resolveAppIcon } from './features/appIcon/variants'
 import AuthPage from './features/auth/AuthPage'
 import WizardPage from './features/wizard/WizardPage'
 import LibraryPage from './features/library/LibraryPage'
@@ -36,6 +37,13 @@ function useThemeColors() {
   }, [])
 }
 
+function BrandIcon() {
+  // subscribe for reactivity
+  useAuth((s) => s.settings.app_icon)
+  const icon = resolveAppIcon()
+  return <img src={APP_ICONS[icon]} alt="" className="h-16 w-16 rounded-2xl shadow-sm object-contain" />
+}
+
 export default function App() {
   const { booted, boot, bootError, retryBoot, user, settings } = useAuth()
   const themeColors = useThemeColors()
@@ -59,6 +67,15 @@ export default function App() {
     document.documentElement.classList.toggle('no-motion', !settings.animations)
     document.documentElement.style.fontSize = `${14 * (settings.font_scale || 1)}px`
   }, [settings.theme, settings.animations, settings.font_scale])
+
+  // Sync shortcut/window icon with current variant (covers orbit/diamond switch + update cache clear)
+  useEffect(() => {
+    if (!booted) return
+    const v = resolveAppIcon()
+    if (isTauri()) {
+      invoke('set_app_icon', { variant: v }).catch(() => {})
+    }
+  }, [booted, settings.app_icon])
 
   useEffect(() => {
     if (!isTauri()) return
@@ -110,19 +127,22 @@ export default function App() {
           <div className="absolute inset-0 opacity-40" aria-hidden>
             <Threads color={themeColors.accent} amplitude={1} distance={0} enableMouseInteraction={false} />
           </div>
-          <div className="relative w-[min(520px,80vw)]">
-            <StrokeText
-              text="PAPERLENS"
-              strokeColor={themeColors.accentHex}
-              fillColor={themeColors.textHex}
-              fontSize={72}
-              fontWeight={800}
-              letterSpacing={2}
-              drawDuration={1.4}
-              fillDelay={0.15}
-              fillMode="wipe"
-              trigger="mount"
-            />
+          <div className="relative flex flex-col items-center gap-4">
+            <BrandIcon />
+            <div className="w-[min(520px,80vw)]">
+              <StrokeText
+                text="PAPERLENS"
+                strokeColor={themeColors.accentHex}
+                fillColor={themeColors.textHex}
+                fontSize={72}
+                fontWeight={800}
+                letterSpacing={2}
+                drawDuration={1.4}
+                fillDelay={0.15}
+                fillMode="wipe"
+                trigger="mount"
+              />
+            </div>
           </div>
           <div className="relative flex flex-col items-center gap-3 text-text-faint">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
@@ -134,6 +154,7 @@ export default function App() {
     return (
       <div className="flex h-full items-center justify-center bg-bg">
         <div className="flex flex-col items-center gap-3 text-text-faint">
+          <BrandIcon />
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-accent border-t-transparent" />
           <span className="text-xs tracking-widest">PAPERLENS</span>
         </div>

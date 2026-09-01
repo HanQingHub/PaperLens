@@ -72,15 +72,24 @@ fn fix_shortcuts_inner() -> Result<Vec<String>, String> {
         .unwrap_or(exe);
 
     let mut report = Vec::new();
-    for (label, folder) in [("desktop", &FOLDERID_Desktop), ("start menu", &FOLDERID_Programs)] {
-        let dir = match known_folder_dir(folder) {
-            Ok(d) => d,
-            Err(e) => {
-                report.push(format!("{label}: known folder unavailable ({e})"));
-                continue;
-            }
-        };
-        let lnk = dir.join("PaperLens.lnk");
+    // Build lnk list: desktop + start menu (root + folder)
+    let mut lnks: Vec<(String, std::path::PathBuf)> = Vec::new();
+    match known_folder_dir(&FOLDERID_Desktop) {
+        Ok(d) => lnks.push(("desktop".into(), d.join("PaperLens.lnk"))),
+        Err(e) => report.push(format!("desktop: known folder unavailable ({e})")),
+    }
+    match known_folder_dir(&FOLDERID_Programs) {
+        Ok(d) => {
+            lnks.push(("start menu".into(), d.join("PaperLens.lnk")));
+            lnks.push((
+                "start menu (folder)".into(),
+                d.join("PaperLens").join("PaperLens.lnk"),
+            ));
+        }
+        Err(e) => report.push(format!("start menu: known folder unavailable ({e})")),
+    }
+
+    for (label, lnk) in lnks {
         if !lnk.is_file() {
             report.push(format!("{label}: no shortcut"));
             continue;
@@ -92,8 +101,6 @@ fn fix_shortcuts_inner() -> Result<Vec<String>, String> {
                 continue;
             }
         };
-        // Skip the rewrite when the link already points at the candidate
-        // (case-insensitive): keeps pins/property store untouched.
         let already = target
             .as_deref()
             .is_some_and(|t| t.to_lowercase() == candidate.to_string_lossy().to_lowercase());
@@ -102,11 +109,80 @@ fn fix_shortcuts_inner() -> Result<Vec<String>, String> {
             continue;
         }
         if let Err(e) = unsafe { set_lnk_target(&lnk, &candidate) } {
-            // Per-item failure: keep processing the remaining candidates.
             report.push(format!("{label}: retarget failed ({e})"));
             continue;
         }
         report.push(format!("{label}: retargeted to {}", candidate.display()));
+        // After retarget, also set icon explicitly (orbit default)
+        if let Err(e) = unsafe { set_lnk_icon(&lnk, &candidate) } {
+            report.push(format!("{label}: icon set failed ({e})"));
+        } else {
+            report.push(format!("{label}: icon -> {}", candidate.display()));
+        }
+    }
+    // Broadcast if any retarget occurred (icon set implies change)
+    // Keep unconditional for simplicity; extra notify is cheap
+    unsafe {
+        use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None);
+    }
+    Ok(report)
+}
+
+/// Set IconLocation for all PaperLens shortcuts to `icon_path` (index 0); used by `set_app_icon`.
+#[cfg(windows)]
+pub(crate) fn set_shortcut_icons_for_icon(
+    icon_path: &std::path::Path,
+    candidate: &std::path::Path,
+) -> Result<Vec<String>, String> {
+    std::thread::spawn({
+        let icon = icon_path.to_path_buf();
+        let cand = candidate.to_path_buf();
+        move || {
+            let init = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            let out = set_shortcut_icons_inner(&icon, &cand);
+            if init.is_ok() || init == HRESULT(1) {
+                unsafe { CoUninitialize() };
+            }
+            out
+        }
+    })
+    .join()
+    .map_err(|_| "set_shortcut_icons thread panicked".to_string())?
+}
+
+#[cfg(windows)]
+fn set_shortcut_icons_inner(
+    icon_path: &std::path::Path,
+    _candidate: &std::path::Path,
+) -> Result<Vec<String>, String> {
+    let mut report = Vec::new();
+    // Collect all candidate lnk paths
+    let mut lnks: Vec<(String, std::path::PathBuf)> = Vec::new();
+    if let Ok(dir) = known_folder_dir(&FOLDERID_Desktop) {
+        lnks.push(("desktop".into(), dir.join("PaperLens.lnk")));
+    } else {
+        report.push("desktop: known folder unavailable".into());
+    }
+    if let Ok(dir) = known_folder_dir(&FOLDERID_Programs) {
+        lnks.push(("start menu".into(), dir.join("PaperLens.lnk")));
+        lnks.push((
+            "start menu (folder)".into(),
+            dir.join("PaperLens").join("PaperLens.lnk"),
+        ));
+    } else {
+        report.push("start menu: known folder unavailable".into());
+    }
+    for (label, lnk) in lnks {
+        if !lnk.is_file() {
+            report.push(format!("{label}: no shortcut"));
+            continue;
+        }
+        // Always set icon (even if target already correct) to clear stale cache
+        match unsafe { set_lnk_icon(&lnk, icon_path) } {
+            Ok(()) => report.push(format!("{label}: icon -> {}", icon_path.display())),
+            Err(e) => report.push(format!("{label}: icon set failed ({e})")),
+        }
     }
     Ok(report)
 }
@@ -142,6 +218,23 @@ unsafe fn set_lnk_target(lnk: &std::path::Path, target: &std::path::Path) -> Res
     Ok(())
 }
 
+/// Set IconLocation for a .lnk (index 0); preserves target/args.
+#[cfg(windows)]
+unsafe fn set_lnk_icon(lnk: &std::path::Path, icon: &std::path::Path) -> Result<(), String> {
+    let lnk_w = to_wide(lnk);
+    let icon_w = to_wide(icon);
+    let link: IShellLinkW = CoCreateInstance(&CLSID_SHELL_LINK, None, CLSCTX_INPROC_SERVER)
+        .map_err(|e| e.to_string())?;
+    let persist: IPersistFile = link.cast().map_err(|e| e.to_string())?;
+    persist
+        .Load(PCWSTR(lnk_w.as_ptr()), STGM_READWRITE)
+        .map_err(|e| e.to_string())?;
+    link.SetIconLocation(PCWSTR(icon_w.as_ptr()), 0)
+        .map_err(|e| e.to_string())?;
+    persist.Save(PCWSTR(lnk_w.as_ptr()), true).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Raw target path of a .lnk (SLGP_RAWPATH); None when the link has no path.
 #[cfg(windows)]
 unsafe fn read_lnk_target(lnk: &std::path::Path) -> Result<Option<String>, String> {
@@ -166,7 +259,7 @@ use windows::core::{GUID, Interface, HRESULT, PCWSTR};
 #[cfg(windows)]
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
-    COINIT_APARTMENTTHREADED, IPersistFile, STGM_READ,
+    COINIT_APARTMENTTHREADED, IPersistFile, STGM_READ, STGM_READWRITE,
 };
 #[cfg(windows)]
 use windows::Win32::UI::Shell::{

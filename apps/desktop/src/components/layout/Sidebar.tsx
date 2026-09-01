@@ -5,7 +5,8 @@ import { useRef, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useUi } from '../../stores/ui'
 import { useUpdater } from '../../stores/updater'
-import logoUrl from '../../assets/logo.png'
+import { useAuth } from '../../stores/auth'
+import { APP_ICONS, resolveAppIcon } from '../../features/appIcon/variants'
 
 function Icon({ path, size = 16 }: { path: string; size?: number }) {
   return (
@@ -29,6 +30,8 @@ function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => voi
   const navigate = useNavigate()
   const location = useLocation()
   const hasUpdate = useUpdater((s) => s.update !== null && s.phase !== 'idle')
+  useAuth((s) => s.settings.app_icon)
+  const brandIcon = APP_ICONS[resolveAppIcon()]
 
   const itemCls = (active: boolean) => `pl-nav-item${active ? ' pl-nav-item--active' : ''}`
 
@@ -47,9 +50,9 @@ function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => voi
 
   return (
     <>
-      {/* 品牌区（使用打包图标本体，替代旧手绘 P 色块） */}
+      {/* 品牌区（跟随 app_icon 变体） */}
       <div className="pl-side-brand">
-        <img src={logoUrl} alt="" className="h-6 w-6 shrink-0 rounded-md object-contain" />
+        <img src={brandIcon} alt="" className="h-6 w-6 shrink-0 rounded-md object-contain" />
         <span className="pl-side-label truncate font-serif text-sm font-semibold tracking-wide">PaperLens</span>
       </div>
 

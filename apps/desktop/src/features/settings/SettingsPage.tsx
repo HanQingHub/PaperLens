@@ -1,11 +1,12 @@
-// 设置页：外观 / 生词高亮 / 批注 / LLM 模型管理 / 词典 / 数据 / 应用更新 / 快捷键
+// 设置页：外观 / 生词高亮 / 批注 / LLM 模型管理 / 词典 / 数据 / 应用更新 / 快捷键 + 应用图标
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { api, saveBlobWithDialog } from '../../api/client'
-import type { LLMModelInfo, LLMStatus } from '../../api/types'
+import type { AppIconVariant, LLMModelInfo, LLMStatus } from '../../api/types'
 import { useAuth } from '../../stores/auth'
 import { useUpdater, type UpdatePolicy } from '../../stores/updater'
 import { updaterAvailable } from '../../api/updaterCore'
+import { APP_ICONS, persistAppIconLocal } from '../appIcon/variants'
 import Modal, { ConfirmModal } from '../shared/Modal'
 import { toast } from '../shared/Toast'
 
@@ -436,6 +437,36 @@ export default function SettingsPage() {
           </div>
           <Row label="仅标注当前论文出现过的词" hint="开启后仅高亮本文出现的生词，减少视觉噪音">
             <Toggle checked={settings.highlight_only_current_paper} onChange={(v) => save({ highlight_only_current_paper: v })} />
+          </Row>
+        </Section>
+
+        {/* 应用图标 */}
+        <Section title="应用图标">
+          <Row label="图标样式" hint="切换应用图标，桌面快捷方式与窗口图标将同步更新（固定到任务栏的图标需重新固定）">
+            <div className="flex gap-2">
+              {(['orbit', 'diamond'] as const).map((v) => (
+                <button
+                  key={v}
+                  className={`flex flex-col items-center gap-1 rounded-xl border p-2 transition-all ${settings.app_icon === v ? 'border-accent ring-1 ring-accent' : 'border-border hover:border-border-strong'}`}
+                  onClick={async () => {
+                    const variant = v as AppIconVariant
+                    try {
+                      await save({ app_icon: variant })
+                    } catch {
+                      return
+                    }
+                    persistAppIconLocal(variant)
+                    try {
+                      await invoke('set_app_icon', { variant })
+                    } catch {}
+                  }}
+                  title={v === 'orbit' ? '环日 · ORBIT' : '墨方 · DIAMOND'}
+                >
+                  <img src={APP_ICONS[v]} className="h-14 w-14 rounded-xl object-contain" alt="" />
+                  <span className={`text-[11px] ${settings.app_icon === v ? 'text-accent font-medium' : 'text-text-faint'}`}>{v === 'orbit' ? '环日 · ORBIT' : '墨方 · DIAMOND'}</span>
+                </button>
+              ))}
+            </div>
           </Row>
         </Section>
 
