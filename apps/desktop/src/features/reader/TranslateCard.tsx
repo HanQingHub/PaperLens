@@ -19,6 +19,8 @@ interface HistoryItem {
 
 export interface TranslateRequest {
   id: number
+  /** 翻译目标论文（主窗格 = 路由 pid；对照窗格选区 = 对照论文） */
+  paperId: number
   word: string
   sentence: string
   prev: string

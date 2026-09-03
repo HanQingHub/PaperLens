@@ -16,7 +16,9 @@ export interface SelectionInfo {
   sentence: string
   prev: string
   next: string
-  /** 工具条定位（相对阅读器容器的坐标） */
+  /** 选区所属论文（对照窗格选区 ≠ 主窗格 paper.id） */
+  paperId: number
+  /** 工具条定位（视口坐标，fixed 定位跨窗格通用） */
   toolbarX: number
   toolbarY: number
   toolbarBelow: boolean

@@ -4,6 +4,8 @@ import { invoke, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useAuth, applyTheme } from './stores/auth'
 import { useUi } from './stores/ui'
+import { useReaderTabs } from './stores/readerTabs'
+import { useCompareStore } from './stores/compareStore'
 import { setUnauthorizedHandler } from './api/client'
 import { toast } from './features/shared/Toast'
 import AppShell from './components/layout/AppShell'
@@ -109,6 +111,18 @@ export default function App() {
       useUi.getState().closePanel()
     }
   }, [location.pathname])
+
+  // 标签页按账号隔离：登录后读入该账号持久化标签（含账号切换清旧文档缓存），
+  // 登出清内存与解析态文档缓存，对照窗格一并退出
+  const userId = user?.id
+  useEffect(() => {
+    if (userId != null) {
+      useReaderTabs.getState().hydrate(userId)
+    } else {
+      useReaderTabs.getState().clearMemory()
+      useCompareStore.getState().setPaper(null)
+    }
+  }, [userId])
 
   if (!booted) {
     if (bootError) {

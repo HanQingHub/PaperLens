@@ -6,6 +6,7 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useUi } from '../../stores/ui'
 import { useUpdater } from '../../stores/updater'
 import { useAuth } from '../../stores/auth'
+import { guardMdNav, pidFromPath } from '../../features/reader/mdDirty'
 import { APP_ICONS, resolveAppIcon } from '../../features/appIcon/variants'
 
 function Icon({ path, size = 16 }: { path: string; size?: number }) {
@@ -26,7 +27,7 @@ const icons = {
 
 /** 导航内容：标签始终渲染，折叠时由 CSS 渐隐（宽度过渡期间无布局跳变） */
 function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => void }) {
-  const { rightTab, openPanel, openReview, lastPaperId, clearLastPaper } = useUi()
+  const { rightTab, openPanel, openReview } = useUi()
   const navigate = useNavigate()
   const location = useLocation()
   const hasUpdate = useUpdater((s) => s.update !== null && s.phase !== 'idle')
@@ -35,17 +36,18 @@ function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => voi
 
   const itemCls = (active: boolean) => `pl-nav-item${active ? ' pl-nav-item--active' : ''}`
 
-  // 文库导航：在读（/reader/*）时点击 = 等同「返回文库」（清除记忆回列表）；
-  // 在设置/复习等非文库页点击时，若本会话有打开过的论文则恢复阅读，否则进列表。
-  const onLibraryClick = (e: React.MouseEvent) => {
-    if (location.pathname.startsWith('/reader/')) {
-      clearLastPaper()
-      return // 默认跳 /，显式退出
+  // MD 脏时离页确认：仅当正在离开脏 MD 路由才拦（确认框全局单例见 AppShell）。
+  // 修饰键/中键（新签/新标签页）直接放行默认行为：不卸载当前文档，无丢稿风险。
+  // 左键干净路径：preventDefault 后手动 navigate，避免默认导航与意图重复执行。
+  const navGuard = (e: React.MouseEvent, to: string, extra?: () => void) => {
+    if (e.button === 1 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return
+    e.preventDefault()
+    // 原语义保留：extra（如 openReview 预设）先行（与原 onClick 顺序一致），同路由重复点击也执行
+    const run = () => {
+      extra?.()
+      if (to !== location.pathname) navigate(to)
     }
-    if (location.pathname !== '/' && lastPaperId != null) {
-      e.preventDefault()
-      navigate(`/reader/${lastPaperId}`)
-    }
+    if (!guardMdNav(run, pidFromPath(location.pathname))) run()
   }
 
   return (
@@ -56,13 +58,18 @@ function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => voi
         <span className="pl-side-label truncate font-serif text-sm font-semibold tracking-wide">PaperLens</span>
       </div>
 
-      {/* 导航 */}
+      {/* 导航：点击 = 打开对应全局页签（单实例去重，路由→页签对账在 AppShell） */}
       <nav className="flex flex-col gap-0.5 overflow-hidden p-2">
-        <NavLink to="/" onClick={onLibraryClick} className={({ isActive }) => itemCls(isActive || location.pathname.startsWith('/reader/'))} title="文库">
+        <NavLink to="/" onClick={(e) => navGuard(e, '/')} className={({ isActive }) => itemCls(isActive)} title="文库">
           <span className="pl-nav-icon"><Icon path={icons.library} /></span>
           <span className="pl-side-label">文库</span>
         </NavLink>
-        <NavLink to="/review" onClick={() => openReview('review')} className={({ isActive }) => itemCls(isActive || location.pathname === '/review')} title="生词复习">
+        <NavLink
+          to="/review"
+          onClick={(e) => navGuard(e, '/review', () => openReview('review'))}
+          className={({ isActive }) => itemCls(isActive || location.pathname === '/review')}
+          title="生词复习"
+        >
           <span className="pl-nav-icon"><Icon path={icons.review} /></span>
           <span className="pl-side-label">生词复习</span>
         </NavLink>
@@ -70,7 +77,14 @@ function NavContent({ pinned, onToggle }: { pinned: boolean; onToggle: () => voi
           <span className="pl-nav-icon"><Icon path={icons.chart} /></span>
           <span className="pl-side-label">阅读统计</span>
         </button>
-        <button onClick={() => navigate('/settings')} className={`${itemCls(false)} relative`} title="设置">
+        <button
+          onClick={() => {
+            const run = () => navigate('/settings')
+            if (!guardMdNav(run, pidFromPath(location.pathname))) run()
+          }}
+          className={`${itemCls(false)} relative`}
+          title="设置"
+        >
           <span className="pl-nav-icon"><Icon path={icons.settings} /></span>
           <span className="pl-side-label">设置</span>
           {hasUpdate && <span className="absolute right-2.5 top-2 h-1.5 w-1.5 rounded-full" style={{ background: 'var(--danger)' }} />}

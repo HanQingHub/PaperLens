@@ -19,6 +19,7 @@ export interface OcrProgress {
 interface Props {
   paper: Paper
   ocrProgress: OcrProgress | null
+  /** 打开论文（每次点击 = 新页签，同论文去重激活） */
   onOpen: (p: Paper) => void
   onEdit: (p: Paper) => void
   onToggleFav: (p: Paper) => void

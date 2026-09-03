@@ -10,6 +10,11 @@ import { parseAnnotation, useReader } from '../../stores/readerStore'
 import { useReaderBus } from '../../stores/readerBus'
 import { useWords } from '../../stores/words'
 import { useUi } from '../../stores/ui'
+import { useReaderTabs, takeDoc, stashDoc, getView, hasReaderTab } from '../../stores/readerTabs'
+import { guardMdNav } from './mdDirty'
+import { useCompareStore } from '../../stores/compareStore'
+import { useRefLink } from '../../stores/refLinkStore'
+import ComparePane from './ComparePane'
 import { clientRectsInPage, clientRectsToPdf, mergeClientRects } from '../../shared/coords'
 import { RENDER_DEBOUNCE_MS, PROGRESS_SAVE_THROTTLE_MS, ZOOM_STEP_RATIO, mapOcrPollStatus } from './constants'
 import '../../lib/pdfjsSetup'
@@ -75,6 +80,7 @@ const icons = {
   single: 'M4 4h16v16H4z',
   scroll: 'M4 4h16v7H4z M4 14h16v6H4z',
   words: 'M6 4h8a4 4 0 0 1 4 4v12H10a4 4 0 0 1-4-4V4z M9 9h6 M12 6v9',
+  split: 'M12 3v18 M4 5h6v14H4z M14 5h6v14h-6z',
 }
 
 export default function ReaderPage() {
@@ -106,16 +112,42 @@ export default function ReaderPage() {
   const searchOpen = useReader((s) => s.searchOpen)
   const outlineOpen = useReader((s) => s.outlineOpen)
   const annotationsCount = useReader((s) => s.annotations.length)
+  // 参考文献回链闪烁（下发到命中页渲染）
+  const refFlash = useRefLink((s) => s.flash)
 
   const openPanel = useUi((s) => s.openPanel)
   const wordsLoaded = useWords((s) => s.loaded)
   const loadWords = useWords((s) => s.load)
+
+  // 对照模式状态（对照论文从其他论文页签中选择）
+  const comparePaperId = useCompareStore((s) => s.paperId)
+  const compareRatio = useCompareStore((s) => s.ratio)
+  const setCompareRatio = useCompareStore((s) => s.setRatio)
+  const setComparePaper = useCompareStore((s) => s.setPaper)
+  const compareOpen = comparePaperId != null
+  const allTabs = useReaderTabs((s) => s.tabs)
+  // 对照源仅限已开论文页签：排除自身与当前对照，Markdown 论文不可对照
+  //（占位页签 fileType 为 pdf 先放行，rename 为 markdown 后自动消失）
+  const otherReaderTabs = useMemo(
+    () =>
+      allTabs.filter(
+        (t) =>
+          t.kind === 'reader' &&
+          t.paperId != null &&
+          t.paperId !== pid &&
+          t.paperId !== comparePaperId &&
+          t.fileType !== 'markdown',
+      ),
+    [allTabs, pid, comparePaperId],
+  )
 
   const [translateReq, setTranslateReq] = useState<TranslateRequest | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
   // 导出筛选（全部 = null）
   const [exportColor, setExportColor] = useState<string>('')
   const [exportType, setExportType] = useState<string>('')
+  // 对照模式：论文选择弹层开关
+  const [pickerOpen, setPickerOpen] = useState(false)
   // 无大纲时显示缩略图导航条（outline 加载完成后判定）
   const [outlineMissing, setOutlineMissing] = useState(false)
   const actionsRef = useRef<SelectionActions | null>(null)
@@ -181,14 +213,53 @@ export default function ReaderPage() {
     clearIrregularCache()
     clearPageBitmaps()
     clearRenderQueue()
+    // 标签切换 = 同路由参数变化（组件不卸载）：复位上一标签残留状态，
+    // scrollTopRef 残留会在无滚动切走时以错误比率覆写本标签进度
+    scrollTopRef.current = null
+    setTranslateReq(null)
+    setExportOpen(false)
+    setExportColor('')
+    setExportType('')
+    setPickerOpen(false) // 同路由切签组件不卸载，对照下拉须同步关闭
+    useRefLink.getState().close() // 换文档清回链会话（含中止旧扫描）
     let cancelled = false
     let task: ReturnType<typeof getDocument> | null = null
+    let liveDoc: import('pdfjs-dist').PDFDocumentProxy | null = null
+    let stashable = false // setDoc 成功才允许 stash（部分解析态不进缓存）
     const abort = new AbortController()
 
     const isAbort = (e: unknown) => /aborted|destroyed/i.test(String((e as Error)?.message ?? e ?? ''))
     const isWorkerRace = (e: unknown) => {
       const s = String((e as Error)?.message ?? e ?? '') + ' ' + String((e as Error)?.stack ?? '') + ' ' + String((e as { detail?: unknown })?.detail ?? '')
       return /sendWithPromise|messageHandler|Worker was destroyed/i.test(s)
+    }
+
+    const rebuildRemainingSizes = async (
+      doc: import('pdfjs-dist').PDFDocumentProxy,
+      start: number,
+    ) => {
+      const BATCH = 16
+      for (let s = start; s < doc.numPages; s += BATCH) {
+        if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+        const end = Math.min(s + BATCH, doc.numPages)
+        const batch = await Promise.all(
+          Array.from({ length: end - s }, async (_, i) => {
+            try {
+              return await doc.getPage(s + i + 1)
+            } catch (e) {
+              if (isWorkerRace(e)) throw e
+              throw e
+            }
+          }),
+        )
+        if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+        const real = batch.map((pg) => {
+          const vp = pg.getViewport({ scale: 1 })
+          return { w: vp.width, h: vp.height }
+        })
+        useReader.getState().appendPageSizes(s, real)
+        await new Promise((r) => setTimeout(r, 0))
+      }
     }
 
     const loadOnce = async () => {
@@ -199,10 +270,42 @@ export default function ReaderPage() {
         // 用极简占位尺寸，阅读器将走 MarkdownReader 分支
         const fullSizes = [{ w: 860, h: 1200 }]
         useReader.getState().setDoc(p, null as unknown as import('pdfjs-dist').PDFDocumentProxy, fullSizes, 1)
-        useUi.getState().setLastPaper(pid)
+        useReaderTabs.getState().rename(pid, { title: p.title, fileType: 'markdown' })
         const prog = await api.readingProgress(pid).catch(() => null)
         if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
         restoreRef.current = { page: Math.max(1, prog?.page_no ?? 1), ratio: prog?.scroll_y ?? 0 }
+        return
+      }
+      // 标签缓存命中：take 语义（命中即出缓存），跳过 fileToken + bytes 拉取 + getDocument。
+      // 切回标签不算重新打开（open_count 不 +1），进度保存走 open=false
+      const cached = takeDoc(pid)
+      if (cached) {
+        liveDoc = cached
+        const firstCount = Math.min(FIRST_PARSE_PAGES, cached.numPages)
+        const firstPages = await Promise.all(
+          Array.from({ length: firstCount }, async (_, i) => cached.getPage(i + 1)),
+        )
+        if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+        const sizes = firstPages.map((pg) => {
+          const vp = pg.getViewport({ scale: 1 })
+          return { w: vp.width, h: vp.height }
+        })
+        const first = sizes[0] ?? { w: 612, h: 792 }
+        const fullSizes = Array.from({ length: cached.numPages }, (_, i) => sizes[i] ?? first)
+        useReader.getState().setDoc(p, cached, fullSizes, cached.numPages)
+        stashable = true
+        useReaderTabs.getState().rename(pid, { title: p.title, fileType: 'pdf' })
+        const view = getView(pid)
+        if (view.scale) useReader.getState().setScale(view.scale)
+        await rebuildRemainingSizes(cached, firstCount)
+        if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+        const prog = await api.readingProgress(pid).catch(() => null)
+        if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
+        const rp = Math.max(1, Math.min(prog?.page_no ?? 1, cached.numPages))
+        const ratio = Math.max(0, Math.min(1, prog?.scroll_y ?? 0))
+        await saveProgress(pid, rp, ratio, false).catch(() => {})
+        restoreRef.current = { page: rp, ratio }
+        setRestoreTick((t) => t + 1)
         return
       }
       const tk = await api.fileToken(pid)
@@ -221,6 +324,7 @@ export default function ReaderPage() {
         task.destroy().catch(() => {})
         return
       }
+      liveDoc = doc
       const firstCount = Math.min(FIRST_PARSE_PAGES, doc.numPages)
       const firstPages = await Promise.all(
         Array.from({ length: firstCount }, async (_, i) => {
@@ -240,30 +344,13 @@ export default function ReaderPage() {
       const first = sizes[0] ?? { w: 612, h: 792 }
       const fullSizes = Array.from({ length: doc.numPages }, (_, i) => sizes[i] ?? first)
       useReader.getState().setDoc(p, doc!, fullSizes, doc.numPages)
-      useUi.getState().setLastPaper(pid)
+      stashable = true
+      useReaderTabs.getState().rename(pid, { title: p.title, fileType: 'pdf' })
+      const view = getView(pid)
+      if (view.scale) useReader.getState().setScale(view.scale)
 
-      const BATCH = 16
-      for (let start = firstCount; start < doc!.numPages; start += BATCH) {
-        if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
-        const end = Math.min(start + BATCH, doc!.numPages)
-        const batch = await Promise.all(
-          Array.from({ length: end - start }, async (_, i) => {
-            try {
-              return await doc!.getPage(start + i + 1)
-            } catch (e) {
-              if (isWorkerRace(e)) throw e
-              throw e
-            }
-          }),
-        )
-        if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
-        const real = batch.map((pg) => {
-          const vp = pg.getViewport({ scale: 1 })
-          return { w: vp.width, h: vp.height }
-        })
-        useReader.getState().appendPageSizes(start, real)
-        await new Promise((r) => setTimeout(r, 0))
-      }
+      await rebuildRemainingSizes(doc!, firstCount)
+      if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
 
       const prog = await api.readingProgress(pid).catch(() => null)
       if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
@@ -291,6 +378,15 @@ export default function ReaderPage() {
               /* ignore */
             }
             task = null
+            // 重试前归还首轮取出的缓存文档（take 语义已出缓存，不销毁即泄漏）
+            if (liveDoc && !stashable) {
+              try {
+                void (liveDoc as unknown as { destroy?: () => Promise<void> }).destroy?.()?.catch(() => {})
+              } catch {
+                /* ignore */
+              }
+              liveDoc = null
+            }
             continue
           }
           if (!cancelled) useReader.getState().setLoadError(e instanceof Error ? e.message : '加载失败')
@@ -302,9 +398,24 @@ export default function ReaderPage() {
     return () => {
       cancelled = true
       abort.abort()
-      ;(task as unknown as { destroy: () => Promise<void> } | null)?.destroy()?.catch(() => {})
-      // 卸载前刷新一次进度：读独立 scrollTopRef（程序化恢复不触发 scroll 事件，null=本次未滚动，跳过避免 ratio=0 覆盖）
+      // 文档归还（所有权不变式：显示中/缓存互斥）：标签仍开且 setDoc 成功 → 入缓存；
+      // 标签已关或加载未就绪 → 销毁
+      if (liveDoc) {
+        if (stashable && hasReaderTab(pid)) {
+          stashDoc(pid, liveDoc)
+        } else {
+          try {
+            void (liveDoc as unknown as { destroy?: () => Promise<void> }).destroy?.()?.catch(() => {})
+          } catch {
+            /* ignore */
+          }
+        }
+      } else {
+        ;(task as unknown as { destroy: () => Promise<void> } | null)?.destroy()?.catch(() => {})
+      }
+      // 卸载前刷新一次进度：读独立 scrollTopRef（null=本次未滚动，跳过避免残留值以错误比率覆盖）
       const st0 = useReader.getState()
+      useReaderTabs.getState().touchView(pid, { scale: st0.scale })
       const pg = st0.mode === 'continuous' ? st0.pageSizes[st0.currentPage - 1] : undefined
       if (pg && scrollTopRef.current !== null) {
         const top = pageTopOf(st0.currentPage - 1, st0.pageSizes, st0.scale)
@@ -332,6 +443,10 @@ export default function ReaderPage() {
     const h = (st.pageSizes[p - 1]?.h ?? 0) * st.scale
     el.scrollTop = top + ratio * h
   }, [])
+  // 链接注释内链跳转入口（PageView → 本页滚动）
+  const gotoPageByRatio = useCallback((pageNo: number, ratio: number) => {
+    scrollToPosition(pageNo, ratio)
+  }, [scrollToPosition])
 
   useEffect(() => {
     if (loading || !numPages || !restoreRef.current) return
@@ -461,6 +576,12 @@ export default function ReaderPage() {
     }
   }, [pid, goto])
 
+  // ── 参考文献回链：注册跳转（页号 1-based + 页内比率）──
+  useEffect(() => {
+    useRefLink.getState().registerNav((pageNo, ratio) => scrollToPosition(pageNo, ratio))
+    return () => useRefLink.getState().registerNav(null)
+  }, [scrollToPosition])
+
   // ── 阅读会话计时（窗口失焦暂停）──
   useEffect(() => {
     if (!Number.isFinite(pid)) return
@@ -504,6 +625,35 @@ export default function ReaderPage() {
     const w = st.pageSizes[st.currentPage - 1]?.w ?? 612
     st.setScale(Math.max(0.3, (el.clientWidth - 96) / w), true)
   }, [])
+
+  // ── 对照分隔条拖拽（rAF 合帧；0.3~0.7 由 compareStore 钳制）──
+  const mainAreaRef = useRef<HTMLDivElement>(null)
+  const onDividerDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      let raf = 0
+      let pendingX: number | null = null
+      const apply = () => {
+        raf = 0
+        if (pendingX == null || !mainAreaRef.current) return
+        const b = mainAreaRef.current.getBoundingClientRect()
+        setCompareRatio((pendingX - b.left) / b.width)
+        pendingX = null
+      }
+      const move = (ev: MouseEvent) => {
+        pendingX = ev.clientX
+        if (!raf) raf = requestAnimationFrame(apply)
+      }
+      const up = () => {
+        if (raf) cancelAnimationFrame(raf)
+        window.removeEventListener('mousemove', move)
+        window.removeEventListener('mouseup', up)
+      }
+      window.addEventListener('mousemove', move)
+      window.addEventListener('mouseup', up)
+    },
+    [setCompareRatio],
+  )
 
   // Ctrl+滚轮缩放（原生监听，passive=false 才能 preventDefault）
   // rAF 合帧：触控板 wheel 可达 60-120Hz，每帧只提交一次累计倍率，
@@ -596,6 +746,7 @@ export default function ReaderPage() {
         sentence: ctx.sentence,
         prev: ctx.prev,
         next: ctx.next,
+        paperId: pid,
         toolbarX: first.left + first.width / 2,
         toolbarY: below ? first.bottom + 10 : Math.max(52, first.top - 46),
         toolbarBelow: below,
@@ -603,7 +754,7 @@ export default function ReaderPage() {
     }, 0)
   }, [])
 
-  // ── 翻译请求（工具条 / 快捷键 T 共用）──
+  // ── 翻译请求（工具条 / 快捷键 T 共用；paperId 随选区，支持对照窗格来源）──
   const onTranslate = useCallback((mode: 'word' | 'dict') => {
     const sel = useReader.getState().selection
     if (!sel) return
@@ -611,6 +762,7 @@ export default function ReaderPage() {
     const isSentence = words.length > 6
     setTranslateReq({
       id: reqSeq.current++,
+      paperId: sel.paperId,
       word: mode === 'dict' || !isSentence ? (words[0] ?? '') : sel.text.slice(0, 80),
       sentence: sel.sentence || sel.text,
       prev: sel.prev,
@@ -634,10 +786,15 @@ export default function ReaderPage() {
           st.setLinking(null)
           return
         }
+        if (useRefLink.getState().entryNo != null) {
+          useRefLink.getState().goOrigin() // 回原位并关闭（计划 §4.4.3）
+          return
+        }
         setTranslateReq(null)
         setExportOpen(false)
         if (st.searchOpen) st.toggleSearch(false)
         if (st.outlineOpen) st.toggleOutline(false)
+        setPickerOpen(false)
         if (st.selection) {
           st.setSelection(null)
           window.getSelection()?.removeAllRanges()
@@ -802,7 +959,13 @@ export default function ReaderPage() {
           >
             重试
           </button>
-          <button className="btn" onClick={() => { useUi.getState().clearLastPaper(); navigate('/') }}>
+          <button
+            className="btn"
+            onClick={() => {
+              const run = () => navigate('/')
+              if (!guardMdNav(run, pid)) run()
+            }}
+          >
             返回文库
           </button>
         </div>
@@ -812,9 +975,16 @@ export default function ReaderPage() {
 
   return (
     <div className={`relative flex h-full flex-col overflow-hidden bg-bg-soft ${linking ? 'reader-linking' : ''}`}>
-      {/* ── 阅读器顶栏 ── */}
+      {/* ── 阅读器顶栏（全局页签栏在 AppShell 头部）── */}
       <div className="glass z-20 flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
-        <button className="rd-tbtn" title="返回文库" onClick={() => { useUi.getState().clearLastPaper(); navigate('/') }}>
+        <button
+          className="rd-tbtn"
+          title="返回文库"
+          onClick={() => {
+            const run = () => navigate('/')
+            if (!guardMdNav(run, pid)) run()
+          }}
+        >
           <I d={icons.back} />
         </button>
         <div className="mx-1 flex min-w-0 flex-1 items-center gap-2">
@@ -897,6 +1067,46 @@ export default function ReaderPage() {
             <button className="rd-tbtn" title="本文术语表" onClick={() => openPanel('glossary')}>
               <I d={icons.book} />
             </button>
+            <div className="relative">
+              <button
+                className={`rd-tbtn ${compareOpen ? 'rd-tbtn-on' : ''}`}
+                title={compareOpen ? '退出对照模式' : '双论文对照阅读（从其他论文页签选择）'}
+                onClick={() => {
+                  if (compareOpen) setComparePaper(null)
+                  else setPickerOpen((v) => !v)
+                }}
+              >
+                <I d={icons.split} />
+              </button>
+              {pickerOpen && (
+                <div className="menu-pop w-56">
+                  {otherReaderTabs.length === 0 ? (
+                    <p className="px-2 py-2 text-[11px] leading-4 text-text-faint">
+                      暂无其他论文页签，请先在文库打开
+                    </p>
+                  ) : (
+                    otherReaderTabs.map((t) => (
+                      <button
+                        key={t.id}
+                        className="block w-full truncate rounded-md px-2 py-1.5 text-left text-[12px] hover:bg-accent-soft"
+                        title={t.title}
+                        onClick={() => {
+                          setPickerOpen(false)
+                          if (t.paperId != null) {
+                            api
+                              .paper(t.paperId)
+                              .then(setComparePaper)
+                              .catch(() => toast('打开对照失败', 'error'))
+                          }
+                        }}
+                      >
+                        {t.title || '…'}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
 
             <div className="relative">
               <button className="rd-tbtn" title="导出批注" onClick={() => setExportOpen((v) => !v)}>
@@ -938,7 +1148,7 @@ export default function ReaderPage() {
       </div>
 
       {/* ── 主区域 ── */}
-      <div className="relative flex min-h-0 flex-1">
+      <div ref={mainAreaRef} className="relative flex min-h-0 flex-1">
         <div className="relative min-w-0 flex-1">
         {loading || isStale ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-text-faint">
@@ -975,11 +1185,30 @@ export default function ReaderPage() {
                         </div>
                       )
                     }
-                    return <PageView key={i} pdf={pdf!} pageIndex={i} active renderScale={renderScale} generation={loadGen} />
+                    return (
+                      <PageView
+                        key={i}
+                        pdf={pdf!}
+                        pageIndex={i}
+                        active
+                        renderScale={renderScale}
+                        generation={loadGen}
+                        onGotoPage={gotoPageByRatio}
+                        flashRects={refFlash?.pageIndex === i ? refFlash.rects : null}
+                      />
+                    )
                   })
                 : pdf &&
                   pageSizes[currentPage - 1] && (
-                    <PageView pdf={pdf} pageIndex={currentPage - 1} active renderScale={renderScale} generation={loadGen} />
+                    <PageView
+                      pdf={pdf}
+                      pageIndex={currentPage - 1}
+                      active
+                      renderScale={renderScale}
+                      generation={loadGen}
+                      onGotoPage={gotoPageByRatio}
+                      flashRects={refFlash?.pageIndex === currentPage - 1 ? refFlash.rects : null}
+                    />
                   )}
             </div>
           </div>
@@ -994,6 +1223,9 @@ export default function ReaderPage() {
             <SearchBar onEnterPage={(i) => scrollToPosition(i + 1, 0)} />
           </div>
         )}
+
+        {/* 参考文献回链浮条 */}
+        {!isMd && !loading && !isStale && <RefBar offset={outlineMissing} />}
 
         {/* OCR 状态条 */}
         {!isMd && !loading && !isStale && paper && (
@@ -1015,9 +1247,22 @@ export default function ReaderPage() {
         )}
         </div>
 
-        {/* 缩略图导航条（无大纲 PDF 的页级跳转兜底） */}
-        {!isMd && !loading && !isStale && outlineMissing && pdf && numPages > 0 && (
+        {/* 缩略图导航条（无大纲 PDF 的页级跳转兜底；对照模式下隐藏避免挤压） */}
+        {!isMd && !compareOpen && !loading && !isStale && outlineMissing && pdf && numPages > 0 && (
           <ThumbnailRail pdf={pdf} numPages={numPages} currentPage={currentPage} generation={loadGen} onGoto={(p) => gotoPage(p, false)} />
+        )}
+
+        {/* 对照窗格（自包含；跨标签保留） */}
+        {compareOpen && (
+          <>
+            <div
+              className="compare-divider"
+              title="拖拽调整宽度 · 双击复位"
+              onMouseDown={onDividerDown}
+              onDoubleClick={() => setCompareRatio(0.52)}
+            />
+            <ComparePane widthPercent={(1 - compareRatio) * 100} />
+          </>
         )}
       </div>
 
@@ -1025,7 +1270,9 @@ export default function ReaderPage() {
       {!isMd && toolbarVisible && selection && (
         <SelectionToolbar onTranslate={onTranslate} onToast={(m) => toast(m)} actionsRef={actionsRef} />
       )}
-      {!isMd && <TranslateCard paperId={pid} request={translateReq} onClose={() => setTranslateReq(null)} onToast={(m) => toast(m)} />}
+      {!isMd && translateReq && (
+        <TranslateCard paperId={translateReq.paperId} request={translateReq} onClose={() => setTranslateReq(null)} onToast={(m) => toast(m)} />
+      )}
     </div>
   )
 }
@@ -1214,6 +1461,55 @@ function SearchBar({ onEnterPage }: { onEnterPage: (pageIndex: number) => void }
           toggleSearch(false)
         }}
       >
+        ✕
+      </button>
+    </div>
+  )
+}
+
+// ── 参考文献回链浮条 ──────────────────────────────────────
+function RefBar({ offset }: { offset: boolean }) {
+  const direction = useRefLink((s) => s.direction)
+  const entryNo = useRefLink((s) => s.entryNo)
+  const hits = useRefLink((s) => s.hits)
+  const hitIdx = useRefLink((s) => s.hitIdx)
+  const scanning = useRefLink((s) => s.scanning)
+  if (!entryNo || !direction) return null
+  return (
+    <div
+      className={`glass fade-in absolute bottom-4 z-30 flex items-center gap-2 rounded-lg border border-border-strong px-3 py-2 text-xs shadow-[var(--shadow-2)] ${offset ? 'right-20' : 'right-3'}`}
+    >
+      {direction === 'backward' ? (
+        <>
+          <span className="text-text-soft">文献 [{entryNo}] → 正文</span>
+          {scanning && <span className="spinner" />}
+          {hits.length > 0 ? (
+            <>
+              <span className="min-w-20 text-center tabular-nums text-text-faint">
+                第 {hitIdx + 1}/{hits.length} 处 · p.{hits[hitIdx].page + 1}
+              </span>
+              <button className="rd-tbtn" title="上一处" onClick={() => useRefLink.getState().nextHit(-1)}>
+                ↑
+              </button>
+              <button className="rd-tbtn" title="下一处" onClick={() => useRefLink.getState().nextHit(1)}>
+                ↓
+              </button>
+            </>
+          ) : (
+            !scanning && <span className="text-text-faint">未找到引用</span>
+          )}
+        </>
+      ) : (
+        <>
+          <span className="text-text-soft">已定位参考文献 [{entryNo}]</span>
+          {scanning && <span className="spinner" />}
+        </>
+      )}
+      <span className="mx-0.5 h-4 w-px bg-border-strong" />
+      <button className="btn px-2 py-0.5 text-[11px]" onClick={() => useRefLink.getState().goOrigin()}>
+        返回原位
+      </button>
+      <button className="rd-tbtn" title="关闭 (Esc)" onClick={() => useRefLink.getState().close()}>
         ✕
       </button>
     </div>

@@ -1,9 +1,12 @@
 // 划词浮动工具条（毛玻璃 + 120ms 淡入）：翻译/释义/入生词/批注/高亮/摘录/复制
+// 选区携带 paperId：主窗格选区可批注；对照窗格选区仅翻译/入词/摘录/复制（批注数据
+// 归属主窗格文档，B/H 隐藏 + 动作守卫双保险防写错论文）
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
 import { useAuth } from '../../stores/auth'
 import { useReader, ANNO_COLORS } from '../../stores/readerStore'
 import { useReaderBus } from '../../stores/readerBus'
+import { useCompareStore } from '../../stores/compareStore'
 import { useWords } from '../../stores/words'
 import { createAnnotation } from '../../api/client'
 import { parseAnnotation } from '../../stores/readerStore'
@@ -77,6 +80,10 @@ export default function SelectionToolbar({
 
   if (!selection || !paper) return null
   const pageNo = selection.pageIndex + 1
+  // 选区来源裁决：对照窗格选区（paperId ≠ 主文档）动作落到对照论文，且不提供批注
+  const comparePaper = useCompareStore.getState().paper
+  const selPaper = selection.paperId === paper.id ? paper : comparePaper
+  const fromCompare = selection.paperId !== paper.id
 
   // ── 入生词库 ──
   const addWord = async () => {
@@ -93,7 +100,7 @@ export default function SelectionToolbar({
       await api.addWord({
         lemma,
         translation: '',
-        paper_id: paper.id,
+        paper_id: selection.paperId,
         sentence: selection.sentence,
         context: `${selection.prev} ▸ ${selection.next}`.trim(),
       })
@@ -112,6 +119,10 @@ export default function SelectionToolbar({
 
   // ── 五色高亮循环（句子批注）──
   const cycleHighlight = async () => {
+    if (fromCompare) {
+      onToast('对照窗格不支持批注')
+      return
+    }
     const color = ANNO_COLORS[colorIdx]
     setColorIdx((i) => (i + 1) % ANNO_COLORS.length)
     if (!selection.rects.length) return
@@ -143,7 +154,7 @@ export default function SelectionToolbar({
   const excerpt = async () => {
     try {
       await api.addExcerpt({
-        paper_id: paper.id,
+        paper_id: selection.paperId,
         page_no: pageNo,
         text: selection.text,
       })
@@ -153,9 +164,9 @@ export default function SelectionToolbar({
     }
   }
 
-  // ── 复制附引用 ──
+  // ── 复制附引用（引用后缀按选区来源论文的元数据）──
   const copy = async () => {
-    const cite = citationSuffix(paper.authors, paper.year, paper.title, pageNo)
+    const cite = citationSuffix(selPaper?.authors ?? null, selPaper?.year ?? null, selPaper?.title ?? null, pageNo)
     try {
       await navigator.clipboard.writeText(`${selection.text}\n${cite}`)
       onToast('已复制（附引用）')
@@ -166,6 +177,10 @@ export default function SelectionToolbar({
 
   // ── 连线批注 ──
   const startLinking = () => {
+    if (fromCompare) {
+      onToast('对照窗格不支持批注')
+      return
+    }
     setLinking({
       pageIndex: selection.pageIndex,
       rects: selection.rects.length ? selection.rects : [[0, 0, 10, 10]],
@@ -200,21 +215,25 @@ export default function SelectionToolbar({
       <Btn label={<b className="font-serif">T</b>} title={isSentence ? '翻译（整句）' : '翻译'} onClick={() => onTranslate('word')} />
       <Btn label="典" title="词典释义（ECDICT）" onClick={() => onTranslate('dict')} />
       <Btn label={<b>W</b>} title="入生词库" onClick={addWord} />
-      <Btn
-        label={<b>B</b>}
-        title="连线批注：从锚点拖出曲线到页边落卡"
-        onClick={startLinking}
-      />
-      <Btn
-        label={
-          <span className="relative flex h-4 w-4 items-center justify-center">
-            <span className={`anno-${ANNO_COLORS[colorIdx]} absolute inset-0 rounded-[3px]`} />
-            <b className="relative text-[10px]">H</b>
-          </span>
-        }
-        title={`高亮（${ANNO_COLORS[colorIdx]}，循环五色）`}
-        onClick={cycleHighlight}
-      />
+      {!fromCompare && (
+        <Btn
+          label={<b>B</b>}
+          title="连线批注：从锚点拖出曲线到页边落卡"
+          onClick={startLinking}
+        />
+      )}
+      {!fromCompare && (
+        <Btn
+          label={
+            <span className="relative flex h-4 w-4 items-center justify-center">
+              <span className={`anno-${ANNO_COLORS[colorIdx]} absolute inset-0 rounded-[3px]`} />
+              <b className="relative text-[10px]">H</b>
+            </span>
+          }
+          title={`高亮（${ANNO_COLORS[colorIdx]}，循环五色）`}
+          onClick={cycleHighlight}
+        />
+      )}
       <Btn label="❝" title="摘录" onClick={excerpt} />
       <Btn label={CopyIcon} title="复制附引用" onClick={copy} />
       {busy && <span className="px-1 text-[10px] text-text-faint">…</span>}

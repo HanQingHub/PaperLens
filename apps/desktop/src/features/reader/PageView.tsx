@@ -7,7 +7,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { TextLayer } from 'pdfjs-dist'
-import { useReader } from '../../stores/readerStore'
+import { useReader, type PdfRect } from '../../stores/readerStore'
 import { useAuth } from '../../stores/auth'
 import { useWords } from '../../stores/words'
 import { computeWordHighlights, type HighlightOptions, type WordBucket } from './highlight'
@@ -21,13 +21,18 @@ import {
 } from '../../shared/highlightGeometry'
 import SelectionOverlay from './SelectionOverlay'
 import { lookupHit } from './lemma'
-import { cssPointToPdf, clientRectsInPage, clientRectsToPdf, linkPath, mergeClientRects, pdfPointToCss, rectCenter } from '../../shared/coords'
+import { cssPointToPdf, clientRectsInPage, clientRectsToPdf, linkPath, mergeClientRects, pdfPointToCss, pdfRectToCss, rectCenter } from '../../shared/coords'
 import { scheduleRender, stashPageBitmap, takePageBitmap } from './renderScheduler'
 import { OcrOverlay } from './ocrOverlay'
 import { ensurePageText, extractSentenceContext, ocrPageText } from './readerUtils'
+import { getPageLinks, pointInPdfRects, resolveDest, type PageLink } from './linkLayer'
+import { getPageMarkers, type PageMarkers } from './refLinks'
+import { useRefLink } from '../../stores/refLinkStore'
+import { openExternal } from '../../shared/openExternal'
 import WordHoverCard from '../words/WordHoverCard'
 import AnnotationOverlay from '../annotations/AnnotationOverlay'
 import { DraftCard } from '../annotations/NoteCard'
+import { toast } from '../shared/Toast'
 
 /** canvas 单边像素上限：超出则降低输出倍率（防超大页/高缩放爆内存与慢渲染） */
 const MAX_CANVAS_DIM = 4096
@@ -50,10 +55,14 @@ interface PageViewProps {
   prerender?: boolean
   /** 文档世代：切换文档时使旧 pdf 的渲染任务失效 */
   generation?: number
+  /** 链接注释内部跳转回调（页号 1-based + 页内比率）；不传则内链不生效 */
+  onGotoPage?: (pageNo: number, ratio: number) => void
+  /** 文献回链闪烁矩形（PDF 用户空间；由 ReaderPage 从 refLinkStore 下发到命中页） */
+  flashRects?: PdfRect[] | null
 }
 
 // memo：父级（OCR 轮询/进度保存等）触发的重渲染不再波及页面子树
-const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, prerender = false, generation }: PageViewProps) {
+const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, prerender = false, generation, onGotoPage, flashRects }: PageViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textDivRef = useRef<HTMLDivElement>(null)
   const pageRef = useRef<HTMLDivElement>(null)
@@ -104,6 +113,119 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
   const stretch = hiScale > 0 ? scale / hiScale : 1
   const visible = active && !prerender
   const ocrMode = !!ocrBlocks
+
+  // ── 链接注释（内链/外链可点）：渲染完成后从文档级缓存异步取回 ──
+  const [pageLinks, setPageLinks] = useState<PageLink[] | null>(null)
+  const [hoverLink, setHoverLink] = useState<PageLink | null>(null)
+  useEffect(() => {
+    if (!rendered) {
+      setPageLinks(null)
+      setHoverLink(null)
+      return
+    }
+    let stop = false
+    getPageLinks(pdf, pageIndex)
+      .then((l) => {
+        if (!stop) setPageLinks(l)
+      })
+      .catch(() => {
+        if (!stop) setPageLinks([])
+      })
+    return () => {
+      stop = true
+    }
+  }, [pdf, pageIndex, rendered])
+
+  // ── 文献回链标记（行首 [n] 条目 / 正文引用）：渲染后空闲时段预扫（页级缓存）──
+  const [refMarkers, setRefMarkers] = useState<PageMarkers | null>(null)
+  useEffect(() => {
+    if (!rendered || ocrMode) {
+      setRefMarkers(null)
+      return
+    }
+    let stop = false
+    const w = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+      cancelIdleCallback?: (id: number) => void
+    }
+    let idle = 0
+    let timer = 0
+    const run = () => {
+      getPageMarkers(pdf, pageIndex)
+        .then((m) => {
+          if (!stop) setRefMarkers(m)
+        })
+        .catch(() => {
+          if (!stop) setRefMarkers(null)
+        })
+    }
+    if (typeof w.requestIdleCallback === 'function') {
+      idle = w.requestIdleCallback(run, { timeout: 800 })
+    } else {
+      timer = window.setTimeout(run, 0)
+    }
+    return () => {
+      stop = true
+      if (idle) w.cancelIdleCallback?.(idle)
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [pdf, pageIndex, rendered, ocrMode])
+
+  // 链接命中测试（点击/悬停共用）：视口坐标 → PDF 用户空间 → 注释矩形匹配
+  const linkAtEvent = useCallback(
+    (e: { clientX: number; clientY: number }): PageLink | null => {
+      const box = pageRef.current?.getBoundingClientRect()
+      if (!box || !pageLinks?.length) return null
+      const p = cssPointToPdf(e.clientX - box.left, e.clientY - box.top, geom)
+      return pageLinks.find((l) => pointInPdfRects(p.x, p.y, l.rects)) ?? null
+    },
+    [pageLinks, geom],
+  )
+
+  const onLinkClick = useCallback(
+    (e: React.MouseEvent): boolean => {
+      if (!window.getSelection()?.isCollapsed) return false // 划词流程不触发
+      const hit = linkAtEvent(e)
+      if (!hit) return false
+      if (hit.kind === 'external') {
+        openExternal(hit.url).catch(() => toast('外部链接打开失败', 'error'))
+      } else if (onGotoPage) {
+        resolveDest(pdf, hit.dest).then((t) => {
+          if (t) onGotoPage(t.pageNo, t.ratio)
+        })
+      }
+      return true
+    },
+    [linkAtEvent, onGotoPage, pdf],
+  )
+
+  // ── 参考文献回链（PDF 无原生链接时的兜底）：
+  //    点文献条目行首 [n] → 找正文引用（backward）；点正文引用 [n] → 找文献条目（forward）。
+  //    有原生内链时 onLinkClick 已命中返回，不会走到这里（重叠区归链接）
+  const onRefClick = useCallback(
+    (e: React.MouseEvent): boolean => {
+      if (!window.getSelection()?.isCollapsed) return false // 划词流程不触发
+      if (!refMarkers || (refMarkers.bib.size === 0 && refMarkers.cites.length === 0)) return false
+      const box = pageRef.current?.getBoundingClientRect()
+      if (!box) return false
+      const p = cssPointToPdf(e.clientX - box.left, e.clientY - box.top, geom)
+      // 条目标签优先（lineStart 语义，与正文引用矩形不重叠）
+      for (const [n, rects] of refMarkers.bib) {
+        if (pointInPdfRects(p.x, p.y, rects)) {
+          useRefLink.getState().startForward(n, pageIndex, useReader.getState().paper?.id ?? 0)
+          return true
+        }
+      }
+      for (const c of refMarkers.cites) {
+        if (pointInPdfRects(p.x, p.y, c.rects)) {
+          useRefLink.getState().startBackward(c.n, pageIndex + 1, useReader.getState().paper?.id ?? 0)
+          return true
+        }
+      }
+      return false
+    },
+    [refMarkers, geom, pageIndex],
+  )
 
   // ── canvas + textLayer 渲染（调度队列 + 离屏双缓冲 + 位图缓存）──
   useEffect(() => {
@@ -443,6 +565,7 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
         sentence: ctx.sentence,
         prev: ctx.prev,
         next: ctx.next,
+        paperId: useReader.getState().paper?.id ?? 0,
         toolbarX: first.left + first.width / 2,
         toolbarY: first.bottom + 10,
         toolbarBelow: true,
@@ -524,7 +647,7 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
       data-page-index={pageIndex}
       data-page-no={pageIndex + 1}
       className="page-wrapper relative mx-auto mb-4 shrink-0"
-      style={{ width: cssW, height: cssH, visibility: visible ? 'visible' : 'hidden' }}
+      style={{ width: cssW, height: cssH, visibility: visible ? 'visible' : 'hidden', cursor: hoverLink ? 'pointer' : undefined }}
       onMouseDown={(e) => {
         hideHover()
         onStageMouseDown(e)
@@ -534,15 +657,27 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
         if (hoverCardRef.current?.contains(e.target as Node)) return
         onWordHover(e)
       }}
+      onMouseMove={(e) => {
+        // 链接悬停（与 onMouseOver 生词悬停并行）：命中状态变化才 setState
+        //（pageLinks 元素引用稳定，避免高频重渲染）
+        const hit = linkAtEvent(e)
+        if (hit !== hoverLink) setHoverLink(hit)
+      }}
       onMouseOut={(e) => {
         // 指针从词语移入悬停卡（卡片与词之间有间隙）时不收卡，保证卡内按钮可达
         const rt = e.relatedTarget as Node | null
         if (rt && hoverCardRef.current?.contains(rt)) return
         hideHover()
+        if (hoverLink) setHoverLink(null)
       }}
       onClick={(e) => {
-        // 高亮生词词元 → 释义查询闭环；其余点击走句子批注浮条命中
-        if (!onWordClick(e)) onStageClick(e)
+        // 点击链：① 原生链接（内链跳转/外链浏览器）→ ② 高亮生词词元释义
+        // → ③ 参考文献回链兜底 → ④ 句子批注浮条
+        if (onLinkClick(e)) return
+        if (!onWordClick(e)) {
+          if (onRefClick(e)) return
+          onStageClick(e)
+        }
       }}
     >
       {/* 白底纸张（未渲染时做骨架占位） */}
@@ -613,6 +748,22 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
             )}
           </svg>
         )}
+
+        {/* 链接悬停描边（命中层无 pointer-events，仅视觉指示） */}
+        {hoverLink && (
+          <svg className="link-hover-svg" width={stageW} height={stageH}>
+            {hoverLink.rects.map((r, i) => {
+              const { left, top, width, height } = pdfRectToCss(r, stageGeom)
+              return <rect key={i} x={left} y={top} width={width} height={height} />
+            })}
+          </svg>
+        )}
+
+        {/* 文献回链闪烁提示（目标定位后 2.5s 淡出） */}
+        {flashRects?.map((r, i) => {
+          const { left, top, width, height } = pdfRectToCss(r, stageGeom)
+          return <div key={i} className="ref-flash-rect" style={{ left, top, width, height }} />
+        })}
 
         {/* 批注层：句子高亮 + 信息操作条 + word_note 锚点/连线/卡片 */}
         {rendered && (

@@ -33,6 +33,18 @@ fn get_data_dir() -> String {
     registry::resolve_data_dir()
 }
 
+/// Open an external link in the system browser (PDF external links).
+/// Only http/https are allowed; tauri-plugin-shell's `open` is deprecated in
+/// favor of the opener plugin but kept here to avoid a new plugin dependency.
+#[tauri::command]
+fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("unsupported url scheme".into());
+    }
+    use tauri_plugin_shell::ShellExt;
+    app.shell().open(url, None).map_err(|e| e.to_string())
+}
+
 /// Record panics to `{data dir}\crash.log`. Release builds strip symbols
 /// (`profile.release.strip`), so this log line is the only crash trace left.
 fn install_panic_hook() {
@@ -75,7 +87,8 @@ pub fn run() {
             shortcut::fix_shortcut,
             app_icon::get_app_icon,
             app_icon::set_app_icon,
-            get_data_dir
+            get_data_dir,
+            open_external
         ])
         .setup(|app| {
             // 撤销 tao 在顶层窗口注册的 OLE FileDropHandler。tao 默认 drag_and_drop=true

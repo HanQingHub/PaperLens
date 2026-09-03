@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { insertLink, setHeading, toggleWrap } from '../features/reader/markdownEdit'
+import { insertLink, insertTable, setHeading, toggleFence, toggleLinePrefix, toggleWrap } from '../features/reader/markdownEdit'
 
 describe('toggleWrap', () => {
   it('无选区插入空对并光标居中', () => {
@@ -139,6 +139,86 @@ describe('setHeading', () => {
 
   it('非法区间返回 null', () => {
     expect(setHeading('ab', 2, 1, 1)).toBeNull()
+  })
+})
+
+describe('toggleLinePrefix', () => {
+  it('单行加前缀（行首锚点不加 delta，沿 setHeading 口径）', () => {
+    const op = toggleLinePrefix('ab', 0, 2, '- ')
+    expect(op && apply('ab', op)).toBe('- ab')
+    expect(op).toMatchObject({ newStart: 0, newEnd: 4 })
+  })
+
+  it('混合态加前缀：已有行跳过（免双前缀）', () => {
+    const op = toggleLinePrefix('- a\nb', 0, 5, '- ')
+    expect(op && apply('- a\nb', op)).toBe('- a\n- b')
+  })
+
+  it('全有前缀 → 逐行去前缀', () => {
+    const op = toggleLinePrefix('- ab', 0, 4, '- ')
+    expect(op && apply('- ab', op)).toBe('ab')
+  })
+
+  it('多行半有 → 非空行全加（含空行跳过）', () => {
+    const op = toggleLinePrefix('- a\nb\n\nc', 0, 8, '- ')
+    expect(op && apply('- a\nb\n\nc', op)).toBe('- a\n- b\n\n- c')
+  })
+
+  it('多行全有 → 全去', () => {
+    const op = toggleLinePrefix('> a\n> b', 0, 7, '> ')
+    expect(op && apply('> a\n> b', op)).toBe('a\nb')
+  })
+
+  it('选区以换行结尾末行不计', () => {
+    const op = toggleLinePrefix('ab\ncd', 0, 3, '- ')
+    expect(op && apply('ab\ncd', op)).toBe('- ab\ncd')
+  })
+
+  it('全空选区 → null（禁 undo 污染）', () => {
+    expect(toggleLinePrefix('\n\n', 0, 2, '- ')).toBeNull()
+    expect(toggleLinePrefix('', 0, 0, '- ')).toBeNull()
+  })
+
+  it('越界 → null', () => {
+    expect(toggleLinePrefix('ab', 2, 1, '- ')).toBeNull()
+    expect(toggleLinePrefix('ab', -1, 1, '- ')).toBeNull()
+    expect(toggleLinePrefix('ab', 0, 9, '- ')).toBeNull()
+  })
+})
+
+describe('toggleFence', () => {
+  it('无选区插入空围栏并光标居中', () => {
+    const op = toggleFence('ab', 1, 1)
+    expect(op && apply('ab', op)).toBe('a```\n\n```b')
+    expect(op).toMatchObject({ newStart: 5, newEnd: 5 })
+  })
+
+  it('选中行包裹', () => {
+    const op = toggleFence('ab\ncd', 0, 5)
+    expect(op && apply('ab\ncd', op)).toBe('```\nab\ncd\n```')
+  })
+
+  it('已包裹 → 解包', () => {
+    const src = '```\nab\n```'
+    const op = toggleFence(src, 0, src.length)
+    expect(op && apply(src, op)).toBe('ab')
+  })
+
+  it('非法区间返回 null', () => {
+    expect(toggleFence('ab', 2, 1)).toBeNull()
+  })
+})
+
+describe('insertTable', () => {
+  it('光标处插入模板并落首单元格', () => {
+    const op = insertTable('ab', 1, 1)
+    expect(apply('ab', op)).toBe('a|  |  |\n|---|---|\n|  |  |b')
+    expect(op).toMatchObject({ newStart: 3, newEnd: 3 })
+  })
+
+  it('有选区删选区后插入', () => {
+    const op = insertTable('ab', 0, 2)
+    expect(apply('ab', op)).toBe('|  |  |\n|---|---|\n|  |  |')
   })
 })
 

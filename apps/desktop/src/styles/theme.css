@@ -1025,3 +1025,164 @@ a:focus-visible {
   line-height: 15px;
   color: var(--text-soft);
 }
+
+/* ── 全局页签 / 对照模式 / 链接层 / 文献回链 ─────────────────── */
+
+/* 全局页签栏（AppShell 头部行内，与账号/退出登录同一行） */
+.tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.tab-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  max-width: 180px;
+  min-width: 56px;
+  flex: 0 1 auto;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+}
+.tab-item:hover {
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
+}
+.tab-item--active {
+  color: var(--text);
+  background: var(--bg-soft);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.tab-item--active::before {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.tab-item-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tab-item-type {
+  font-size: 9px;
+  line-height: 13px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  opacity: 0.55;
+}
+.tab-item:hover .tab-close {
+  opacity: 1;
+}
+.tab-close:hover {
+  background: var(--border);
+  color: var(--danger);
+}
+
+/* 链接悬停描边（与 anno-layer/anno-links 同 z 层，均 pointer-events:none） */
+.link-hover-svg {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  overflow: visible;
+}
+.link-hover-svg rect {
+  fill: rgba(51, 101, 138, 0.08);
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+
+/* 文献回链闪烁提示（目标定位后 2.5s 淡出） */
+.ref-flash-rect {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  border: 2px solid rgba(245, 197, 92, 0.9);
+  border-radius: 2px;
+  animation: refFlash 2.5s ease-out forwards;
+}
+@keyframes refFlash {
+  0% {
+    background: rgba(245, 197, 92, 0.35);
+  }
+  70% {
+    background: rgba(245, 197, 92, 0.12);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+/* 对照模式分隔条与窗格 */
+.compare-divider {
+  width: 5px;
+  cursor: col-resize;
+  flex-shrink: 0;
+  background: var(--border);
+  transition: background var(--dur-1) var(--ease);
+}
+.compare-divider:hover {
+  background: var(--accent);
+}
+.compare-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-soft);
+}
+.compare-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 6px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.compare-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

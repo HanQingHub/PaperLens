@@ -7,6 +7,9 @@ import { api } from '../../api/client'
 import type { Paper, Project } from '../../api/types'
 import { useAuth } from '../../stores/auth'
 import { useLibraryUi } from '../../stores/libraryUi'
+import { useReaderTabs, paperToTabInput } from '../../stores/readerTabs'
+import { useCompareStore } from '../../stores/compareStore'
+import { getMdDirty, guardMdNav } from '../reader/mdDirty'
 import type { LibraryView, SortKey } from './sort'
 import { ConfirmModal } from '../shared/Modal'
 import { toast } from '../shared/Toast'
@@ -344,7 +347,16 @@ export default function LibraryPage() {
     }
   }
 
-  const openPaper = (p: Paper) => navigate(`/reader/${p.id}`)
+  /** 打开论文：每次点击开一个新页签（同论文已开则激活该页签）；
+   *  页签满容被拒时不导航 */
+  const openPaper = (p: Paper) => {
+    const ok = useReaderTabs.getState().openReaderTab(paperToTabInput(p))
+    if (!ok) {
+      toast('页签已达上限，请先关闭部分页签', 'error')
+      return
+    }
+    navigate(`/reader/${p.id}`)
+  }
 
   const toggleFav = async (p: Paper) => {
     try {
@@ -372,9 +384,23 @@ export default function LibraryPage() {
 
   const removePaper = async () => {
     if (!deleting) return
+    // 脏 MD 先确认（删除即关签，未保存草稿随之丢失；确认框全局单例，确认后执行真删除）
+    if (getMdDirty() === deleting.id) {
+      const id = deleting.id
+      const run = () => void doRemove(id)
+      if (guardMdNav(run)) return
+    }
+    await doRemove(deleting.id)
+  }
+
+  const doRemove = async (id: number) => {
     setDeleteBusy(true)
     try {
-      await api.deletePaper(deleting.id)
+      await api.deletePaper(id)
+      // 联动：关闭对应标签；若为对照窗格当前论文则一并退出对照
+      useReaderTabs.getState().closeReaderTab(id)
+      const cmp = useCompareStore.getState()
+      if (cmp.paperId === id) cmp.setPaper(null)
       setDeleting(null)
       refreshPapers()
       refreshProjects()
@@ -450,11 +476,25 @@ export default function LibraryPage() {
     refreshProjects()
   }
   const bulkDelete = async () => {
+    // 批量含脏 MD 先确认（确认后执行真删除）
+    const dirty = getMdDirty()
+    if (dirty != null && selected.has(dirty)) {
+      const run = () => void doBulkDelete()
+      if (guardMdNav(run)) return
+    }
+    await doBulkDelete()
+  }
+
+  const doBulkDelete = async () => {
     setBulkDeleteBusy(true)
     let failed = 0
     for (const id of [...selected]) {
       try {
         await api.deletePaper(id)
+        // 联动：关闭对应标签；对照窗格当前论文被删则退出对照
+        useReaderTabs.getState().closeReaderTab(id)
+        const cmp = useCompareStore.getState()
+        if (cmp.paperId === id) cmp.setPaper(null)
       } catch {
         failed++
         break
