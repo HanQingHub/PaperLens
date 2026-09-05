@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { LLMModelInfo } from '../../api/types'
 import { useAuth } from '../../stores/auth'
+import { IconCheck } from '../../components/shared/Icon'
 import { toast } from '../shared/Toast'
 
 const MODEL_DESC: Record<string, string> = {
@@ -124,7 +125,7 @@ export default function WizardPage() {
                         : 'bg-bg-soft text-text-faint'
                   }`}
                 >
-                  {state === 'done' ? '✓' : n}
+                  {state === 'done' ? <IconCheck size={11} /> : n}
                 </div>
                 <span className={`text-xs transition-colors ${state === 'cur' ? 'text-accent' : 'text-text-faint'}`}>{label}</span>
                 {n < 3 && <span className={`pl-step-line mx-1 h-px w-10 bg-border-strong ${step > n ? 'pl-step-line--done' : ''}`} />}

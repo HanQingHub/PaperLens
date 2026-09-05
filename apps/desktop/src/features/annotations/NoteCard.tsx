@@ -4,6 +4,7 @@ import { createAnnotation, patchAnnotation, type AnnotationRaw } from '../../api
 import { useReader, parseAnnotation, type ReaderAnnotation, type PdfRect } from '../../stores/readerStore'
 import { cssPointToPdf, pdfPointToCss, type PageGeom } from '../../shared/coords'
 import { FLASH_ANIM_MS } from '../../shared/constants'
+import { IconPencil, IconX } from '../../components/shared/Icon'
 import { toast } from '../shared/Toast'
 
 interface NoteCardProps {
@@ -105,24 +106,24 @@ export default function NoteCard({ anno, geom, onDelete, onSaved }: NoteCardProp
         <span className="text-[10px] font-medium text-accent">笔记</span>
         <span className="flex items-center gap-1">
           <button
-            className="px-0.5 text-[11px] text-text-faint hover:text-accent"
+            className="flex items-center px-0.5 text-[11px] text-text-faint hover:text-accent"
             title="编辑"
             onClick={(e) => {
               e.stopPropagation()
               setEditing(true)
             }}
           >
-            ✎
+            <IconPencil size={11} />
           </button>
           <button
-            className="px-0.5 text-[11px] text-text-faint hover:text-danger"
+            className="flex items-center px-0.5 text-[11px] text-text-faint hover:text-danger"
             title="删除"
             onClick={(e) => {
               e.stopPropagation()
               onDelete()
             }}
           >
-            ✕
+            <IconX size={11} />
           </button>
         </span>
       </div>
@@ -138,7 +139,7 @@ export default function NoteCard({ anno, geom, onDelete, onSaved }: NoteCardProp
         />
       ) : (
         <div
-          className="flex-1 cursor-pointer overflow-hidden whitespace-pre-wrap px-2.5 py-1.5 text-xs leading-relaxed"
+          className="u-break flex-1 cursor-pointer overflow-hidden whitespace-pre-wrap px-2.5 py-1.5 text-xs leading-relaxed"
           onDoubleClick={() => setEditing(true)}
           onClick={(e) => {
             e.stopPropagation()
@@ -238,7 +239,7 @@ export function DraftCard({
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => setLinking(null)}
         >
-          ✕
+          <IconX size={11} />
         </button>
       </div>
       <textarea

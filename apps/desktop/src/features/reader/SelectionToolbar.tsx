@@ -12,6 +12,7 @@ import { createAnnotation } from '../../api/client'
 import { parseAnnotation } from '../../stores/readerStore'
 import { citationSuffix, wordCount } from './readerUtils'
 import { lemmaCandidates, resolveLemma } from './lemma'
+import { IconQuote } from '../../components/shared/Icon'
 
 /** 工具条动作句柄：ReaderPage 快捷键（T/B/W/H）通过 actionsRef 复用 */
 export interface SelectionActions {
@@ -234,7 +235,7 @@ export default function SelectionToolbar({
           onClick={cycleHighlight}
         />
       )}
-      <Btn label="❝" title="摘录" onClick={excerpt} />
+      <Btn label={<IconQuote size={13} />} title="摘录" onClick={excerpt} />
       <Btn label={CopyIcon} title="复制附引用" onClick={copy} />
       {busy && <span className="px-1 text-[10px] text-text-faint">…</span>}
     </div>

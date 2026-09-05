@@ -30,6 +30,8 @@ import {
   extractSentenceContext,
   ocrPageText,
 } from './readerUtils'
+import { menuPanelClass, MenuOverlay } from '../shared/Dropdown'
+import { IconStar, IconX } from '../../components/shared/Icon'
 import { toast } from '../shared/Toast'
 
 /** 页间垂直间距（与 page-wrapper 的 mb-4 一致） */
@@ -150,6 +152,18 @@ export default function ReaderPage() {
   const [pickerOpen, setPickerOpen] = useState(false)
   // 无大纲时显示缩略图导航条（outline 加载完成后判定）
   const [outlineMissing, setOutlineMissing] = useState(false)
+  // 下拉弹层 Esc 关闭（与 shared/Dropdown 一致的淡入淡出范式）
+  useEffect(() => {
+    if (!pickerOpen && !exportOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPickerOpen(false)
+        setExportOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [pickerOpen, exportOpen])
   const actionsRef = useRef<SelectionActions | null>(null)
   const reqSeq = useRef(1)
   const rafScroll = useRef(0)
@@ -991,7 +1005,11 @@ export default function ReaderPage() {
           <span className="truncate text-[13px] font-medium" title={isStale ? undefined : paper?.title}>
             {isStale ? '…' : (paper?.title ?? '…')}
           </span>
-          {!isStale && paper?.is_favorite && <span className="text-[11px] text-accent">★</span>}
+          {!isStale && paper?.is_favorite && (
+            <span className="flex shrink-0 items-center text-accent" title="已收藏">
+              <IconStar size={11} />
+            </span>
+          )}
         </div>
 
         {!isMd && <PageIndicator numPages={numPages} onCommit={gotoPage} />}
@@ -1078,65 +1096,71 @@ export default function ReaderPage() {
               >
                 <I d={icons.split} />
               </button>
-              {pickerOpen && (
-                <div className="menu-pop w-56">
-                  {otherReaderTabs.length === 0 ? (
-                    <p className="px-2 py-2 text-[11px] leading-4 text-text-faint">
-                      暂无其他论文页签，请先在文库打开
-                    </p>
-                  ) : (
-                    otherReaderTabs.map((t) => (
-                      <button
-                        key={t.id}
-                        className="block w-full truncate rounded-md px-2 py-1.5 text-left text-[12px] hover:bg-accent-soft"
-                        title={t.title}
-                        onClick={() => {
-                          setPickerOpen(false)
-                          if (t.paperId != null) {
-                            api
-                              .paper(t.paperId)
-                              .then(setComparePaper)
-                              .catch(() => toast('打开对照失败', 'error'))
-                          }
-                        }}
-                      >
-                        {t.title || '…'}
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
+              {pickerOpen && <MenuOverlay onClose={() => setPickerOpen(false)} />}
+              <div className={menuPanelClass(pickerOpen, 'right-0 top-full mt-1 max-h-64 w-56 overflow-auto')}>
+                {otherReaderTabs.length === 0 ? (
+                  <span className="block px-2.5 py-1.5 text-xs text-text-faint">暂无其他论文页签，请先在文库打开</span>
+                ) : (
+                  otherReaderTabs.map((t) => (
+                    <button
+                      key={t.id}
+                      className="flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors text-text hover:bg-bg-soft"
+                      title={t.title}
+                      onClick={() => {
+                        setPickerOpen(false)
+                        if (t.paperId != null) {
+                          api
+                            .paper(t.paperId)
+                            .then(setComparePaper)
+                            .catch(() => toast('打开对照失败', 'error'))
+                        }
+                      }}
+                    >
+                      <span className="min-w-0 truncate">{t.title || '…'}</span>
+                    </button>
+                  ))
+                )}
+              </div>
             </div>
 
             <div className="relative">
               <button className="rd-tbtn" title="导出批注" onClick={() => setExportOpen((v) => !v)}>
                 <I d={icons.export} />
               </button>
-              {exportOpen && (
-                <div className="menu-pop w-44 p-2">
-                  <div className="mb-1.5 flex items-center gap-1.5">
-                    <span className="w-8 text-[11px] text-text-faint">颜色</span>
-                    <select className="input flex-1 py-0.5 text-[11px]" value={exportColor} onChange={(e) => setExportColor(e.target.value)}>
-                      <option value="">全部</option>
-                      <option value="yellow">黄</option>
-                      <option value="green">绿</option>
-                      <option value="blue">蓝</option>
-                      <option value="pink">粉</option>
-                      <option value="purple">紫</option>
-                    </select>
-                  </div>
-                  <div className="mb-2 flex items-center gap-1.5">
-                    <span className="w-8 text-[11px] text-text-faint">类型</span>
-                    <select className="input flex-1 py-0.5 text-[11px]" value={exportType} onChange={(e) => setExportType(e.target.value)}>
-                      <option value="">全部</option>
-                      <option value="word_note">笔记</option>
-                      <option value="sentence">高亮</option>
-                    </select>
-                  </div>
-                  <button onClick={exportPdf}>写回 PDF 副本</button>
-                  <button onClick={exportMd}>Markdown 列表</button>
+              {exportOpen && <MenuOverlay onClose={() => setExportOpen(false)} />}
+              <div className={menuPanelClass(exportOpen, 'right-0 top-full mt-1 w-44 p-2')}>
+                <div className="mb-1.5 flex items-center gap-1.5">
+                  <span className="w-8 text-[11px] text-text-faint">颜色</span>
+                  <select className="input flex-1 py-0.5 text-[11px]" value={exportColor} onChange={(e) => setExportColor(e.target.value)}>
+                    <option value="">全部</option>
+                    <option value="yellow">黄</option>
+                    <option value="green">绿</option>
+                    <option value="blue">蓝</option>
+                    <option value="pink">粉</option>
+                    <option value="purple">紫</option>
+                  </select>
                 </div>
-              )}
+                <div className="mb-2 flex items-center gap-1.5">
+                  <span className="w-8 text-[11px] text-text-faint">类型</span>
+                  <select className="input flex-1 py-0.5 text-[11px]" value={exportType} onChange={(e) => setExportType(e.target.value)}>
+                    <option value="">全部</option>
+                    <option value="word_note">笔记</option>
+                    <option value="sentence">高亮</option>
+                  </select>
+                </div>
+                <button
+                  className="flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors text-text hover:bg-bg-soft"
+                  onClick={exportPdf}
+                >
+                  <span className="min-w-0 truncate">写回 PDF 副本</span>
+                </button>
+                <button
+                  className="flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors text-text hover:bg-bg-soft"
+                  onClick={exportMd}
+                >
+                  <span className="min-w-0 truncate">Markdown 列表</span>
+                </button>
+              </div>
             </div>
           </>
         )}
@@ -1247,9 +1271,21 @@ export default function ReaderPage() {
         )}
         </div>
 
-        {/* 缩略图导航条（无大纲 PDF 的页级跳转兜底；对照模式下隐藏避免挤压） */}
+        {/* 缩略图导航条（无大纲 PDF 的页级跳转兜底；对照模式下隐藏避免挤压）。
+            continuous 下 gotoPage 不滚动，故优先走 readerBus.gotoRef（scrollToPosition），
+            single 下 scrollToPosition 直接 setCurrentPage；continuous 的 currentPage 靠 onScroll 跟随更新 */}
         {!isMd && !compareOpen && !loading && !isStale && outlineMissing && pdf && numPages > 0 && (
-          <ThumbnailRail pdf={pdf} numPages={numPages} currentPage={currentPage} generation={loadGen} onGoto={(p) => gotoPage(p, false)} />
+          <ThumbnailRail
+            pdf={pdf}
+            numPages={numPages}
+            currentPage={currentPage}
+            generation={loadGen}
+            onGoto={(p) => {
+              const g = useReaderBus.getState().gotoRef
+              if (g) g(p)
+              else gotoPage(p, false)
+            }}
+          />
         )}
 
         {/* 对照窗格（自包含；跨标签保留） */}
@@ -1350,8 +1386,12 @@ function OutlineDrawer({ onGoto }: { onGoto: (pageNo: number) => void }) {
     <aside className="slide-in absolute left-2 top-2 z-30 flex max-h-[calc(100%-16px)] w-64 flex-col overflow-hidden rounded-lg border border-border-strong bg-panel shadow-[var(--shadow-2)]">
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-3">
         <span className="text-xs font-medium">目录大纲</span>
-        <button className="px-1 text-xs text-text-faint hover:text-danger" onClick={() => toggleOutline(false)}>
-          ✕
+        <button
+          className="flex items-center px-1 text-xs text-text-faint hover:text-danger"
+          title="关闭大纲"
+          onClick={() => toggleOutline(false)}
+        >
+          <IconX size={11} />
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
@@ -1442,7 +1482,7 @@ function SearchBar({ onEnterPage }: { onEnterPage: (pageIndex: number) => void }
           if (e.key === 'Enter') jump(e.shiftKey ? -1 : 1)
         }}
       />
-      <span className="min-w-14 text-center text-[10px] tabular-nums text-text-faint">
+      <span className="min-w-14 shrink-0 text-center text-[10px] tabular-nums text-text-faint">
         {busy ? '搜索中…' : query.trim() ? `${total} 处 / ${matches.length} 页` : ''}
       </span>
       <button className="rd-tbtn" title="上一个 (Shift+Enter)" onClick={() => jump(-1)}>
@@ -1461,7 +1501,7 @@ function SearchBar({ onEnterPage }: { onEnterPage: (pageIndex: number) => void }
           toggleSearch(false)
         }}
       >
-        ✕
+        <IconX size={11} />
       </button>
     </div>
   )
@@ -1485,7 +1525,7 @@ function RefBar({ offset }: { offset: boolean }) {
           {scanning && <span className="spinner" />}
           {hits.length > 0 ? (
             <>
-              <span className="min-w-20 text-center tabular-nums text-text-faint">
+              <span className="min-w-20 shrink-0 text-center tabular-nums text-text-faint">
                 第 {hitIdx + 1}/{hits.length} 处 · p.{hits[hitIdx].page + 1}
               </span>
               <button className="rd-tbtn" title="上一处" onClick={() => useRefLink.getState().nextHit(-1)}>
@@ -1510,7 +1550,7 @@ function RefBar({ offset }: { offset: boolean }) {
         返回原位
       </button>
       <button className="rd-tbtn" title="关闭 (Esc)" onClick={() => useRefLink.getState().close()}>
-        ✕
+        <IconX size={11} />
       </button>
     </div>
   )

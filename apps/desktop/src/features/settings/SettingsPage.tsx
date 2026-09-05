@@ -8,7 +8,9 @@ import { useUpdater, type UpdatePolicy } from '../../stores/updater'
 import { updaterAvailable } from '../../api/updaterCore'
 import { APP_ICONS, persistAppIconLocal } from '../appIcon/variants'
 import Modal, { ConfirmModal } from '../shared/Modal'
+import { IconBook, IconPencil, IconX } from '../../components/shared/Icon'
 import { toast } from '../shared/Toast'
+import { guardMdNav } from '../reader/mdDirty'
 
 const THEMES: { key: 'warm' | 'light' | 'dark' | 'system'; label: string; colors: [string, string, string] }[] = [
   { key: 'warm', label: '暖纸', colors: ['#faf7f0', '#ffffff', '#33658a'] },
@@ -80,8 +82,12 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 }
 
 export default function SettingsPage() {
-  const { settings, updateSettings, user } = useAuth()
+  const { settings, updateSettings, user, logout } = useAuth()
   const [saving, setSaving] = useState(false)
+  const onLogout = () => {
+    const run = () => logout().catch(() => toast('退出失败', 'error'))
+    if (!guardMdNav(run)) run()
+  }
 
   // ── 账号：展示名编辑 ──
   const [editingName, setEditingName] = useState(false)
@@ -354,23 +360,37 @@ export default function SettingsPage() {
                 <button className="btn btn-primary px-2 py-1 text-xs" onClick={saveDisplayName} disabled={nameBusy}>
                   保存
                 </button>
-                <button className="btn btn-ghost px-1.5 py-1 text-xs" onClick={() => setEditingName(false)}>✕</button>
+                <button
+                  className="btn btn-ghost flex items-center px-1.5 py-1 text-xs"
+                  title="取消"
+                  onClick={() => setEditingName(false)}
+                >
+                  <IconX size={11} />
+                </button>
               </div>
             ) : (
               <div className="flex items-center gap-1.5">
                 <span className="text-[12.5px] text-text-soft">{user?.display_name}</span>
                 <button
-                  className="btn btn-ghost px-1.5 py-0.5 text-xs"
+                  className="btn btn-ghost flex items-center px-1.5 py-0.5 text-xs"
+                  title="编辑展示名"
                   onClick={() => {
                     setNameInput(user?.display_name ?? '')
                     setEditingName(true)
                   }}
                 >
-                  ✎
+                  <IconPencil size={11} />
                 </button>
               </div>
             )}
           </Row>
+          <div className="mt-2 border-t border-border pt-3">
+            <Row label="退出登录" hint="清除本机登录态，需重新登录">
+              <button className="btn btn-danger px-3 py-1 text-xs" onClick={onLogout}>
+                退出登录
+              </button>
+            </Row>
+          </div>
         </Section>
 
         {/* 外观 */}
@@ -598,7 +618,9 @@ export default function SettingsPage() {
         {/* 词典 */}
         <Section title="词典">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent-soft text-lg">📖</div>
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
+              <IconBook size={20} />
+            </div>
             <div className="text-[12.5px] leading-5 text-text-soft">
               <div className="text-[13px] text-text">ECDICT 英汉词典（本地预置）</div>
               约 340 万词条 · 毫秒级离线查询 · 含词形还原库（BNC 语料生成）

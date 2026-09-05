@@ -20,6 +20,7 @@ import {
 import { getPageLinks, pointInPdfRects, resolveDest, type PageLink } from './linkLayer'
 import { openExternal } from '../../shared/openExternal'
 import { extractSentenceContext } from './sentence'
+import { IconFit, IconMinus, IconPlus, IconX } from '../../components/shared/Icon'
 import { toast } from '../shared/Toast'
 
 const MAX_CANVAS_DIM = 4096
@@ -449,17 +450,17 @@ export default function ComparePane({ widthPercent }: { widthPercent: number }) 
           {currentPage}/{numPages || '…'}
         </span>
         <button className="rd-tbtn shrink-0" title="缩小" onClick={() => zoomBy(1 / 1.2)}>
-          −
+          <IconMinus size={12} />
         </button>
         <span className="w-9 shrink-0 text-center text-[10px] tabular-nums text-text-faint">{Math.round(scale * 100)}%</span>
         <button className="rd-tbtn shrink-0" title="放大" onClick={() => zoomBy(1.2)}>
-          ＋
+          <IconPlus size={12} />
         </button>
         <button className="rd-tbtn shrink-0" title="适应宽度" onClick={fitWidth}>
-          ⇔
+          <IconFit size={12} />
         </button>
         <button className="rd-tbtn shrink-0" title="退出对照" onClick={() => setPaper(null)}>
-          ✕
+          <IconX size={11} />
         </button>
       </div>
 

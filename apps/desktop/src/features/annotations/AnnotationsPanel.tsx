@@ -4,6 +4,7 @@ import { api, patchAnnotation, saveBlobWithDialog } from '../../api/client'
 import { parseAnchor, type Annotation, type Excerpt } from '../../api/types'
 import { useReaderBus } from '../../stores/readerBus'
 import { useReader } from '../../stores/readerStore'
+import { IconPencil, IconX } from '../../components/shared/Icon'
 import { toast } from '../shared/Toast'
 
 const COLOR_HEX: Record<string, string> = {
@@ -211,28 +212,28 @@ export function AnnotationsPanel() {
                         <span>{a.type === 'word_note' ? '笔记' : '高亮'}</span>
                         <span className="ml-auto">{fmtTime(a.updated_at || a.created_at)}</span>
                         <button
-                          className="hidden shrink-0 rounded px-1 hover:text-accent group-hover:block"
+                          className="hidden shrink-0 items-center rounded px-1 hover:text-accent group-hover:flex"
                           title="编辑笔记"
                           onClick={(e) => {
                             e.stopPropagation()
                             startEditAnno(a)
                           }}
                         >
-                          ✎
+                          <IconPencil size={11} />
                         </button>
                         <button
-                          className="hidden shrink-0 rounded px-1 text-danger hover:opacity-75 group-hover:block"
+                          className="hidden shrink-0 items-center rounded px-1 text-danger hover:opacity-75 group-hover:flex"
                           title="删除批注"
                           onClick={(e) => {
                             e.stopPropagation()
                             removeAnno(a.id)
                           }}
                         >
-                          ✕
+                          <IconX size={11} />
                         </button>
                       </div>
                       {anchorText && (
-                        <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-text-soft">
+                        <p className="u-break mt-1 line-clamp-2 text-[12px] leading-5 text-text-soft">
                           <span className="rounded px-0.5" style={{ background: `${COLOR_HEX[a.color ?? 'yellow']}55` }}>
                             {anchorText}
                           </span>
@@ -254,7 +255,7 @@ export function AnnotationsPanel() {
                           }}
                         />
                       ) : (
-                        a.text && <p className="mt-1 line-clamp-2 text-[12px] leading-5">{a.text}</p>
+                        a.text && <p className="u-break mt-1 line-clamp-2 text-[12px] leading-5">{a.text}</p>
                       )}
                     </div>
                   )
@@ -282,16 +283,21 @@ export function AnnotationsPanel() {
                     <span>p.{e.page_no ?? '?'}</span>
                     <span className="ml-auto">{fmtTime(e.created_at)}</span>
                     <button
-                      className="hidden rounded px-1 text-danger hover:opacity-75 group-hover:block"
+                      className="hidden shrink-0 items-center rounded px-1 text-danger hover:opacity-75 group-hover:flex"
                       title="删除摘录"
                       onClick={() => removeExcerpt(e.id)}
                     >
-                      ✕
+                      <IconX size={11} />
                     </button>
                   </div>
-                  <p className="mt-1 line-clamp-3 border-l-2 border-border pl-2 text-[12px] leading-5 text-text-soft">{e.text}</p>
-                  {e.translation && <p className="mt-1 line-clamp-2 text-[12px] leading-5">{e.translation}</p>}
-                  {e.note && <p className="mt-1 line-clamp-2 text-[11.5px] leading-5 text-text-faint">✎ {e.note}</p>}
+                  <p className="u-break mt-1 line-clamp-3 border-l-2 border-border pl-2 text-[12px] leading-5 text-text-soft">{e.text}</p>
+                  {e.translation && <p className="u-break mt-1 line-clamp-2 text-[12px] leading-5">{e.translation}</p>}
+                  {e.note && (
+                    <p className="u-break mt-1 line-clamp-2 text-[11.5px] leading-5 text-text-faint">
+                      <IconPencil size={10} className="mr-1 inline" />
+                      {e.note}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

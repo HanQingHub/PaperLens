@@ -22,6 +22,7 @@ from app.services.llm_service import (
 )
 
 PING_INTERVAL = 10.0  # 10s 无事件发 ping 心跳
+LOAD_WAIT_PING = 5.0  # 模型加载等待中心跳间隔（< 前端 15s SSE 看门狗；冷加载 60s 窗口不断流）
 FIRST_TOKEN_TIMEOUT = 30.0  # 首 token 30s 超时
 SENT_MAX_TOKENS = 500  # 句译输出上限（词卡 300 不够长句）
 
@@ -297,6 +298,8 @@ def _cache_put(
     db.commit()
 
 
+HISTORY_KEEP = 50  # 每用户翻译历史保留条数（word/sentence/dict 共用）
+
 def save_history(db: Session, user_id: int, *, word: str, mode: str,
                  result: dict, sentence: str | None = None) -> None:
     """查词历史落库：失败静默（历史是附属功能，绝不影响翻译主流程）。"""
@@ -305,6 +308,19 @@ def save_history(db: Session, user_id: int, *, word: str, mode: str,
             user_id=user_id, word=word, sentence=sentence, mode=mode,
             result=json.dumps(result, ensure_ascii=False), created_at=now_iso(),
         ))
+        db.flush()  # 必需：session autoflush=False，无 flush 新行不可见致误删
+        keep_ids = [
+            r for (r,) in db.query(TranslateHistory.id)
+            .filter(TranslateHistory.user_id == user_id)
+            .order_by(TranslateHistory.id.desc())
+            .limit(HISTORY_KEEP)
+            .all()
+        ]
+        if keep_ids:
+            db.query(TranslateHistory).filter(
+                TranslateHistory.user_id == user_id,
+                ~TranslateHistory.id.in_(keep_ids),
+            ).delete(synchronize_session=False)
         db.commit()
     except Exception:  # noqa: BLE001
         db.rollback()
@@ -367,8 +383,28 @@ async def _stream_llm(request, messages: list[dict], max_tokens: int = 300) -> A
     """驱动 LLM 流：yield (kind, text)；kind ∈ delta|ping；处理 ping 心跳、首 token
     超时与客户端断开（断开即终止生成，推理队列取下一任务）。"""
     # 冷加载等待放在首 token 计时窗之外（ensure_loaded 失败显式抛出，
-    # 避免静默落入 chat_stream 内部二次等待）
-    if not await llm_service.ensure_loaded(LOAD_TIMEOUT):
+    # 避免静默落入 chat_stream 内部二次等待）。
+    # 等待期间每 LOAD_WAIT_PING 发 ping 保活：前端 SSE 看门狗 15s 无事件即掐流，
+    # 2B 模型 mmap 冷起常超 15s，不保活则流死在加载窗内（ping 属既有契约，前端吞掉）。
+    loaded = False
+    load_task = asyncio.ensure_future(llm_service.ensure_loaded(LOAD_TIMEOUT))
+    try:
+        while True:
+            try:
+                loaded = await asyncio.wait_for(asyncio.shield(load_task), LOAD_WAIT_PING)
+                break
+            except asyncio.TimeoutError:
+                if request is not None and await request.is_disconnected():
+                    return
+                yield "ping", ""
+    finally:
+        if not load_task.done():
+            load_task.cancel()
+            try:
+                await load_task
+            except (asyncio.CancelledError, Exception):
+                pass
+    if not loaded:
         raise LLMLoadingTimeout("模型加载超时或不可用")
     agen = llm_service.chat_stream(messages, max_tokens=max_tokens)
     started = time.monotonic()

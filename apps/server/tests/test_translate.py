@@ -526,3 +526,57 @@ def test_stream_llm_load_failure_raises_timeout(monkeypatch):
 
     with pytest.raises(LLMLoadingTimeout):
         asyncio.run(run())
+
+
+def test_load_wait_pings_before_first_delta(client, tmp_path, monkeypatch):
+    """加载等待中心跳：ensure_loaded 慢于 LOAD_WAIT_PING 时先出 ping 再出 delta。"""
+    import asyncio
+
+    monkeypatch.setattr("app.services.translate_service.LOAD_WAIT_PING", 0.05)
+
+    class SlowLoadLLM:
+        state = "unloaded"
+        model_id = None
+
+        async def ensure_loaded(self, timeout):
+            await asyncio.sleep(0.2)
+            self.state = "ready"
+            return True
+
+        async def chat_stream(self, messages, max_tokens=300):
+            yield {"type": "delta", "text": "ok"}
+
+    monkeypatch.setattr("app.services.translate_service.llm_service", SlowLoadLLM())
+    token = register(client)
+    paper = make_paper(client, token, tmp_path)
+    events = sse_read(client, "/api/translate/word",
+                      {"paper_id": paper["id"], "word": "qqqnoentry", "sentence": "s"}, token)
+    kinds = [e["event"] for e in events]
+    assert "ping" in kinds and "delta" in kinds
+    assert kinds.index("ping") < kinds.index("delta")
+    assert kinds[-1] == "done"
+
+
+def test_history_capped_at_50(client, tmp_path):
+    """翻译历史每用户最多保留近 50 条。"""
+    from app.core.db import SessionLocal
+    from app.models import TranslateHistory, User
+    from app.services import translate_service as ts
+
+    register(client)
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.username == "alice").first()
+        assert user is not None
+        for i in range(55):
+            ts.save_history(db, user.id, word=f"w{i}", mode="word", result={"translation": f"t{i}"})
+        rows = (
+            db.query(TranslateHistory)
+            .filter(TranslateHistory.user_id == user.id)
+            .order_by(TranslateHistory.id.desc())
+            .all()
+        )
+        assert len(rows) == 50
+        assert rows[0].word == "w54"
+    finally:
+        db.close()

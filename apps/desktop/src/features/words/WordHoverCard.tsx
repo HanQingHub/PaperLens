@@ -4,6 +4,7 @@ import { useEffect, type RefObject } from 'react'
 import { useWords } from '../../stores/words'
 import { STAGE_LABELS } from './stageLabels'
 import { computeHoverCardPos } from './hoverPos'
+import { IconSpeaker } from '../../components/shared/Icon'
 import { speak } from './speech'
 
 export default function WordHoverCard({
@@ -35,9 +36,11 @@ export default function WordHoverCard({
       role="tooltip"
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[13px] font-medium">{word?.lemma ?? lemma}</span>
+        <span className="u-break min-w-0 flex-1 truncate text-[13px] font-medium" title={word?.lemma ?? lemma}>
+          {word?.lemma ?? lemma}
+        </span>
         <button
-          className="text-[11px] text-text-faint transition-all hover:text-accent"
+          className="flex shrink-0 items-center text-[11px] text-text-faint transition-all hover:text-accent"
           title="发音"
           onMouseDown={(e) => {
             e.stopPropagation() // 页面层 onMouseDown 会先收卡（hideHover），必须先于 click 拦下
@@ -45,11 +48,11 @@ export default function WordHoverCard({
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          🔊
+          <IconSpeaker size={11} />
         </button>
         <span className="badge">{STAGE_LABELS[word?.stage ?? 0]}</span>
       </div>
-      <div className="mt-1 max-h-12 overflow-hidden text-[12px] leading-5 text-text-soft">
+      <div className="u-break mt-1 max-h-12 overflow-hidden text-[12px] leading-5 text-text-soft">
         {word?.translation || '暂无释义 · 点击查询'}
       </div>
       {word && word.review_count > 0 && (

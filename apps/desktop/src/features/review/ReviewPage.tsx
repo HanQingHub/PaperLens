@@ -6,6 +6,7 @@ import type { Word, DictionaryEntry } from '../../api/types'
 import { useUi } from '../../stores/ui'
 import { useWords } from '../../stores/words'
 import { ConfirmModal } from '../shared/Modal'
+import { IconPlus, IconSpeaker, IconSpark, IconX } from '../../components/shared/Icon'
 import { toast } from '../shared/Toast'
 import { STAGE_LABELS } from '../words/stageLabels'
 import WordLibrary from '../words/WordLibrary'
@@ -113,7 +114,7 @@ export default function ReviewPage() {
       if (r.word) bumpWord(r.word)
       setStats((s) => (s ? { ...s, done: s.done + 1 } : s))
       if (idx + 1 >= queue.length) {
-        toast('今日复习完成 🎉', 'ok')
+        toast('今日复习完成', 'ok')
         load()
       } else {
         setIdx((i) => i + 1)
@@ -278,11 +279,11 @@ export default function ReviewPage() {
                 <span className={`ml-1 shrink-0 text-xs ${groupFilter === g.name ? 'opacity-70' : 'text-text-faint'}`}>{g.count}</span>
               </button>
               <button
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] text-text-faint opacity-0 transition-all hover:text-danger focus-visible:opacity-100 group-hover/grp:opacity-100"
+                className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center text-[11px] text-text-faint opacity-0 transition-all hover:text-danger focus-visible:opacity-100 group-hover/grp:opacity-100"
                 title={`删除分组「${g.name}」（组内 ${g.count} 个生词将变为未分组）`}
                 onClick={() => setDeletingGroup(g.name)}
               >
-                ✕
+                <IconX size={11} />
               </button>
             </div>
           ))}
@@ -311,10 +312,10 @@ export default function ReviewPage() {
             </div>
           ) : (
             <button
-              className="mt-1 rounded-md border border-dashed border-border px-3 py-1.5 text-left text-[11px] text-accent transition-colors hover:border-accent"
+              className="mt-1 flex items-center gap-1 rounded-md border border-dashed border-border px-3 py-1.5 text-left text-[11px] text-accent transition-colors hover:border-accent"
               onClick={() => setCreating(true)}
             >
-              ＋ 新建分组
+              <IconPlus size={11} /> 新建分组
             </button>
           )}
         </div>
@@ -339,7 +340,15 @@ export default function ReviewPage() {
                   <path d="M20 6 9 17l-5-5" />
                 </svg>
               </div>
-              <p className="text-lg font-medium">{queue.length === 0 ? '当前分组没有到期生词' : '今日复习完成 🎉'}</p>
+              <p className="flex items-center justify-center gap-1.5 text-lg font-medium">
+                {queue.length === 0 ? (
+                  '当前分组没有到期生词'
+                ) : (
+                  <>
+                    今日复习完成 <IconSpark size={18} className="text-accent" />
+                  </>
+                )}
+              </p>
               <p className="mt-2 text-sm text-text-faint">
                 今日已复习 <b className="text-accent">{stats?.done ?? 0}</b> 词 · 剩余到期 <b className="text-accent">{stats?.due ?? 0}</b> 词
               </p>
@@ -361,16 +370,18 @@ export default function ReviewPage() {
             <div className="w-full max-w-[640px] rounded-xl border border-border bg-panel p-8 shadow-lg">
               <div className="mb-6 text-center">
                 <div className="flex items-center justify-center gap-2">
-                  <h2 className="font-serif text-3xl font-bold">{current.lemma}</h2>
+                  <h2 className="u-break min-w-0 font-serif text-3xl font-bold" title={current.lemma}>
+                    {current.lemma}
+                  </h2>
                   <button
-                    className="text-base text-text-faint transition-all hover:text-accent"
+                    className="flex items-center text-text-faint transition-all hover:text-accent"
                     title="发音"
                     onClick={(e) => {
                       speak(current.lemma)
                       e.currentTarget.blur()
                     }}
                   >
-                    🔊
+                    <IconSpeaker size={16} />
                   </button>
                 </div>
                 {dict?.phonetic && <p className="mt-1 text-sm text-text-faint">/{dict.phonetic}/</p>}

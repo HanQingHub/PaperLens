@@ -1,5 +1,6 @@
 // 手写 Modal 对话框（不用原生 confirm）
 import { useEffect } from 'react'
+import { IconX } from '../../components/shared/Icon'
 
 interface ModalProps {
   open: boolean
@@ -29,10 +30,14 @@ export default function Modal({ open, title, width = 440, onClose, children, foo
       }}
     >
       <div className="panel pl-modal-card max-h-[85vh] w-full overflow-hidden shadow-[var(--shadow-2)]" style={{ maxWidth: width }}>
-        <div className="flex h-11 shrink-0 items-center justify-between border-b border-border px-4">
-          <span className="text-sm font-medium">{title}</span>
-          <button className="btn btn-ghost px-2 py-0.5 text-xs" onClick={onClose}>
-            ✕
+        <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
+          <span className="u-break min-w-0 flex-1 text-sm font-medium">{title}</span>
+          <button
+            className="btn btn-ghost flex shrink-0 items-center px-2 py-0.5 text-xs"
+            title="关闭"
+            onClick={onClose}
+          >
+            <IconX size={11} />
           </button>
         </div>
         <div className="max-h-[calc(85vh-96px)] overflow-y-auto px-4 py-4">{children}</div>

@@ -1,7 +1,9 @@
-// 论文卡片：标题/作者/年份/标签/收藏/页数/OCR 状态/打开计数 + ⋯ 菜单
+// 论文卡片：标题/作者/年份/标签/收藏/页数/OCR 状态/打开计数 + 更多菜单
 import { useEffect, useRef, useState, type CSSProperties, useCallback } from 'react'
+import { IconCheck, IconEllipsis, IconPencil, IconStar, IconStarOutline, IconTrash, IconX } from '../../components/shared/Icon'
 import type { Paper } from '../../api/types'
 import { prefetchPaper } from '../reader/paperPrefetch'
+import { menuPanelClass, MenuOverlay } from '../shared/Dropdown'
 import type { CardDragProps } from './dnd/types'
 
 // 按文件 hash 生成稳定色相（0-359），用于卡片封面渐变装饰
@@ -43,14 +45,14 @@ function OcrBadge({ paper, progress }: { paper: Paper; progress: OcrProgress | n
   if (paper.ocr_status === 'done') {
     return (
       <span className="badge" style={{ color: 'var(--ok)', borderColor: 'var(--ok)' }}>
-        ✓ OCR 已完成
+        <IconCheck size={10} /> OCR 已完成
       </span>
     )
   }
   if (paper.ocr_status === 'failed') {
     return (
       <span className="badge" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }}>
-        ✕ OCR 失败
+        <IconX size={10} /> OCR 失败
       </span>
     )
   }
@@ -73,7 +75,6 @@ export default function PaperCard({
   dragProps, isDragging, insertSide, enterIndex, selected, onToggleSelect,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
   const hoverTimer = useRef(0)
   // 入场动画仅首次挂载播一次：freeze 首帧 enterIndex。后续 prop 变化不重播
   // CSS animation（类移除再添加会重播），也不与 FLIP 的 inline transform 冲突
@@ -87,11 +88,11 @@ export default function PaperCard({
 
   useEffect(() => {
     if (!menuOpen) return
-    const close = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false)
     }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [menuOpen])
 
   const isMd = (paper.file_type ?? 'pdf') === 'markdown'
@@ -125,18 +126,19 @@ export default function PaperCard({
       <div className="pl-card-glow" aria-hidden />
       {selected && <div className="pointer-events-none absolute inset-0 rounded-[var(--radius-panel,10px)] border-2 border-accent bg-[var(--accent-soft)]/30" aria-hidden />}
       <div className="flex items-start justify-between gap-2">
-        <h3 className="line-clamp-2 flex-1 text-[13.5px] font-medium leading-5">
+        <h3 className="u-break line-clamp-2 min-w-0 flex-1 text-[13.5px] font-medium leading-5" title={paper.title}>
           {isMd && <span className="mr-1.5 inline-flex items-center gap-1 rounded bg-accent px-1 py-0.5 text-[10px] leading-none text-white">MD</span>}
           {paper.title}
         </h3>
         <div className="flex shrink-0 items-center gap-0.5">
           {(paper.annotation_count ?? 0) > 0 && (
             <span className="pl-anno-badge" title={`${paper.annotation_count} 条批注`}>
-              ✎{paper.annotation_count}
+              <IconPencil size={10} />
+              {paper.annotation_count}
             </span>
           )}
           <button
-            className="rounded-md px-1 py-0.5 text-[15px] leading-none transition-transform hover:scale-110"
+            className="flex items-center rounded-md px-1 py-0.5 leading-none transition-transform hover:scale-110"
             style={{ color: paper.is_favorite ? '#e0a63c' : 'var(--text-faint)' }}
             title={paper.is_favorite ? '取消收藏' : '收藏'}
             onClick={(e) => {
@@ -144,30 +146,44 @@ export default function PaperCard({
               onToggleFav(paper)
             }}
           >
-            {paper.is_favorite ? '★' : '☆'}
+            {paper.is_favorite ? <IconStar size={15} /> : <IconStarOutline size={15} />}
           </button>
-          <div className="relative" ref={menuRef} onClick={(e) => e.stopPropagation()}>
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
             <button
-              className="rounded-md px-1.5 py-0.5 text-sm text-text-faint hover:bg-panel-soft hover:text-accent"
+              className="flex items-center rounded-md px-1.5 py-0.5 text-sm text-text-faint hover:bg-panel-soft hover:text-accent"
               title="更多操作"
               onClick={() => setMenuOpen((v) => !v)}
             >
-              ⋯
+              <IconEllipsis size={14} />
             </button>
-            {menuOpen && (
-              <div className="menu-pop">
-                <button onClick={() => { setMenuOpen(false); onEdit(paper) }}>✎ 编辑元数据</button>
-                <button onClick={() => { setMenuOpen(false); onToggleFav(paper) }}>
-                  {paper.is_favorite ? '☆ 取消收藏' : '★ 收藏'}
-                </button>
-                <button
-                  className="danger"
-                  onClick={() => { setMenuOpen(false); onDelete(paper) }}
-                >
-                  🗑 删除论文
-                </button>
-              </div>
-            )}
+            {menuOpen && <MenuOverlay onClose={() => setMenuOpen(false)} />}
+            <div className={menuPanelClass(menuOpen, 'right-0 top-full mt-1 min-w-[132px]')}>
+              <button
+                className="flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors text-text hover:bg-bg-soft"
+                onClick={() => { setMenuOpen(false); onEdit(paper) }}
+              >
+                <span className="flex min-w-0 items-center gap-1.5 truncate">
+                  <IconPencil size={11} /> 编辑元数据
+                </span>
+              </button>
+              <button
+                className="flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors text-text hover:bg-bg-soft"
+                onClick={() => { setMenuOpen(false); onToggleFav(paper) }}
+              >
+                <span className="flex min-w-0 items-center gap-1.5 truncate">
+                  {paper.is_favorite ? <IconStarOutline size={11} /> : <IconStar size={11} />}
+                  {paper.is_favorite ? '取消收藏' : '收藏'}
+                </span>
+              </button>
+              <button
+                className="flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors text-danger hover:bg-[rgba(181,72,60,.1)]"
+                onClick={() => { setMenuOpen(false); onDelete(paper) }}
+              >
+                <span className="flex min-w-0 items-center gap-1.5 truncate">
+                  <IconTrash size={11} /> 删除论文
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       </div>

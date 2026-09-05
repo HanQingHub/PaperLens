@@ -1,7 +1,8 @@
-// 全局页签栏（AppShell 头部行，与账号/退出登录同一行）：
+// 全局页签栏（AppShell 头部行，与账号同一行）：
 // 文库 / 生词复习 / 设置 / 论文四类页签；活动态由当前路由派生；
-// 点击切换（路由导航），× / 中键关闭；文字 truncate + 横向滚动防溢出。
+// 点击切换（路由导航），关闭按钮 / 中键关闭；文字 truncate + 横向滚动防溢出。
 import { useLocation, useNavigate } from 'react-router-dom'
+import { IconX } from '../../components/shared/Icon'
 import { useReaderTabs } from '../../stores/readerTabs'
 import { useCompareStore } from '../../stores/compareStore'
 import { guardMdNav, pidFromPath } from './mdDirty'
@@ -70,7 +71,7 @@ export default function TabBar() {
                 close(t)
               }}
             >
-              ✕
+              <IconX size={10} />
             </span>
           </div>
         )

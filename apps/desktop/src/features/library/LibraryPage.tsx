@@ -14,6 +14,7 @@ import type { LibraryView, SortKey } from './sort'
 import { ConfirmModal } from '../shared/Modal'
 import { toast } from '../shared/Toast'
 import Dropdown from '../shared/Dropdown'
+import { IconPause, IconPlay, IconPlus, IconX } from '../../components/shared/Icon'
 import ProjectRail from './ProjectRail'
 import PaperCard, { type OcrProgress } from './PaperCard'
 import EditPaperModal from './EditPaperModal'
@@ -671,9 +672,15 @@ export default function LibraryPage() {
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {selectedProjectId && (
             <span className="badge badge-accent">
-              {projects.find((p) => p.id === selectedProjectId)?.name}
-              <button className="ml-1" onClick={() => { setSelectedProjectId(null); setView('all') }}>
-                ✕
+              <span className="max-w-40 truncate" title={projects.find((p) => p.id === selectedProjectId)?.name}>
+                {projects.find((p) => p.id === selectedProjectId)?.name}
+              </span>
+              <button
+                className="ml-1 flex items-center"
+                title="清除项目筛选"
+                onClick={() => { setSelectedProjectId(null); setView('all') }}
+              >
+                <IconX size={10} />
               </button>
             </span>
           )}
@@ -690,7 +697,15 @@ export default function LibraryPage() {
                 }
               }}
             >
-              {queuePaused ? '▶ 恢复队列' : '⏸ 暂停队列'}
+              {queuePaused ? (
+                <>
+                  <IconPlay size={11} /> 恢复队列
+                </>
+              ) : (
+                <>
+                  <IconPause size={11} /> 暂停队列
+                </>
+              )}
             </button>
           )}
           <input
@@ -756,7 +771,7 @@ export default function LibraryPage() {
             </div>
           ) : (
             <button className="btn h-7 gap-1 px-2.5 text-xs" onClick={() => setArxivOpen(true)} disabled={uploading} title="通过 arXiv ID 联网导入">
-              <span>＋</span> arXiv
+              <IconPlus size={11} /> arXiv
             </button>
           )}
           <button className="btn btn-primary h-7 gap-1.5 whitespace-nowrap px-3.5 text-xs" onClick={() => fileInput.current?.click()} disabled={uploading}>

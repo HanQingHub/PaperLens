@@ -3,6 +3,7 @@
 // 外部 mousedown / Esc 关闭；随 geom 重渲染自动跟随缩放位置。
 import { useEffect, useRef } from 'react'
 import { ANNO_COLORS, type ReaderAnnotation } from '../../stores/readerStore'
+import { IconPencil, IconTrash } from '../../components/shared/Icon'
 import { pdfRectToCss } from '../../shared/coords'
 
 const POPOVER_W = 300
@@ -63,16 +64,16 @@ export default function HighlightPopover({
       {/* 信息行 */}
       <div className="flex items-center gap-1.5 text-[10.5px] text-text-faint">
         <span className={`h-2 w-2 shrink-0 rounded-full anno-${anno.color}`} />
-        <span className="truncate" title={anno.anchorText}>
+        <span className="min-w-0 flex-1 truncate" title={anno.anchorText}>
           {preview || '（无原文）'}
         </span>
-        <span className="ml-auto shrink-0">第 {pageIndex + 1} 页</span>
+        <span className="shrink-0">第 {pageIndex + 1} 页</span>
       </div>
 
       {/* 操作行 */}
       <div className="mt-1 flex items-center gap-1">
         <button
-          className="rounded px-1.5 py-0.5 text-[11px] text-text-soft hover:bg-accent-soft hover:text-accent"
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-text-soft hover:bg-accent-soft hover:text-accent"
           title="编辑笔记"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {
@@ -80,7 +81,7 @@ export default function HighlightPopover({
             onEdit()
           }}
         >
-          ✎ 编辑
+          <IconPencil size={11} /> 编辑
         </button>
         <div className="mx-0.5 flex items-center gap-1" title="换色">
           {ANNO_COLORS.map((c) => (
@@ -97,7 +98,7 @@ export default function HighlightPopover({
           ))}
         </div>
         <button
-          className="ml-auto rounded px-1.5 py-0.5 text-[11px] text-danger hover:bg-[rgba(181,72,60,.1)]"
+          className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-danger hover:bg-[rgba(181,72,60,.1)]"
           title="删除高亮"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {
@@ -105,7 +106,7 @@ export default function HighlightPopover({
             onDelete()
           }}
         >
-          🗑 删除
+          <IconTrash size={11} /> 删除
         </button>
       </div>
       {below && <div className="sr-only">（浮条位于高亮下方）</div>}

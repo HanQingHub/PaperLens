@@ -8,6 +8,7 @@ import type { Word } from '../../api/types'
 import { ConfirmModal } from '../shared/Modal'
 import { toast } from '../shared/Toast'
 import Dropdown, { menuPanelClass } from '../shared/Dropdown'
+import { IconCheck, IconPencil, IconSpeaker, IconTrash, IconX } from '../../components/shared/Icon'
 import { STAGE_LABELS } from './stageLabels'
 import { filterWords, libraryStats, paginate, sortWords, type WordSortKey } from './libraryData'
 import { speak } from './speech'
@@ -475,14 +476,14 @@ export default function WordLibrary({ groupFilter, groups, onGroupsChanged, data
                         setEditingGroup(null)
                       }}
                     >
-                      ✓
+                      <IconCheck size={11} />
                     </button>
                     <button
                       className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[11px] text-text-faint transition-colors hover:bg-bg-soft hover:text-danger"
                       title="取消（Esc）"
                       onClick={() => setEditingGroup(null)}
                     >
-                      ✕
+                      <IconX size={11} />
                     </button>
                   </div>
                 ) : (
@@ -491,28 +492,28 @@ export default function WordLibrary({ groupFilter, groups, onGroupsChanged, data
                       {w.group_name ?? '未分组'}
                     </span>
                     <button
-                      className="text-[11px] text-text-faint opacity-0 transition-all hover:text-accent group-hover:opacity-100 focus-visible:opacity-100"
+                      className="flex items-center text-[11px] text-text-faint opacity-0 transition-all hover:text-accent group-hover:opacity-100 focus-visible:opacity-100"
                       title="编辑分组"
                       onClick={() => {
                         setEditingGroup(w.id)
                         setDraftGroup(w.group_name ?? '')
                       }}
                     >
-                      ✎
+                      <IconPencil size={11} />
                     </button>
                     <button
-                      className="text-[11px] text-text-faint opacity-0 transition-all hover:text-accent group-hover:opacity-100 focus-visible:opacity-100"
+                      className="flex items-center text-[11px] text-text-faint opacity-0 transition-all hover:text-accent group-hover:opacity-100 focus-visible:opacity-100"
                       title="发音"
                       onClick={() => speak(w.lemma)}
                     >
-                      🔊
+                      <IconSpeaker size={11} />
                     </button>
                     <button
-                      className="text-[11px] text-text-faint opacity-0 transition-all hover:text-danger group-hover:opacity-100 focus-visible:opacity-100"
+                      className="flex items-center text-[11px] text-text-faint opacity-0 transition-all hover:text-danger group-hover:opacity-100 focus-visible:opacity-100"
                       title="删除生词"
                       onClick={() => setDeleting(w)}
                     >
-                      🗑
+                      <IconTrash size={11} />
                     </button>
                   </>
                 )}
@@ -582,7 +583,7 @@ export default function WordLibrary({ groupFilter, groups, onGroupsChanged, data
         onClose={() => setDeleting(null)}
         onConfirm={confirmDelete}
       >
-        <p className="text-xs text-text-soft">
+        <p className="u-break text-xs text-text-soft">
           删除「{deleting?.lemma}」？复习记录与例句将一并清除，正文高亮同步消失。
         </p>
       </ConfirmModal>

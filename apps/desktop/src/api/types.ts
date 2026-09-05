@@ -186,7 +186,7 @@ export type TranslateEvent =
   | { event: 'hit'; layer: 'wordbook' | 'glossary' | 'cache' | 'ecdict'; data: TranslateHitData }
   | { event: 'delta'; text: string }
   | { event: 'done'; engine: string; cached: boolean }
-  | { event: 'error'; code: 'llm_loading_timeout' | 'llm_timeout' | 'internal' | 'text_too_long'; detail: string }
+  | { event: 'error'; code: 'llm_loading_timeout' | 'llm_timeout' | 'llm_empty' | 'interrupted' | 'word_invalid' | 'text_invalid' | 'internal' | 'text_too_long'; detail: string }
   | { event: 'ping' }
 
 export type AppIconVariant = 'orbit' | 'diamond'

@@ -59,7 +59,7 @@ export async function* ssePost(
 }
 
 /** SSE 帧 → 翻译事件联合类型（hit 的 data 为强类型负载，不再透传 Record） */
-function toTranslateEvent(raw: string): TranslateEvent | null {
+export function toTranslateEvent(raw: string): TranslateEvent | null {
   const frame = parseSseEvent(raw)
   if (!frame) return null
   switch (frame.event) {
@@ -88,7 +88,7 @@ function toTranslateEvent(raw: string): TranslateEvent | null {
     case 'done':
       return { event: 'done', engine: (frame.data.engine as string) ?? '', cached: Boolean(frame.data.cached) }
     case 'error': {
-      const codes = ['llm_loading_timeout', 'llm_timeout', 'internal', 'text_too_long'] as const
+      const codes = ['llm_loading_timeout', 'llm_timeout', 'llm_empty', 'interrupted', 'word_invalid', 'text_invalid', 'internal', 'text_too_long'] as const
       const code = codes.includes(frame.data.code as never)
         ? (frame.data.code as (typeof codes)[number])
         : 'internal'

@@ -237,6 +237,16 @@ h1, h2, h3, h4, button, input, textarea, select {
   line-height: 18px;
   border: 1px solid var(--border-strong);
   color: var(--text-soft);
+  /* 徽标永不换行：窄容器挤压下竖排（缓/存各一行）比溢出更错，故强制单行 + 不收缩 */
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* 自由文本断行兜底：长 token（URL/邮箱/长英文词）不断出容器。
+   Tailwind break-words 仅 overflow-wrap:break-word，此类再加 anywhere。 */
+.u-break {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .badge-accent {
   border-color: var(--accent);
@@ -486,6 +496,7 @@ h1, h2, h3, h4, button, input, textarea, select {
   pointer-events: auto;
   cursor: pointer;
   max-width: 320px;
+  overflow-wrap: anywhere;
   padding: 8px 14px;
   border-radius: 8px;
   font-size: 13px;

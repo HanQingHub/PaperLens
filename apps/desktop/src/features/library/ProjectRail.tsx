@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { api, ApiError } from '../../api/client'
 import type { Project } from '../../api/types'
 import { ConfirmModal } from '../shared/Modal'
+import { IconPlus, IconX } from '../../components/shared/Icon'
 import { toast } from '../shared/Toast'
 import { PROJECT_DRAG_MIME } from './dnd/types'
 import { dragKind } from './dnd/guard'
@@ -121,14 +122,14 @@ export default function ProjectRail({ projects, activeProjectId, onSelect, onCha
       <div className="flex items-center justify-between px-1">
         <span className="text-xs font-medium text-text-soft">项目</span>
         <button
-          className="btn btn-ghost px-1.5 py-0.5 text-xs"
+          className="btn btn-ghost flex items-center px-1.5 py-0.5 text-xs"
           title="新建项目"
           onClick={() => {
             setCreating(true)
             setNewName('')
           }}
         >
-          ＋
+          <IconPlus size={11} />
         </button>
       </div>
 
@@ -153,7 +154,7 @@ export default function ProjectRail({ projects, activeProjectId, onSelect, onCha
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
         {projects.length === 0 && !creating && (
           <p className="px-2 py-3 text-[11.5px] leading-5 text-text-faint">
-            暂无项目。<br />点右上「＋」创建，用项目组织你的论文。
+            暂无项目。<br />点右上加号创建，用项目组织你的论文。
           </p>
         )}
         {projects.map((p, i) => {
@@ -211,19 +212,19 @@ export default function ProjectRail({ projects, activeProjectId, onSelect, onCha
                 />
               ) : (
                 <>
-                  <span className="flex-1 truncate">{p.name}</span>
+                  <span className="min-w-0 flex-1 truncate" title={p.name}>{p.name}</span>
                   <span className="pl-rail-badge" title={`${p.paper_count ?? 0} 篇论文`}>
                     {p.paper_count ?? 0}
                   </span>
                   <button
-                    className="hidden shrink-0 rounded px-1 text-xs text-text-faint hover:text-danger group-hover:block"
+                    className="hidden shrink-0 items-center rounded px-1 text-xs text-text-faint hover:text-danger group-hover:flex"
                     title="删除项目"
                     onClick={(e) => {
                       e.stopPropagation()
                       setDeleting(p)
                     }}
                   >
-                    ✕
+                    <IconX size={11} />
                   </button>
                 </>
               )}

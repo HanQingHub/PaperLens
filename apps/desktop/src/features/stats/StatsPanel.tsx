@@ -1,5 +1,6 @@
 // 右面板·统计：今日/累计时长、streak、30 天热力图、7 天新增生词柱状图、复习完成率
 import { useEffect, useState } from 'react'
+import { IconFlame } from '../../components/shared/Icon'
 import { api } from '../../api/client'
 import type { StatsOverview } from '../../api/types'
 
@@ -77,8 +78,9 @@ export function StatsPanel() {
 
       <div className="panel pl-stat-card flex items-center justify-between px-3 py-2.5">
         <span className="text-xs text-text-soft">连续阅读天数</span>
-        <span className="font-medium">
-          <b className="pl-num text-accent">{stats.streak}</b> 天 {stats.streak >= 3 && '🔥'}
+        <span className="flex shrink-0 items-center gap-1 font-medium">
+          <b className="pl-num text-accent">{stats.streak}</b> 天
+          {stats.streak >= 3 && <IconFlame size={13} className="text-accent" />}
         </span>
       </div>
 

@@ -8,6 +8,7 @@ import { toast } from '../shared/Toast'
 import { openExternal } from '../../shared/openExternal'
 import { insertLink, insertTable, setHeading, toggleFence, toggleLinePrefix, toggleWrap, type EditOp } from './markdownEdit'
 import { parseMdHeadings } from './markdownOutline'
+import { IconMenu, IconMinus, IconPlus, IconQuote, IconSearch, IconX } from '../../components/shared/Icon'
 import { clearMdDirty, setMdDirty } from './mdDirty'
 import '../../styles/markdown.css'
 
@@ -328,11 +329,11 @@ export default function MarkdownReader({ paperId }: Props) {
           目录{headings.length ? `(${headings.length})` : ''}
         </button>
         <button
-          className={`btn btn-ghost shrink-0 px-2 py-1 text-xs ${findOpen ? 'text-accent' : ''}`}
+          className={`btn btn-ghost flex shrink-0 items-center px-2 py-1 text-xs ${findOpen ? 'text-accent' : ''}`}
           title="预览全文搜索"
           onClick={() => setFindOpen((v) => !v)}
         >
-          ⌕
+          <IconSearch size={12} />
         </button>
         {findOpen && (
           <span className="flex shrink-0 items-center gap-1">
@@ -406,32 +407,37 @@ export default function MarkdownReader({ paperId }: Props) {
         </div>
         <div className="ml-2 flex shrink-0 items-center rounded-md border border-border p-0.5">
           <button
-            className="rd-seg text-[10px] leading-none"
-            title="减小字号 (A−)"
+            className="rd-seg flex items-center gap-0.5 text-[10px] leading-none"
+            title="减小字号"
             disabled={mdFont <= MD_FONT_SIZES[0]}
             onClick={() =>
               setMdFont((f) => MD_FONT_SIZES[Math.max(0, MD_FONT_SIZES.indexOf(f as (typeof MD_FONT_SIZES)[number]) - 1)] ?? f)
             }
             aria-label="减小字号"
           >
-            A−
+            A<IconMinus size={9} />
           </button>
           <span className="min-w-9 shrink-0 text-center text-[11px] tabular-nums text-text-faint">{mdFont}px</span>
           <button
-            className="rd-seg text-[10px] leading-none"
-            title="增大字号 (A＋)"
+            className="rd-seg flex items-center gap-0.5 text-[10px] leading-none"
+            title="增大字号"
             disabled={mdFont >= MD_FONT_SIZES[MD_FONT_SIZES.length - 1]}
             onClick={() =>
               setMdFont((f) => MD_FONT_SIZES[Math.min(MD_FONT_SIZES.length - 1, MD_FONT_SIZES.indexOf(f as (typeof MD_FONT_SIZES)[number]) + 1)] ?? f)
             }
             aria-label="增大字号"
           >
-            A＋
+            A<IconPlus size={9} />
           </button>
         </div>
         <span className="ml-2 shrink-0 text-xs text-text-faint">{draft.length} 字符</span>
         <div className="ml-auto flex items-center gap-1.5">
-          {draft !== content && <span className="text-xs text-accent">● 未保存</span>}
+          {draft !== content && (
+            <span className="flex shrink-0 items-center gap-1 text-xs text-accent">
+              <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
+              未保存
+            </span>
+          )}
           <button className="btn btn-primary h-7 px-3 text-xs" onClick={save} disabled={saving || draft === content}>
             {saving ? '保存中…' : '保存 (Ctrl+S)'}
           </button>
@@ -444,8 +450,12 @@ export default function MarkdownReader({ paperId }: Props) {
           <aside className="md-outline-drawer">
             <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-3">
               <span className="text-xs font-medium">目录大纲</span>
-              <button className="px-1 text-xs text-text-faint hover:text-danger" onClick={() => setOutlineOpen(false)}>
-                ✕
+              <button
+                className="flex items-center px-1 text-xs text-text-faint hover:text-danger"
+                title="关闭大纲"
+                onClick={() => setOutlineOpen(false)}
+              >
+                <IconX size={11} />
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
@@ -466,9 +476,13 @@ export default function MarkdownReader({ paperId }: Props) {
             <aside className="md-outline-drawer">
               <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-3">
                 <span className="text-xs font-medium">目录大纲</span>
-                <button className="px-1 text-xs text-text-faint hover:text-danger" onClick={() => setOutlineOpen(false)}>
-                  ✕
-                </button>
+              <button
+                className="flex items-center px-1 text-xs text-text-faint hover:text-danger"
+                title="关闭大纲"
+                onClick={() => setOutlineOpen(false)}
+              >
+                <IconX size={11} />
+              </button>
               </div>
               <p className="p-3 text-center text-[11px] text-text-faint">本文无标题</p>
             </aside>
@@ -499,10 +513,10 @@ export default function MarkdownReader({ paperId }: Props) {
                 </FmtButton>
               ))}
               <FmtButton title="无序列表 (Ctrl+Shift+L)" onClick={() => applyFormat((v, s, t) => toggleLinePrefix(v, s, t, '- '))}>
-                ☰
+                <IconMenu size={12} />
               </FmtButton>
               <FmtButton title="引用 (Ctrl+Shift+Q)" onClick={() => applyFormat((v, s, t) => toggleLinePrefix(v, s, t, '> '))}>
-                ❝
+                <IconQuote size={12} />
               </FmtButton>
               <FmtButton title="代码块 (Ctrl+Shift+C)" className="font-mono text-[10px]" onClick={() => applyFormat((v, s, t) => toggleFence(v, s, t))}>
                 {'```'}

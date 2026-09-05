@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import type { GlossaryTerm } from '../../api/types'
 import { useReaderBus } from '../../stores/readerBus'
+import { IconPencil, IconX } from '../../components/shared/Icon'
 import { toast } from '../shared/Toast'
 
 export function GlossaryPanel() {
@@ -78,7 +79,7 @@ export function GlossaryPanel() {
           <p className="py-8 text-center text-xs leading-5 text-text-faint">
             上传完成后后台自动生成术语表；
             <br />
-            也可在翻译卡片点「✎ 修正」沉淀译法
+            也可在翻译卡片点「<IconPencil size={10} className="inline" /> 修正」沉淀译法
           </p>
         ) : (
           <div className="flex flex-col gap-1.5">
@@ -86,21 +87,25 @@ export function GlossaryPanel() {
               <div key={t.id} className="panel pl-list-item group flex items-center gap-2 px-3 py-2">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className="truncate font-serif text-[12.5px] font-medium">{t.term}</span>
+                    <span className="min-w-0 flex-1 truncate font-serif text-[12.5px] font-medium" title={t.term}>
+                      {t.term}
+                    </span>
                     <span className={`badge shrink-0 ${t.source === 'user' ? 'badge-accent' : ''}`}>
                       {t.source === 'user' ? '用户修正' : '自动'}
                     </span>
                   </div>
                   {t.domain_translation && (
-                    <p className="mt-0.5 truncate text-[12px] text-text-soft">{t.domain_translation}</p>
+                    <p className="u-break mt-0.5 truncate text-[12px] text-text-soft" title={t.domain_translation ?? undefined}>
+                      {t.domain_translation}
+                    </p>
                   )}
                 </div>
                 <button
-                  className="hidden shrink-0 rounded px-1 text-xs text-danger hover:opacity-75 group-hover:block"
+                  className="hidden shrink-0 items-center rounded px-1 text-xs text-danger hover:opacity-75 group-hover:flex"
                   title="删除术语"
                   onClick={() => remove(t)}
                 >
-                  ✕
+                  <IconX size={11} />
                 </button>
               </div>
             ))}

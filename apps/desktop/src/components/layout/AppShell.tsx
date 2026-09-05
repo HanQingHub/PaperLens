@@ -5,7 +5,6 @@ import { useUi } from '../../stores/ui'
 import { useReaderTabs } from '../../stores/readerTabs'
 import {
   confirmPendingNav,
-  guardMdNav,
   hasPendingNav,
   subscribeMdGuard,
   takePendingNav,
@@ -17,7 +16,7 @@ import RightPanel from './RightPanel'
 import Waves from '../shared/Waves'
 
 export default function AppShell() {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
   const theme = useAuth((s) => s.settings.theme)
   const animationsOn = useAuth((s) => s.settings.animations !== false)
   const { rightTab } = useUi()
@@ -45,10 +44,6 @@ export default function AppShell() {
 
   // MD 未保存确认框（全局单例：拦截点只存意图，确认/取消集中在此）
   const mdConfirmOpen = useSyncExternalStore(subscribeMdGuard, hasPendingNav)
-  const onLogout = () => {
-    const run = () => logout()
-    if (!guardMdNav(run)) run()
-  }
 
   return (
     <div className="relative flex h-full overflow-hidden bg-bg text-text">
@@ -70,18 +65,20 @@ export default function AppShell() {
         <main className="relative flex min-w-0 flex-1 flex-col">
           {/* 顶栏（无边框：顶部区域不留横线；data-tauri-drag-region 供窗口化时拖拽移动）。
               全局页签栏与账号区同一行：页签 flex-1 min-w-0 防溢出，账号区 shrink-0；
-              右侧 padding 条件化：右栏收起时为常驻 —/✕ 控制小部件预留 pr-20；
-              右栏展开时账号+退出登录直接贴紧面板左缘（用户要求零间隙） */}
+              右侧 padding 条件化：右栏收起时为常驻最小化/X控制小部件预留 pr-20；
+              右栏展开时账号展示直接贴紧面板左缘（用户要求零间隙；退出登录已迁入设置页） */}
           <header
             data-tauri-drag-region
             className={`glass sticky top-0 z-30 flex h-11 shrink-0 items-stretch pl-2 ${rightTab ? 'pr-3' : 'pr-20'}`}
           >
             <TabBar />
             <div className="ml-1 flex shrink-0 items-center gap-2 pl-1">
-              <span className="whitespace-nowrap text-xs text-text-soft">{user?.display_name ?? user?.username}</span>
-              <button className="btn btn-ghost whitespace-nowrap px-2 py-1 text-xs" onClick={onLogout}>
-                退出登录
-              </button>
+              <span
+                className="max-w-40 truncate whitespace-nowrap text-xs text-text-soft"
+                title={user?.display_name ?? user?.username}
+              >
+                {user?.display_name ?? user?.username}
+              </span>
             </div>
           </header>
           <div className="min-h-0 flex-1">
