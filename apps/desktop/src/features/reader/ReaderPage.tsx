@@ -19,6 +19,7 @@ import { clientRectsInPage, clientRectsToPdf, mergeClientRects } from '../../sha
 import { RENDER_DEBOUNCE_MS, PROGRESS_SAVE_THROTTLE_MS, ZOOM_STEP_RATIO, mapOcrPollStatus } from './constants'
 import '../../lib/pdfjsSetup'
 import PageView from './PageView'
+import InkToolbar from './InkToolbar'
 import ThumbnailRail from './ThumbnailRail'
 import MarkdownReader from './MarkdownReader'
 import { clearPageBitmaps, clearRenderQueue } from './renderScheduler'
@@ -83,6 +84,7 @@ const icons = {
   scroll: 'M4 4h16v7H4z M4 14h16v6H4z',
   words: 'M6 4h8a4 4 0 0 1 4 4v12H10a4 4 0 0 1-4-4V4z M9 9h6 M12 6v9',
   split: 'M12 3v18 M4 5h6v14H4z M14 5h6v14h-6z',
+  pen: 'M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z',
 }
 
 export default function ReaderPage() {
@@ -113,7 +115,8 @@ export default function ReaderPage() {
   const ocrError = useReader((s) => s.ocrError)
   const searchOpen = useReader((s) => s.searchOpen)
   const outlineOpen = useReader((s) => s.outlineOpen)
-  const annotationsCount = useReader((s) => s.annotations.length)
+  const annotationsCount = useReader((s) => s.annotations.filter((a) => a.type !== 'ink').length)
+  const inkActive = useReader((s) => s.ink.active)
   // 参考文献回链闪烁（下发到命中页渲染）
   const refFlash = useRefLink((s) => s.flash)
 
@@ -715,6 +718,7 @@ export default function ReaderPage() {
   const onMouseUp = useCallback(() => {
     const st = useReader.getState()
     if (st.linking) return
+    if (st.ink.active) return // 绘制模式：落笔的兼容 mouseup 不弹划词工具条
     window.setTimeout(async () => {
       // 竞态守卫（B5/N5）：守卫必须在 setTimeout 内部首位——mouseup 早于 click，
       // 标志由 onWordClick 在 click 阶段写入，此处（click 之后）才读得到。
@@ -1061,6 +1065,17 @@ export default function ReaderPage() {
             >
               <I d={icons.search} />
             </button>
+            <button
+              className={`rd-tbtn ${inkActive ? 'rd-tbtn-on' : ''}`}
+              title={inkActive ? '退出绘制 (Esc)' : '画笔与图形 (Esc 退出)'}
+              onClick={() => {
+                const next = !useReader.getState().ink.active
+                useReader.getState().setInk({ active: next })
+                if (next) useReader.getState().setSelection(null) // 激活瞬间清残留划词浮条
+              }}
+            >
+              <I d={icons.pen} />
+            </button>
             <button className="rd-tbtn" title="批注与摘录面板" onClick={() => openPanel('annotations')}>
               <span className="relative">
                 <I d={icons.note} />
@@ -1170,6 +1185,9 @@ export default function ReaderPage() {
           </span>
         )}
       </div>
+
+      {/* 画笔浮动工具条（顶栏正下方居中，仅 PDF 文档 + 绘制模式激活时渲染） */}
+      {!isMd && inkActive && <InkToolbar />}
 
       {/* ── 主区域 ── */}
       <div ref={mainAreaRef} className="relative flex min-h-0 flex-1">

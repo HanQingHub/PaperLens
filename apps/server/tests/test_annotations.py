@@ -44,6 +44,47 @@ def test_annotation_validation(client, tmp_path):
     assert r.status_code == 400
 
 
+def test_ink_annotation_roundtrip_and_count(client, tmp_path):
+    token = register(client)
+    paper = upload_pdf(client, token, tmp_path)
+    stroke = {"tool": "pen", "color": "#e74c3c", "width": 2,
+              "points": [[10.5, 20.0], [30.2, 22.1], [48.9, 30.4]]}
+    r = client.post(
+        f"/api/papers/{paper['id']}/annotations",
+        json={"page_no": 1, "type": "ink", "anchor_json": json.dumps(stroke)},
+        headers=auth(token),
+    )
+    assert r.status_code == 201
+    listed = client.get(f"/api/papers/{paper['id']}/annotations", headers=auth(token)).json()
+    assert len(listed) == 1
+    assert listed[0]["type"] == "ink"
+    assert json.loads(listed[0]["anchor_json"]) == stroke
+
+    # 文库卡片批注计数不含 ink（保持"文本批注"语义）：1 句子 + 1 ink → count=1
+    add_annotation(client, token, paper["id"])
+    papers = client.get("/api/papers", headers=auth(token)).json()
+    row = next(p for p in papers if p["id"] == paper["id"])
+    assert row["annotation_count"] == 1
+
+
+def test_export_md_excludes_ink(client, tmp_path):
+    token = register(client)
+    paper = upload_pdf(client, token, tmp_path)
+    add_annotation(client, token, paper["id"], text="md 笔记")
+    client.post(
+        f"/api/papers/{paper['id']}/annotations",
+        json={"page_no": 1, "type": "ink",
+              "anchor_json": json.dumps({"tool": "rect", "color": "#3498db", "width": 3,
+                                         "points": [[10, 10], [100, 80]]})},
+        headers=auth(token),
+    )
+    r = client.post(f"/api/papers/{paper['id']}/export-annotations-md", headers=auth(token))
+    assert r.status_code == 200
+    text = r.content.decode("utf-8")
+    assert "md 笔记" in text
+    assert text.count("## p.") == 1  # ink 行不产出空段
+
+
 def test_annotation_isolation(client, tmp_path):
     ta = register(client, "alice")
     tb = register(client, "bob")

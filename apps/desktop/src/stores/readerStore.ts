@@ -9,6 +9,29 @@ export type ViewMode = 'single' | 'continuous'
 export const ANNO_COLORS = ['yellow', 'green', 'blue', 'pink', 'purple'] as const
 export type AnnoColor = (typeof ANNO_COLORS)[number]
 
+/** 画笔工具集：自由笔触（pen/highlighter）与图形（line/arrow/rect/ellipse） */
+export type InkTool = 'pen' | 'highlighter' | 'line' | 'arrow' | 'rect' | 'ellipse'
+
+/**
+ * ink 笔迹（page 单位，scale=1 左上原点，x∈[0,baseW] y∈[0,baseH]）：
+ * pen/highlighter 为 N 个采样点；图形恰 2 点（起点/终点，rect/ellipse 为包围盒对角）。
+ * 与 PDF 用户空间（y 向上）的批注坐标系并存——InkLayer 渲染只需 ×hiScale。
+ */
+export interface InkStroke {
+  tool: InkTool
+  color: string
+  width: number
+  points: [number, number][]
+}
+
+/** 画笔会话状态（工具偏好跨文档保留，active 随文档切换复位） */
+export interface InkState {
+  active: boolean
+  tool: InkTool
+  color: string
+  width: number
+}
+
 export interface SelectionInfo {
   text: string
   pageIndex: number
@@ -27,12 +50,38 @@ export interface SelectionInfo {
 export interface ReaderAnnotation {
   id: number
   page_no: number
-  type: 'word_note' | 'sentence'
+  type: 'word_note' | 'sentence' | 'ink'
   rects: PdfRect[]
   anchorText: string
   card: { x: number; y: number; w: number; h: number } | null
   color: AnnoColor | string
   text: string
+  /** type='ink' 时的笔迹数据（其余类型恒 null） */
+  ink: InkStroke | null
+}
+
+const INK_TOOLS: readonly string[] = ['pen', 'highlighter', 'line', 'arrow', 'rect', 'ellipse']
+
+/** anchor_json（type='ink'）→ InkStroke；损坏/缺字段降级为 null（渲染层跳过） */
+function parseInkStroke(anchorJson: string): InkStroke | null {
+  try {
+    const a = JSON.parse(anchorJson) as Partial<InkStroke>
+    if (typeof a.tool !== 'string' || !INK_TOOLS.includes(a.tool)) return null
+    if (!Array.isArray(a.points) || a.points.length === 0) return null
+    const points = a.points.filter(
+      (p): p is [number, number] =>
+        Array.isArray(p) && p.length === 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]),
+    )
+    if (!points.length) return null
+    return {
+      tool: a.tool as InkTool,
+      color: typeof a.color === 'string' ? a.color : '#e74c3c',
+      width: Number.isFinite(a.width) ? Math.max(0.5, Number(a.width)) : 2,
+      points,
+    }
+  } catch {
+    return null
+  }
 }
 
 export function parseAnnotation(raw: AnnotationRaw): ReaderAnnotation {
@@ -62,6 +111,7 @@ export function parseAnnotation(raw: AnnotationRaw): ReaderAnnotation {
     card,
     color: raw.color || 'yellow',
     text: raw.text ?? '',
+    ink: raw.type === 'ink' ? parseInkStroke(raw.anchor_json) : null,
   }
 }
 
@@ -112,6 +162,9 @@ interface ReaderState {
 
   linking: LinkingDraft | null
 
+  /** 画笔会话（工具/颜色/粗细偏好保留，active 随 reset 复位） */
+  ink: InkState
+
   searchOpen: boolean
   outlineOpen: boolean
   /** 页内搜索：当前词（小写）与聚焦命中页（0-based，null=非聚焦态） */
@@ -141,6 +194,7 @@ interface ReaderState {
   setOcrProgress: (p: { done: number; total: number } | null, error?: string | null) => void
   setLinking: (l: LinkingDraft | null) => void
   updateLinking: (patch: Partial<LinkingDraft>) => void
+  setInk: (patch: Partial<InkState>) => void
   toggleSearch: (v?: boolean) => void
   toggleOutline: (v?: boolean) => void
   setSearchTerm: (t: string) => void
@@ -178,6 +232,8 @@ export const useReader = create<ReaderState>((set) => ({
   ocrError: null,
 
   linking: null,
+
+  ink: { active: false, tool: 'pen', color: '#e74c3c', width: 2 },
 
   searchOpen: false,
   outlineOpen: false,
@@ -223,6 +279,7 @@ export const useReader = create<ReaderState>((set) => ({
   setLinking: (l) => set({ linking: l }),
   updateLinking: (patch) =>
     set((s) => (s.linking ? { linking: { ...s.linking, ...patch } } : {})),
+  setInk: (patch) => set((s) => ({ ink: { ...s.ink, ...patch } })),
   toggleSearch: (v) => set((s) => ({ searchOpen: v ?? !s.searchOpen })),
   toggleOutline: (v) => set((s) => ({ outlineOpen: v ?? !s.outlineOpen })),
   setSearchTerm: (t) => set({ searchTerm: t }),
@@ -230,7 +287,7 @@ export const useReader = create<ReaderState>((set) => ({
   setLocateAnnotation: (id) => set({ locateAnnotationId: id }),
   reset: () => {
     pageTextCache.clear()
-    set({
+    set((s) => ({
       paper: null,
       pdf: null,
       numPages: 0,
@@ -247,11 +304,13 @@ export const useReader = create<ReaderState>((set) => ({
       ocrStatus: 'none',
       ocrProgress: null,
       linking: null,
+      // 保留工具/颜色/粗细偏好，仅退出激活态
+      ink: { ...s.ink, active: false },
       searchOpen: false,
       outlineOpen: false,
       searchTerm: '',
       searchFocusPage: null,
       locateAnnotationId: null,
-    })
+    }))
   },
 }))

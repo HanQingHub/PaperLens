@@ -31,6 +31,7 @@ import { useRefLink } from '../../stores/refLinkStore'
 import { openExternal } from '../../shared/openExternal'
 import WordHoverCard from '../words/WordHoverCard'
 import AnnotationOverlay from '../annotations/AnnotationOverlay'
+import InkLayer from './InkLayer'
 import { DraftCard } from '../annotations/NoteCard'
 import { toast } from '../shared/Toast'
 
@@ -83,6 +84,7 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
   const updateLinking = useReader((s) => s.updateLinking)
   const locateAnnotationId = useReader((s) => s.locateAnnotationId)
   const annotations = useReader((s) => s.annotations)
+  const inkActive = useReader((s) => s.ink.active)
   const [popoverId, setPopoverId] = useState<number | null>(null)
 
   // 高亮批注被删除后自动收起浮条
@@ -649,15 +651,18 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
       className="page-wrapper relative mx-auto mb-4 shrink-0"
       style={{ width: cssW, height: cssH, visibility: visible ? 'visible' : 'hidden', cursor: hoverLink ? 'pointer' : undefined }}
       onMouseDown={(e) => {
+        if (inkActive) return // 绘制模式：ink 层已捕获指针，不进划词/连线链路
         hideHover()
         onStageMouseDown(e)
       }}
       onMouseOver={(e) => {
+        if (inkActive) return
         // 指针在悬停卡内移动时不重算 hover（卡内中文文本会 wordAtPoint 落空而误收卡）
         if (hoverCardRef.current?.contains(e.target as Node)) return
         onWordHover(e)
       }}
       onMouseMove={(e) => {
+        if (inkActive) return
         // 链接悬停（与 onMouseOver 生词悬停并行）：命中状态变化才 setState
         //（pageLinks 元素引用稳定，避免高频重渲染）
         const hit = linkAtEvent(e)
@@ -671,6 +676,7 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
         if (hoverLink) setHoverLink(null)
       }}
       onClick={(e) => {
+        if (inkActive) return // 绘制落笔的兼容 click 不触发链接/词查询/批注浮条
         // 点击链：① 原生链接（内链跳转/外链浏览器）→ ② 高亮生词词元释义
         // → ③ 参考文献回链兜底 → ④ 句子批注浮条
         if (onLinkClick(e)) return
@@ -795,6 +801,15 @@ const PageView = memo(function PageView({ pdf, pageIndex, active, renderScale, p
             inkScale={pageInkScale}
           />
         )}
+
+        {/* 画笔层：ink 批迹渲染 + 绘制模式指针捕获（z6，激活态见 theme.css .ink-active） */}
+        <InkLayer
+          pageIndex={pageIndex}
+          geom={stageGeom}
+          stageW={stageW}
+          stageH={stageH}
+          stageRef={stageRef}
+        />
 
         {/* 连线拖拽预览（drag 为可视坐标，除以 stretch 换算到舞台坐标） */}
         {isLinkingPage && anchorCss && linking?.drag && !linking.cardDraft && (

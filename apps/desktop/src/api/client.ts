@@ -279,7 +279,7 @@ export interface AnnotationRaw {
   id: number
   paper_id: number
   page_no: number
-  type: 'word_note' | 'sentence'
+  type: 'word_note' | 'sentence' | 'ink'
   anchor_json: string
   card_json: string | null
   color: string
@@ -290,7 +290,7 @@ export interface AnnotationRaw {
 
 export interface AnnotationWrite {
   page_no: number
-  type: 'word_note' | 'sentence'
+  type: 'word_note' | 'sentence' | 'ink'
   anchor_json: string
   card_json?: string | null
   color?: string

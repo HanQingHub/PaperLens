@@ -40,7 +40,8 @@ export function AnnotationsPanel() {
     setLoading(true)
     try {
       const [annos, excs] = await Promise.all([api.annotations(paperId), api.excerpts(paperId)])
-      setAnnotations(annos)
+      // ink 为视觉笔迹（无文本），面板只列文本批注
+      setAnnotations(annos.filter((a) => a.type !== 'ink'))
       setExcerpts(excs)
     } catch (e) {
       toast(e instanceof Error ? e.message : '批注加载失败', 'error')

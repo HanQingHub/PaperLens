@@ -45,7 +45,7 @@ export interface Paper {
   annotation_count?: number
 }
 
-export type AnnotationType = 'word_note' | 'sentence'
+export type AnnotationType = 'word_note' | 'sentence' | 'ink'
 
 // 注：后端 annotations.py 返回 anchor_json / card_json（JSON 字符串）
 export interface Annotation {

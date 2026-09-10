@@ -55,8 +55,8 @@ def list_annotations(paper_id: int, user: User = Depends(get_current_user), db: 
 def create_annotation(paper_id: int, body: AnnotationIn, user: User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
     owned_paper(db, user, paper_id)
-    if body.type not in ("word_note", "sentence"):
-        raise HTTPException(status_code=400, detail="type 取值 word_note|sentence")
+    if body.type not in ("word_note", "sentence", "ink"):
+        raise HTTPException(status_code=400, detail="type 取值 word_note|sentence|ink")
     try:
         json.loads(body.anchor_json)
     except ValueError:
@@ -146,6 +146,8 @@ def export_md(paper_id: int, color: str | None = None, type: str | None = None,
     rows = _filtered_annotations(db, paper_id, color, type)
     lines = [f"# {paper.title or '论文'} 批注", ""]
     for a in rows:
+        if a.type == "ink":
+            continue
         try:
             anchor = json.loads(a.anchor_json)
             excerpt = (anchor.get("text") or "").strip()

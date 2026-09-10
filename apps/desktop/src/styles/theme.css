@@ -721,6 +721,22 @@ h1, h2, h3, h4, button, input, textarea, select {
   cursor: crosshair !important;
 }
 
+/* 画笔层：舞台内 z6（高于批注层 3-5）；未激活纯展示（pointer-events:none），
+   激活时拦截指针绘制（touch-action 防触控滚动抢占 pointer 事件流） */
+.ink-svg {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  overflow: visible;
+}
+.ink-svg.ink-active {
+  pointer-events: auto;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
 /* 加载骨架微光 */
 .skeleton-shimmer {
   position: relative;

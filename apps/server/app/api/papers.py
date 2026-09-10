@@ -487,7 +487,7 @@ def list_papers(
 
     count_sq = (
         db.query(Annotation.paper_id, func.count(Annotation.id).label("c"))
-        .filter(Annotation.user_id == user.id)
+        .filter(Annotation.user_id == user.id, Annotation.type != "ink")
         .group_by(Annotation.paper_id)
         .subquery()
     )
