@@ -29,17 +29,19 @@ def test_stats_empty(client):
 def test_stats_today_and_total(client, tmp_path):
     token = register(client)
     paper = upload_pdf(client, token, tmp_path)
-    now = utc_now()
-    post_session(client, token, paper["id"], now - timedelta(minutes=10), now)
-    yesterday = now - timedelta(days=1)
-    post_session(client, token, paper["id"], yesterday, yesterday + timedelta(minutes=5))
+    # 服务器按用户本地时区分桶（stats_service._local_date 转 astimezone().date()），
+    # 会话时间必须锚定本地日界生成——用 utc_now() 偏移在本地 0-8 点时段会整段落
+    # 前一天（today_s 归零、streak 断裂），日界相对取数可全天候稳定
+    today_local = utc_now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = today_local + timedelta(minutes=1)
+    post_session(client, token, paper["id"], today_start, today_start + timedelta(minutes=10))
+    yesterday_start = today_local - timedelta(days=1) + timedelta(minutes=1)
+    post_session(client, token, paper["id"], yesterday_start, yesterday_start + timedelta(minutes=5))
     r = client.get("/api/stats/overview", headers=auth(token))
     body = r.json()
     assert body["today_s"] == 600
     assert body["total_s"] == 900
-    # 服务器按用户本地时区分桶（stats_service._local_date 转 astimezone().date()），
-    # 断言必须用本地日期而非 UTC 日期，否则本地 0-8 点时段会错位一整天
-    today_iso = now.astimezone().date().isoformat()
+    today_iso = today_local.date().isoformat()
     assert [c for c in body["calendar"] if c["date"] == today_iso][0]["seconds"] == 600
     assert body["streak"] == 2
 
