@@ -157,6 +157,10 @@ export default function App() {
                 trigger="mount"
               />
             </div>
+            <div className="flex items-center gap-2.5 rounded-full border border-border bg-panel/80 px-5 py-1.5 shadow-[var(--shadow-1)] backdrop-blur-sm">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+              <span className="text-[12.5px] font-semibold tracking-[0.32em] text-accent">HanQing 工作室出品</span>
+            </div>
           </div>
           <div className="relative flex flex-col items-center gap-3 text-text-faint">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />

@@ -1,5 +1,5 @@
-// 画笔浮动工具条：6 工具 + 6 色 + 3 档粗细 + 撤回 + 清除本页 + 退出。
-// 撤回 = 删除最近一笔 ink 批注（max(id)）；清除本页 = 删除当前页全部 ink。
+// 画笔浮动工具条：6 绘制工具 + 橡皮擦 + 6 色 + 3 档粗细（粗细档复用为擦除半径）+ 撤回 + 清除本页 + 退出。
+// 撤回 = 删除最近一笔 ink 批注（max(id)）；清除本页 = 删除当前页全部 ink；橡皮擦 = 点按/拖过删除命中的整笔。
 // 键盘：Ctrl+Z 撤回 / Esc 退出（input/textarea 聚焦时不抢占）。
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api/client'
@@ -20,6 +20,11 @@ const TOOLS: { key: InkTool; icon: string; title: string }[] = [
   { key: 'arrow', icon: 'M5 19L19 5 M9 5h10v10', title: '箭头' },
   { key: 'rect', icon: 'M5 5h14v14H5z', title: '矩形' },
   { key: 'ellipse', icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', title: '椭圆' },
+  {
+    key: 'eraser',
+    icon: 'm7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21 M22 21H7 M5 11l9 9',
+    title: '橡皮擦（点按/拖过删除整笔）',
+  },
 ]
 
 const COLORS = ['#e74c3c', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#2a2f36']

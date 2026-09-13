@@ -9,8 +9,8 @@ export type ViewMode = 'single' | 'continuous'
 export const ANNO_COLORS = ['yellow', 'green', 'blue', 'pink', 'purple'] as const
 export type AnnoColor = (typeof ANNO_COLORS)[number]
 
-/** 画笔工具集：自由笔触（pen/highlighter）与图形（line/arrow/rect/ellipse） */
-export type InkTool = 'pen' | 'highlighter' | 'line' | 'arrow' | 'rect' | 'ellipse'
+/** 画笔工具集：自由笔触（pen/highlighter）与图形（line/arrow/rect/ellipse）+ 橡皮擦（eraser，仅前端擦除态，不落库） */
+export type InkTool = 'pen' | 'highlighter' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'eraser'
 
 /**
  * ink 笔迹（page 单位，scale=1 左上原点，x∈[0,baseW] y∈[0,baseH]）：
@@ -60,6 +60,7 @@ export interface ReaderAnnotation {
   ink: InkStroke | null
 }
 
+/** 可落库工具白名单（eraser 为纯前端擦除态，永不持久化；parse 拒收即渲染层跳过） */
 const INK_TOOLS: readonly string[] = ['pen', 'highlighter', 'line', 'arrow', 'rect', 'ellipse']
 
 /** anchor_json（type='ink'）→ InkStroke；损坏/缺字段降级为 null（渲染层跳过） */

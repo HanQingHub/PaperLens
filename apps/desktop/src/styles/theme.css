@@ -736,6 +736,10 @@ h1, h2, h3, h4, button, input, textarea, select {
   touch-action: none;
   user-select: none;
 }
+/* 橡皮擦态：光标区分绘制与擦除 */
+.ink-svg.ink-active.ink-eraser {
+  cursor: cell;
+}
 
 /* 加载骨架微光 */
 .skeleton-shimmer {
