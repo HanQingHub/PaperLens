@@ -108,6 +108,22 @@ pub fn run() {
                             let _ = RevokeDragDrop(h.0);
                         }
                     }
+                    // WebView2 pinch 手势恢复：wry 把 IsPinchZoomEnabled 硬绑定到
+                    // zoomHotkeysEnabled（默认 false），触摸板/触摸屏捏合手势因此
+                    // 在 WebView2 输入层被吞、零事件到页面。此处单独恢复
+                    // IsPinchZoomEnabled=true，不启用 zoomHotkeysEnabled——避免连带
+                    // 启用 IsZoomControlEnabled（缩放控件 + Ctrl+/-/0，与 app 自身
+                    // 缩放快捷键冲突）。捏合恢复后由前端 preventDefault 接管
+                    // （touchpad pinch 合成为 wheel(ctrlKey) 事件，走 ReaderPage 现有
+                    // setScale 管线），WebView2 的 Page Scale zoom 不触发。
+                    let _ = w.with_webview(|webview| unsafe {
+                        use windows::core::Interface;
+                        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings5;
+                        let Ok(core) = webview.controller().CoreWebView2() else { return };
+                        let Ok(settings) = core.Settings() else { return };
+                        let Ok(s5) = settings.cast::<ICoreWebView2Settings5>() else { return };
+                        let _ = s5.SetIsPinchZoomEnabled(true);
+                    });
                 }
             }
             sidecar::setup_sidecar(app)

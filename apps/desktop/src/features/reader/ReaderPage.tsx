@@ -701,6 +701,55 @@ export default function ReaderPage() {
     }
   }, [loading])
 
+  // 触摸屏双指捏合缩放：两指距离比 → rAF 合帧 setScale（与 Ctrl+滚轮同管线）。
+  // 单指 touch 不拦截（浏览器默认 pan 滚动）；两指起 preventDefault 接管。
+  // 画笔/橡皮激活时不接管（画笔层已捕获 pointer，双指归画笔防误画误缩放）。
+  const pinchRef = useRef<{ dist: number } | null>(null)
+  const pinchAccum = useRef(1)
+  const pinchRaf = useRef(0)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const dist2 = (t: TouchList) =>
+      Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        pinchRef.current = { dist: dist2(e.touches) }
+        pinchAccum.current = 1
+      }
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || !pinchRef.current) return
+      if (useReader.getState().ink.active) return
+      e.preventDefault()
+      const d = dist2(e.touches)
+      if (pinchRef.current.dist > 0) pinchAccum.current *= d / pinchRef.current.dist
+      pinchRef.current.dist = d
+      if (pinchRaf.current) return
+      pinchRaf.current = requestAnimationFrame(() => {
+        pinchRaf.current = 0
+        const f = pinchAccum.current
+        pinchAccum.current = 1
+        const st = useReader.getState()
+        st.setScale(st.scale * f)
+      })
+    }
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) pinchRef.current = null
+    }
+    el.addEventListener('touchstart', onTouchStart, { passive: true })
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    el.addEventListener('touchend', onTouchEnd, { passive: true })
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true })
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
+      el.removeEventListener('touchcancel', onTouchEnd)
+      if (pinchRaf.current) cancelAnimationFrame(pinchRaf.current)
+    }
+  }, [loading])
+
   // ── 翻页（单页模式 / 页码跳转）──
   const gotoPage = useCallback(
     (pageNo: number, save = true) => {

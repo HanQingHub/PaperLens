@@ -64,6 +64,9 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
   /** 绘制中的笔迹（page 单位；仅本组件消费，落库后清除） */
   const [live, setLive] = useState<InkStroke | null>(null)
   const drawingRef = useRef(false)
+  /** 当前活动指针（首指 pointerId）：触摸多指时第二指的 move/up 不污染笔画、
+   *  不提前结算（触摸 pointer 有 implicit capture，仅 isPrimary 守卫挡不住后续事件） */
+  const activePointerId = useRef<number | null>(null)
   /** 擦除手势进行中（eraser 工具落笔后至抬起） */
   const erasingRef = useRef(false)
   /** 已发删除请求、待服务端确认的批注 id（防拖擦重复发） */
@@ -126,10 +129,15 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
-      if (!ink.active || e.button !== 0) return
+      // isPrimary：触摸第二指（双指捏合/多指）不开启新笔画/擦除；后续事件由
+      // activePointerId 过滤（见上注释）。活动指针存续期间（activePointerId 非
+      // null）拦截一切后续 down——含异类型 primary（如鼠标绘制中落下的第一根
+      // 手指，其 isPrimary=true 但属新手势，防止覆写 activePointerId 并重置 live）
+      if (!ink.active || e.button !== 0 || !e.isPrimary || activePointerId.current !== null) return
       e.preventDefault()
       e.stopPropagation()
       e.currentTarget.setPointerCapture(e.pointerId)
+      activePointerId.current = e.pointerId
       if (ink.tool === 'eraser') {
         erasingRef.current = true
         eraseStatsRef.current = { ok: 0, failed: 0 }
@@ -144,6 +152,8 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
+      // 非活动指针（触摸第二指 move / 首指结算后的悬停）：不污染笔画、不误擦
+      if (e.pointerId !== activePointerId.current) return
       if (erasingRef.current) {
         // Esc 中途退出绘制后停止擦除（抬笔时仍按正常结束结算在途删除）
         if (!useReader.getState().ink.active) {
@@ -172,7 +182,10 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
   )
 
   const onPointerUp = useCallback(
-    async () => {
+    async (e: React.PointerEvent<SVGSVGElement>) => {
+      // 非活动指针（触摸第二指抬起）：不结算、不截断第一笔
+      if (e.pointerId !== activePointerId.current) return
+      activePointerId.current = null
       // 擦除结束结算：正常抬笔，或 Esc 中途退出后（erasing 已清，但有在途/已删计数仍需结算）
       const st = eraseStatsRef.current
       if (erasingRef.current || st.ok > 0 || st.failed > 0 || pendingDeletesRef.current.length > 0) {
@@ -192,25 +205,37 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
       if (!drawingRef.current) return
       drawingRef.current = false
       const stroke = live
-      setLive(null)
+      // 抬笔不清 live：保持笔迹可见直至落库替换，消除"清除→网络往返→重现"
+      // 的落库空窗闪烁（频闪根因）
       if (!stroke) return
       // 钳制到页内 + 有效性（freehand ≥2 点；图形零位移单击/误触丢弃）
       const clamp = (v: number, max: number) => Math.max(0, Math.min(max, v))
       const points = stroke.points.map(
         ([x, y]) => [clamp(x, geom.baseW), clamp(y, geom.baseH)] as [number, number],
       )
-      if (!isCommittableStroke({ tool: stroke.tool, points })) return
+      if (!isCommittableStroke({ tool: stroke.tool, points })) {
+        setLive(null)
+        return
+      }
       const paperId = useReader.getState().paper?.id
-      if (!paperId) return
+      if (!paperId) {
+        setLive(null)
+        return
+      }
       try {
         const raw = await createAnnotation(paperId, {
           page_no: pageIndex + 1,
           type: 'ink',
           anchor_json: JSON.stringify({ tool: stroke.tool, color: stroke.color, width: stroke.width, points }),
         })
+        // upsert 与清 live 同一微任务：React 19 自动批处理合并为一次 commit——
+        // pageInks 新笔挂载与 live 卸载原子切换，零空窗零闪烁
         useReader.getState().upsertAnnotation(parseAnnotation(raw))
+        setLive((cur) => (cur === stroke ? null : cur))
         useReaderBus.getState().bumpAnnotations()
       } catch {
+        // 引用守卫：await 期间已落第二笔（live 引用已变）时不误清新笔
+        setLive((cur) => (cur === stroke ? null : cur))
         toast('笔迹保存失败', 'error')
       }
     },

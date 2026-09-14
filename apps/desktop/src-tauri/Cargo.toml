@@ -1,6 +1,6 @@
 [package]
 name = "paperlens-desktop"
-version = "0.7.5"
+version = "0.7.6"
 description = "PaperLens desktop shell (Tauri v2 thin shell)"
 authors = ["筝青寒"]
 edition = "2021"
@@ -45,6 +45,9 @@ windows = { version = "0.61", default-features = false, features = [
     # 该方法被用于跳过已正确的 .lnk，避免无谓重写
     "Win32_Storage_FileSystem",
 ] }
+# WebView2 ICoreWebView2Settings5（IsPinchZoomEnabled）COM 接口；
+# 已随 tauri/wry 在依赖树中（Cargo.lock 0.38.2），此处仅声明直接依赖
+webview2-com = "0.38"
 windows-sys = { version = "0.59", features = [
     "Win32_System_JobObjects",
     "Win32_System_Threading",

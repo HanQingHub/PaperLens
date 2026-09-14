@@ -55,6 +55,18 @@ export default function App() {
     boot()
   }, [boot])
 
+  // 触控板捏合兜底：WebView2 恢复 pinch 手势后，捏合以 ctrlKey wheel 事件到达
+  // 页面；无 preventDefault 的页面会被 WebView2 做整页 Page Scale 缩放（UI 变形）。
+  // 全局 capture 吞掉所有 ctrl+wheel 默认行为——阅读器内缩放由 ReaderPage /
+  // ComparePane 自身监听（目标链后段，preventDefault 幂等、传播不受影响）接管。
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) e.preventDefault()
+    }
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => window.removeEventListener('wheel', onWheel, { capture: true })
+  }, [])
+
   // 401 统一处理：会话失效 → 登出 + 提示（api/client 的 request() 触发）
   useEffect(() => {
     setUnauthorizedHandler(() => {

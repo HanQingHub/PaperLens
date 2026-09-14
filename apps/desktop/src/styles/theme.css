@@ -116,6 +116,11 @@ body {
   margin: 0;
   height: 100%;
   overscroll-behavior: none;
+  /* 触摸屏：禁浏览器默认 pinch-zoom（Page Scale 整页缩放），滚动（pan-x/pan-y）
+     保留。祖先链交集语义使全 app 内默认 pinch-zoom 失效；阅读器内双指缩放由
+     JS 接管（ReaderPage touch 监听），画笔激活层 .ink-active 的 touch-action:none
+     更严格覆盖。 */
+  touch-action: pan-x pan-y;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
