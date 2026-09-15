@@ -6,13 +6,14 @@ export const MIN_POINT_DIST = 1.2
 /** 图形最小尺寸（page 单位）：小于此值视为误触丢弃 */
 export const MIN_SHAPE_SIZE = 3
 
-/** 落库有效性：freehand ≥2 点；line/arrow 按欧氏长度（水平/垂直线合法）；
- * rect/ellipse 恰 2 点且双边 ≥ MIN_SHAPE_SIZE（零位移单击/压扁误触丢弃）；
- * eraser 为纯前端擦除态，永不落库 */
+/** 落库有效性：freehand ≥1 点（单击成点：渲染层 smoothPathD 单点分支 + 圆帽成点，
+ *  橡皮擦 hitTest 单点分支命中）；line/arrow 按欧氏长度（水平/垂直线合法）；
+ *  rect/ellipse 恰 2 点且双边 ≥ MIN_SHAPE_SIZE（零位移单击/压扁误触丢弃）；
+ *  eraser 为纯前端擦除态，永不落库 */
 export function isCommittableStroke(stroke: Pick<InkStroke, 'tool' | 'points'>): boolean {
   const { tool, points } = stroke
   if (tool === 'eraser') return false
-  if (tool === 'pen' || tool === 'highlighter') return points.length >= 2
+  if (tool === 'pen' || tool === 'highlighter') return points.length >= 1
   if (points.length !== 2) return false
   const [a, b] = points
   const dx = Math.abs(b[0] - a[0])
@@ -80,7 +81,7 @@ export function hitTestInkStroke(
     for (let i = 0; i < points.length - 1; i++) {
       if (pointSegDist(p, points[i], points[i + 1]) <= tol) return true
     }
-    // 单点笔迹（理论上不落库，防御）：按点距判
+    // 单点笔迹（单击成点，正式落库）：按点距判
     if (points.length === 1 && Math.hypot(p[0] - points[0][0], p[1] - points[0][1]) <= tol) return true
     return false
   }

@@ -17,10 +17,10 @@ describe('isCommittableStroke', () => {
     expect(isCommittableStroke({ tool: 'rect', points: [[10, 10], [15, 15]] })).toBe(true)
   })
 
-  it('自由笔触：≥2 点通过，单击（1 点）丢弃', () => {
-    expect(isCommittableStroke({ tool: 'pen', points: [[10, 10]] })).toBe(false)
+  it('自由笔触：单击（1 点）成点，≥2 点画线', () => {
+    expect(isCommittableStroke({ tool: 'pen', points: [[10, 10]] })).toBe(true)
+    expect(isCommittableStroke({ tool: 'highlighter', points: [[10, 10]] })).toBe(true)
     expect(isCommittableStroke({ tool: 'pen', points: [[10, 10], [11, 11]] })).toBe(true)
-    expect(isCommittableStroke({ tool: 'highlighter', points: [[10, 10]] })).toBe(false)
     expect(isCommittableStroke({ tool: 'pen', points: [[10, 10], [20, 10]] })).toBe(true)
   })
 
@@ -60,6 +60,12 @@ describe('hitTestInkStroke', () => {
     const pen = { tool: 'pen' as const, points: [[0, 0], [100, 0]] as [number, number][], width: 2 }
     expect(hitTestInkStroke(pen, [50, 1], 4)).toBe(true)
     expect(hitTestInkStroke(pen, [50, 30], 4)).toBe(false)
+  })
+
+  it('单击成点：单点笔迹点距命中、远离脱靶（橡皮可点擦）', () => {
+    const dot = { tool: 'pen' as const, points: [[10, 10]] as [number, number][], width: 2 }
+    expect(hitTestInkStroke(dot, [12, 10], 4)).toBe(true)
+    expect(hitTestInkStroke(dot, [30, 10], 4)).toBe(false)
   })
 
   it('直线：命中与脱靶', () => {

@@ -208,7 +208,7 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
       // 抬笔不清 live：保持笔迹可见直至落库替换，消除"清除→网络往返→重现"
       // 的落库空窗闪烁（频闪根因）
       if (!stroke) return
-      // 钳制到页内 + 有效性（freehand ≥2 点；图形零位移单击/误触丢弃）
+      // 钳制到页内 + 有效性（freehand ≥1 点：单击成点；图形零位移单击/误触丢弃）
       const clamp = (v: number, max: number) => Math.max(0, Math.min(max, v))
       const points = stroke.points.map(
         ([x, y]) => [clamp(x, geom.baseW), clamp(y, geom.baseH)] as [number, number],

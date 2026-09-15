@@ -51,6 +51,12 @@ export default function ThumbnailRail({
     seqRef.current++
   }, [pdf])
 
+  // 当前页引用：渲染循环内实时读取优先级，currentPage 变化不再重启队列/丢弃在途渲染
+  const currentPageRef = useRef(currentPage)
+  useEffect(() => {
+    currentPageRef.current = currentPage
+  }, [currentPage])
+
   const renderOne = useCallback(async (pageNo: number, my: number, genAtStart: number | undefined) => {
     if (seqRef.current !== my || (generation !== undefined && generation !== genAtStart)) return false
     try {
@@ -84,45 +90,51 @@ export default function ThumbnailRail({
   useEffect(() => {
     const my = ++seqRef.current
     const genAtStart = generation
-    // 队列：默认全部页按距当前页距离排序；大文档截断为当前±NEAR + 轨道可视区±16
-    let order: number[]
-    if (numPages > BIG_DOC_PAGES) {
-      const el = railRef.current
-      const itemH = THUMB_W * 1.35 + 6
-      let visLo = currentPage - BIG_DOC_NEAR
-      let visHi = currentPage + BIG_DOC_NEAR
-      if (el && itemH > 0) {
-        const first = Math.floor(el.scrollTop / itemH) + 1
-        const count = Math.ceil(el.clientHeight / itemH) + 1
-        visLo = Math.min(visLo, first - 16)
-        visHi = Math.max(visHi, first + count + 16)
-      }
-      const lo = Math.max(1, visLo)
-      const hi = Math.min(numPages, visHi)
-      order = []
-      for (let p = lo; p <= hi; p++) order.push(p)
-      order.sort((a, b) => Math.abs(a - currentPage) - Math.abs(b - currentPage))
-    } else {
-      order = []
-      for (let p = 1; p <= numPages; p++) order.push(p)
-      order.sort((a, b) => Math.abs(a - currentPage) - Math.abs(b - currentPage))
-    }
-    const pending = order.filter((p) => !cacheRef.current.has(p))
-    if (pending.length === 0) return
     let cancelled = false
+    // 渲染循环：每轮实时按「距当前页距离」取下一个未缓存页。currentPage 变化只
+    // 改变优先级，不再重启队列——跨页滚动时在途 renderOne 不被丢弃（旧实现每次
+    // 跨页 seqRef++ 使在途渲染完成后被守卫丢弃，整页位图白渲染）。大文档可视区
+    // 区间、文档切换/世代失效守卫与旧实现等价。
     ;(async () => {
-      // 分片：每 8 页让出主线程一次
-      for (let i = 0; i < pending.length; i++) {
+      let stuck: number | null = null
+      for (let done = 0; ; done++) {
         if (cancelled || seqRef.current !== my || (generation !== undefined && generation !== genAtStart)) return
+        const cp = currentPageRef.current
+        let cands: number[]
+        if (numPages > BIG_DOC_PAGES) {
+          const el = railRef.current
+          const itemH = THUMB_W * 1.35 + 6
+          let visLo = cp - BIG_DOC_NEAR
+          let visHi = cp + BIG_DOC_NEAR
+          if (el && itemH > 0) {
+            const first = Math.floor(el.scrollTop / itemH) + 1
+            const count = Math.ceil(el.clientHeight / itemH) + 1
+            visLo = Math.min(visLo, first - 16)
+            visHi = Math.max(visHi, first + count + 16)
+          }
+          const lo = Math.max(1, visLo)
+          const hi = Math.min(numPages, visHi)
+          cands = []
+          for (let p = lo; p <= hi; p++) cands.push(p)
+        } else {
+          cands = []
+          for (let p = 1; p <= numPages; p++) cands.push(p)
+        }
+        const next = cands.filter((p) => !cacheRef.current.has(p))
+          .sort((a, b) => Math.abs(a - cp) - Math.abs(b - cp))[0]
+        if (next === undefined) return
+        // 防空转护栏：同一页连续两轮选中且未写缓存（getContext 返回 null 等理论
+        // 路径，renderOne 返回 false 且不落缓存），继续轮询只会烧 CPU
+        if (next === stuck) return
         if (document.hidden) await idle()
-        await renderOne(pending[i], my, genAtStart)
-        if ((i + 1) % 8 === 0) await idle()
+        const ok = await renderOne(next, my, genAtStart)
+        stuck = ok ? null : next
+        if ((done + 1) % 8 === 0) await idle()
       }
     })()
     return () => { cancelled = true }
-    // scrollTick：大文档轨道滚动后扩展按需范围；currentPage 变化重排优先级
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdf, currentPage, numPages, generation, scrollTick, renderOne])
+    // scrollTick：大文档轨道滚动后扩展按需范围；currentPage 经 ref 实时读取（不重启队列）
+  }, [pdf, numPages, generation, scrollTick, renderOne])
 
   // 当前页自动滚动到可见（nearest + smooth，无大幅跳动）
   useEffect(() => {
