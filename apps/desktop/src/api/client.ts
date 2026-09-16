@@ -87,7 +87,7 @@ export const api = {
   deleteProject: (id: number) => request<void>(`/projects/${id}`, { method: 'DELETE' }),
 
   // ── 论文 ──
-  papers: (params: { project_id?: number; tag?: string; favorite?: boolean; q?: string; sort?: 'created' | 'title' | 'last_opened' | 'manual' } = {}) => {
+  papers: (params: { project_id?: number; tag?: string; favorite?: boolean; opened?: boolean; q?: string; sort?: 'created' | 'title' | 'last_opened' | 'manual' } = {}) => {
     const q = new URLSearchParams()
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
@@ -102,6 +102,12 @@ export const api = {
     fd.append('is_scanned', String(isScanned))
     return request<{ paper: Paper }>('/papers/upload', { method: 'POST', body: fd })
   },
+  // 文件关联打开：服务端直读本地路径，hash 去重复用既有 Paper（created=false）
+  openExternalPdf: (path: string) =>
+    request<{ paper: Paper; created: boolean }>('/papers/open-external', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
   updatePaper: (id: number, patch: Partial<Paper>) =>
     request<Paper>(`/papers/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   extractMeta: (id: number) => request<Paper>(`/papers/${id}/extract-meta`, { method: 'POST' }),

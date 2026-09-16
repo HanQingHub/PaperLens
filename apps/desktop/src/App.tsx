@@ -1,12 +1,14 @@
 import { useEffect, useMemo } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { invoke, isTauri } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useAuth, applyTheme } from './stores/auth'
 import { useUi } from './stores/ui'
 import { useReaderTabs } from './stores/readerTabs'
 import { useCompareStore } from './stores/compareStore'
-import { setUnauthorizedHandler } from './api/client'
+import { useExternalOpen } from './stores/externalOpen'
+import { api, setUnauthorizedHandler } from './api/client'
 import { toast } from './features/shared/Toast'
 import AppShell from './components/layout/AppShell'
 import WindowControls from './components/layout/WindowControls'
@@ -44,6 +46,53 @@ function BrandIcon() {
   useAuth((s) => s.settings.app_icon)
   const icon = resolveAppIcon()
   return <img src={APP_ICONS[icon]} alt="" className="h-16 w-16 rounded-2xl shadow-sm object-contain" />
+}
+
+/** 文件关联打开桥接：冷启动拉取 + 唤醒信号重拉 + 登录后串行消费（入库→跳阅读器）。
+ *  挂载在登录态内外两个分支（与 UpdaterBoot 同层），未登录时路径滞留队列、登录后自动消化。 */
+function ExternalOpenBridge() {
+  const navigate = useNavigate()
+  const user = useAuth((s) => s.user)
+  const queue = useExternalOpen((s) => s.queue)
+  const processing = useExternalOpen((s) => s.processing)
+
+  useEffect(() => {
+    if (!isTauri()) return
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    // 路径权威源在 Rust PendingOpens 队列，事件仅作唤醒——处理器统一重拉，无竞态丢失
+    const pull = () => {
+      invoke<string[]>('take_pending_pdf_opens')
+        .then((paths) => {
+          if (!disposed && paths.length) useExternalOpen.getState().push(paths)
+        })
+        .catch(() => {})
+    }
+    pull()
+    listen('paperlens:open-pdfs', pull)
+      .then((fn) => {
+        if (disposed) fn()
+        else unlisten = fn
+      })
+      .catch(() => {})
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!user || processing || queue.length === 0) return
+    const path = useExternalOpen.getState().shift()
+    if (!path) return
+    useExternalOpen.getState().setProcessing(true)
+    api.openExternalPdf(path)
+      .then(({ paper }) => navigate(`/reader/${paper.id}`))
+      .catch(() => toast('文件不存在或无法读取', 'error'))
+      .finally(() => useExternalOpen.getState().setProcessing(false))
+  }, [user, queue, processing, navigate])
+
+  return null
 }
 
 export default function App() {
@@ -198,12 +247,14 @@ export default function App() {
         <WindowControls />
         <AuthPage />
         <UpdaterBoot />
+        <ExternalOpenBridge />
       </>
     )
 
   return (
     <>
       <WindowControls />
+      <ExternalOpenBridge />
       <Routes>
         <Route path="/wizard" element={<WizardPage />} />
         <Route element={<AppShell />}>

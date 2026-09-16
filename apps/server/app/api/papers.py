@@ -30,6 +30,7 @@ def paper_dict(p: Paper, annotation_count: int | None = None) -> dict:
         "arxiv_id": p.arxiv_id,
         "file_hash": p.file_hash, "file_type": getattr(p, "file_type", "pdf") or "pdf",
         "orig_filename": getattr(p, "orig_filename", None),
+        "source_path": getattr(p, "source_path", None),
         "page_count": p.page_count, "open_count": p.open_count,
         "is_scanned": bool(p.is_scanned), "ocr_status": p.ocr_status,
         "tags": json.loads(p.tags) if p.tags else [],
@@ -304,6 +305,45 @@ async def upload(
     return {"paper": paper_dict(paper)}
 
 
+class OpenExternalIn(BaseModel):
+    path: str
+
+
+@router.post("/open-external")
+async def open_external(
+    body: OpenExternalIn,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """文件关联打开：服务端直读本地路径 → hash 去重复用 → 落库（含 source_path）。
+
+    与 upload 的差异：以 (user, file_hash) 查既有 Paper，命中则复用（不重复入库），
+    并把 source_path 刷新为最近一次打开的来源路径。"""
+    p = body.path.strip().strip('"')
+    if not p.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="仅支持 PDF 文件")
+    src = Path(p)
+    if not src.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在或无法访问")
+    import hashlib
+
+    data = await asyncio.to_thread(src.read_bytes)
+    digest = hashlib.sha256(data).hexdigest()
+    existing = (
+        db.query(Paper)
+        .filter(Paper.user_id == user.id, Paper.file_hash == digest, Paper.file_type == "pdf")
+        .order_by(Paper.id.asc())
+        .first()
+    )
+    if existing is not None:
+        if existing.source_path != p:
+            existing.source_path = p
+            db.commit()
+        return {"paper": paper_dict(existing), "created": False}
+    paper = await _import_pdf_bytes(data, user, db, filename=src.name, source_path=p)
+    return {"paper": paper_dict(paper), "created": True}
+
+
 def _paper_file_path(file_hash: str, file_type: str) -> Path:
     ext = "md" if file_type == "markdown" else "pdf"
     return get_settings().files_dir / f"{file_hash}.{ext}"
@@ -393,6 +433,7 @@ async def _import_pdf_bytes(
     project_id: int | None = None,
     is_scanned: bool = False,
     filename: str | None = None,
+    source_path: str | None = None,
 ) -> Paper:
     """上传管道共用入口（upload 与 arXiv 导入）：写盘+hash 去重 → 元数据提取 →
     FileRef/Paper 落库 → OCR/tfidf 分派。阻塞段（解析/提取）卸载到线程。"""
@@ -430,6 +471,7 @@ async def _import_pdf_bytes(
             user_id=user.id, project_id=project_id,
             title=meta.title or title_fallback,
             authors=meta.authors, file_hash=digest, file_type="pdf", orig_filename=filename,
+            source_path=source_path,
             page_count=meta.page_count,
             year=meta.year, doi=meta.doi, arxiv_id=meta.arxiv_id,
             is_scanned=int(is_scanned),
@@ -455,6 +497,7 @@ def list_papers(
     project_id: int | None = None,
     tag: str | None = None,
     favorite: bool | None = None,
+    opened: bool | None = None,
     q: str | None = None,
     sort: str = "created",
     user: User = Depends(get_current_user),
@@ -467,6 +510,8 @@ def list_papers(
         query = query.filter(Paper.tags.like(f'%"{like_escape(tag)}"%', escape="\\"))
     if favorite:
         query = query.filter(Paper.is_favorite == 1)
+    if opened:
+        query = query.filter(Paper.open_count > 0)
     if q:
         like = f"%{like_escape(q)}%"
         query = query.filter(

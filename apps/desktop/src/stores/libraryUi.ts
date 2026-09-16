@@ -4,7 +4,7 @@ import { create } from 'zustand'
 import type { LibraryView, SortKey } from '../features/library/sort'
 import type { GroupKey } from '../features/library/dnd/types'
 
-const VIEWS: LibraryView[] = ['all', 'project', 'recent', 'favorite']
+const VIEWS: LibraryView[] = ['all', 'project', 'recent', 'opened', 'favorite']
 
 const stored = localStorage.getItem('pl_view')
 const initialView = VIEWS.includes(stored as LibraryView) ? (stored as LibraryView) : 'all'

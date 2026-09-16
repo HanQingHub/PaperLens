@@ -14,8 +14,12 @@
 //! - `updater_check`: startup self-check
 //! - `shortcut`: shortcut self-heal (retarget stale .lnk to registered install)
 //! - `update_cleanup`: stale updater temp package cleanup
+//! - `pending_open`: PDF paths queued from shell launch args (file association)
+//! - `assoc`: PDF file association (default opener) registry management
 
 mod app_icon;
+mod assoc;
+mod pending_open;
 mod proxy;
 mod registry;
 mod shortcut;
@@ -24,8 +28,9 @@ mod update_cleanup;
 mod updater_check;
 
 use std::path::Path;
+use std::sync::Mutex;
 
-use tauri::{Manager, RunEvent};
+use tauri::{Emitter, Manager, RunEvent};
 
 /// Expose the resolved data directory to the settings UI.
 #[tauri::command]
@@ -34,11 +39,15 @@ fn get_data_dir() -> String {
 }
 
 /// Open an external link in the system browser (PDF external links).
-/// Only http/https are allowed; tauri-plugin-shell's `open` is deprecated in
+/// Only http/https (and the system settings page for file-association
+/// confirmation) are allowed; tauri-plugin-shell's `open` is deprecated in
 /// favor of the opener plugin but kept here to avoid a new plugin dependency.
 #[tauri::command]
 fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
+    if !(url.starts_with("http://")
+        || url.starts_with("https://")
+        || url.starts_with("ms-settings:"))
+    {
         return Err("unsupported url scheme".into());
     }
     use tauri_plugin_shell::ShellExt;
@@ -71,10 +80,25 @@ pub fn run() {
     });
 
     tauri::Builder::default()
+        // 文件关联冷启动：shell 传来的 .pdf 路径先入队（权威数据源），
+        // 前端就绪后经 take_pending_pdf_opens 拉取（见 pending_open.rs 模块注释）
+        .manage(pending_open::PendingOpens(Mutex::new(
+            pending_open::collect_pdf_args(
+                std::env::args_os()
+                    .skip(1)
+                    .map(|s| s.to_string_lossy().into_owned()),
+            ),
+        )))
         // 单实例必须最先注册（插件约定）：二次启动聚焦既有窗口，
-        // 防止第二个实例抢占固定端口 8737 并并发写同一 SQLite 数据目录
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        // 防止第二个实例抢占固定端口 8737 并并发写同一 SQLite 数据目录。
+        // 带 .pdf 参数的二次启动（文件关联双击）：路径入队 + 发唤醒事件
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let paths = pending_open::collect_pdf_args(args.iter().map(String::as_str));
+            if let Some(state) = app.try_state::<pending_open::PendingOpens>() {
+                state.0.lock().unwrap().extend(paths);
+            }
             if let Some(w) = app.get_webview_window("main") {
+                let _ = w.emit("paperlens:open-pdfs", ());
                 let _ = w.set_focus();
             }
         }))
@@ -87,6 +111,9 @@ pub fn run() {
             shortcut::fix_shortcut,
             app_icon::get_app_icon,
             app_icon::set_app_icon,
+            pending_open::take_pending_pdf_opens,
+            assoc::get_pdf_assoc_state,
+            assoc::set_pdf_assoc,
             get_data_dir,
             open_external
         ])

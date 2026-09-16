@@ -120,6 +120,7 @@ def _infer_revision_from_schema(con, tables: set[str]):
     """按标记列/表从新到旧反推库结构对应的 revision；推断不出返回 None。
 
     标记与迁移的对应关系（新 → 旧）：
+      papers.source_path            → a7f3d9c1e2b4（加 source_path）
       papers.file_type              → e8a1f2c3b4d5（加 file_type/orig_filename）
       word_groups 表                → d4e5f6a7b8c9d0（建 word_groups）
       words.group_name 或
@@ -135,6 +136,8 @@ def _infer_revision_from_schema(con, tables: set[str]):
         return {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
 
     papers_cols = columns("papers")
+    if "source_path" in papers_cols:
+        return "a7f3d9c1e2b4"
     if "file_type" in papers_cols:
         return "e8a1f2c3b4d5"
     if "word_groups" in tables:

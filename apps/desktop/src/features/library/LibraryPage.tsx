@@ -27,6 +27,7 @@ const VIEW_TABS: { key: LibraryView; label: string }[] = [
   { key: 'all', label: '全部分类' },
   { key: 'project', label: '项目分类' },
   { key: 'recent', label: '最近打开' },
+  { key: 'opened', label: '打开过' },
   { key: 'favorite', label: '收藏' },
 ]
 
@@ -204,6 +205,7 @@ export default function LibraryPage() {
         q: q || undefined,
         sort: resolveSort(view, sort),
         favorite: view === 'favorite' ? true : undefined,
+        opened: view === 'opened' ? true : undefined,
         project_id: selectedProjectId ?? undefined,
         tag: tagFilter ?? undefined,
       })
@@ -574,6 +576,7 @@ export default function LibraryPage() {
         enterIndex={idx}
         selected={selected.has(p.id)}
         onToggleSelect={toggleSelect}
+        showOpenedAt={view === 'opened'}
       />
     ))
 
@@ -802,7 +805,7 @@ export default function LibraryPage() {
               <div className="spinner spinner-lg" />
             </div>
           ) : papers.length === 0 && view !== 'project' ? (
-            <EmptyState hasQuery={!!q || selectedProjectId != null || view === 'favorite'} onUpload={() => fileInput.current?.click()} />
+            <EmptyState hasQuery={!!q || selectedProjectId != null || view === 'favorite' || view === 'opened'} onUpload={() => fileInput.current?.click()} />
           ) : view === 'project' && selectedProjectId == null ? (
             // 项目多组视图：分组恒渲染（含空项目 + 未分组，D2），分组 = drop target；默认仅展示一行
             <div className="flex flex-col gap-5">

@@ -55,6 +55,7 @@ class Paper(Base):
     file_hash: Mapped[str] = mapped_column(Text, nullable=False)
     file_type: Mapped[str] = mapped_column(Text, nullable=False, default="pdf", server_default="pdf")  # pdf | markdown
     orig_filename: Mapped[Optional[str]] = mapped_column(Text)
+    source_path: Mapped[Optional[str]] = mapped_column(Text)  # 外部打开来源完整路径（仅文件关联导入有值）
     page_count: Mapped[Optional[int]] = mapped_column(Integer)
     open_count: Mapped[int] = mapped_column(Integer, default=0)
     is_scanned: Mapped[int] = mapped_column(Integer, default=0)

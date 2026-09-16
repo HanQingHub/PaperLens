@@ -32,6 +32,7 @@ export interface Paper {
   file_hash: string
   file_type: 'pdf' | 'markdown'
   orig_filename?: string | null
+  source_path?: string | null
   page_count: number
   open_count: number
   is_scanned: boolean

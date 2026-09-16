@@ -38,6 +38,8 @@ interface Props {
   /** 批量选择态（父级 Ctrl+点击管理） */
   selected?: boolean
   onToggleSelect?: (id: number) => void
+  /** "打开过"视图：展示最近打开时间 */
+  showOpenedAt?: boolean
 }
 
 function OcrBadge({ paper, progress }: { paper: Paper; progress: OcrProgress | null }) {
@@ -72,7 +74,7 @@ function OcrBadge({ paper, progress }: { paper: Paper; progress: OcrProgress | n
 
 export default function PaperCard({
   paper, ocrProgress, onOpen, onEdit, onToggleFav, onDelete, onRetryOcr, onCancelOcr,
-  dragProps, isDragging, insertSide, enterIndex, selected, onToggleSelect,
+  dragProps, isDragging, insertSide, enterIndex, selected, onToggleSelect, showOpenedAt,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false)
   const hoverTimer = useRef(0)
@@ -196,7 +198,13 @@ export default function PaperCard({
         )}
         {paper.year && <span>{paper.year}</span>}
         <span>{isMd ? `${paper.page_count} 行` : `${paper.page_count} 页`}</span>
+        {paper.source_path && <span className="badge" title={`来源：${paper.source_path}`}>外部</span>}
         {paper.open_count > 0 && <span>打开 {paper.open_count} 次</span>}
+        {showOpenedAt && paper.last_opened_at && (
+          <span title={paper.last_opened_at}>
+            打开于 {new Date(paper.last_opened_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+          </span>
+        )}
         {paper.venue && <span className="line-clamp-1 italic">{paper.venue}</span>}
         {paper.arxiv_id && <span className="badge">arXiv:{paper.arxiv_id}</span>}
       </div>

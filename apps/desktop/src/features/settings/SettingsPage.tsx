@@ -1,6 +1,6 @@
-// 设置页：外观 / 生词高亮 / 批注 / LLM 模型管理 / 词典 / 数据 / 应用更新 / 快捷键 + 应用图标
+// 设置页：外观 / 生词高亮 / 批注 / LLM 模型管理 / 词典 / 文件关联 / 数据 / 应用更新 / 快捷键 + 应用图标
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, isTauri } from '@tauri-apps/api/core'
 import { api, saveBlobWithDialog } from '../../api/client'
 import type { AppIconVariant, LLMModelInfo, LLMStatus } from '../../api/types'
 import { useAuth } from '../../stores/auth'
@@ -134,6 +134,36 @@ export default function SettingsPage() {
       toast('设置保存失败，已回滚', 'error')
     } finally {
       setSaving(false)
+    }
+  }
+
+  // ── 文件关联：设为 PDF 默认打开方式 ──
+  const [pdfAssoc, setPdfAssoc] = useState(false)
+  const [assocBusy, setAssocBusy] = useState(false)
+  useEffect(() => {
+    if (!isTauri()) return
+    invoke<boolean>('get_pdf_assoc_state').then(setPdfAssoc).catch(() => {})
+  }, [])
+  const togglePdfAssoc = async () => {
+    if (assocBusy) return
+    const enable = !pdfAssoc
+    setAssocBusy(true)
+    try {
+      const res = await invoke<{ needs_system_ui: boolean }>('set_pdf_assoc', { enable })
+      setPdfAssoc(enable)
+      if (enable && res.needs_system_ui) {
+        // Win10+ UserChoice 受哈希保护无法静默直写：注册后跳系统设置由用户确认
+        invoke('open_external', { url: 'ms-settings:defaultapps' }).catch(() => {})
+        toast('已注册打开方式：请在系统设置中将 .pdf 默认应用选为 PaperLens', 'ok')
+      } else if (enable) {
+        toast('已设为 PDF 默认打开方式', 'ok')
+      } else {
+        toast('已取消 PDF 默认打开方式', 'ok')
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '设置失败', 'error')
+    } finally {
+      setAssocBusy(false)
     }
   }
 
@@ -626,6 +656,16 @@ export default function SettingsPage() {
               约 340 万词条 · 毫秒级离线查询 · 含词形还原库（BNC 语料生成）
             </div>
           </div>
+        </Section>
+
+        {/* 文件关联 */}
+        <Section title="文件关联">
+          <Row
+            label="设为 PDF 默认打开方式"
+            hint="开启后可在资源管理器双击 PDF 直接用 PaperLens 打开，文件会自动收进文库「打开过」分组；系统会弹设置页供确认"
+          >
+            <Toggle checked={pdfAssoc} onChange={() => togglePdfAssoc()} />
+          </Row>
         </Section>
 
         {/* 数据 */}

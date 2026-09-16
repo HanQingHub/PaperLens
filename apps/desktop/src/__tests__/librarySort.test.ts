@@ -14,6 +14,11 @@ describe('resolveSort', () => {
     expect(resolveSort('recent', 'created')).toBe('last_opened')
   })
 
+  it('opened（打开过）恒按最近打开', () => {
+    expect(resolveSort('opened', 'created')).toBe('last_opened')
+    expect(resolveSort('opened', 'title')).toBe('last_opened')
+  })
+
   it('project（分组浏览）恒为手动排序', () => {
     expect(resolveSort('project', 'created')).toBe('manual')
     expect(resolveSort('project', 'title')).toBe('manual')
