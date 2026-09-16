@@ -25,16 +25,22 @@ fn parse_windows_major(version: &str) -> Option<u32> {
 
 #[cfg(windows)]
 fn win10_or_later() -> bool {
-    // 解析失败按 Win10+ 处理：保守走"注册 + 系统设置确认"路径，
-    // 避免在未知系统上直写 UserChoice 被哈希校验弹回
-    read_registry_string(
-        windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
-        r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
-        "CurrentVersion",
-    )
-    .and_then(|v| parse_windows_major(&v))
-    .map(|major| major >= 10)
-    .unwrap_or(true)
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    const CV_KEY: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+    // ⚠ CurrentVersion 字符串在 Win10+ 被微软冻结在 6.3（兼容性冻结，实测
+    // "Windows 10 Home China" 同样报 6.3），不能作为 Win10 判据。
+    // 权威字段是 DWORD CurrentMajorVersionNumber（仅 Win10+ 写入）；
+    // 缺该键的系统（Win7/8/8.1）才回退字符串解析（6.1/6.2/6.3）；
+    // 两者都拿不到时保守按 Win10+ 处理（走系统确认路径，不直写 UserChoice）。
+    if let Some(major) =
+        crate::registry::read_registry_dword(HKEY_LOCAL_MACHINE, CV_KEY, "CurrentMajorVersionNumber")
+    {
+        return major >= 10;
+    }
+    read_registry_string(HKEY_LOCAL_MACHINE, CV_KEY, "CurrentVersion")
+        .and_then(|v| parse_windows_major(&v))
+        .map(|major| major >= 10)
+        .unwrap_or(true)
 }
 
 #[cfg(not(windows))]
@@ -177,9 +183,11 @@ pub(crate) fn enable_pdf_assoc() -> Result<bool, String> {
 
     let modern = win10_or_later();
     if !modern {
-        // Win7/8：HKCU 优先于 HKLM 合并视图，直写即刻生效
+        // Win7：HKCU 优先于 HKLM 合并视图，直写即刻生效。
+        // UserChoice 在 Win8+ 受哈希/ACL 保护，直写会被拒（error 5）——
+        // 尽力而为不阻断：注册与 .pdf 默认值才是主路径，失败静默忽略。
         write_registry_string(HKEY_CURRENT_USER, PDF_DEFAULT_KEY, "", PROGID)?;
-        write_registry_string(HKEY_CURRENT_USER, PDF_USERCHOICE_KEY, "ProgId", PROGID)?;
+        let _ = write_registry_string(HKEY_CURRENT_USER, PDF_USERCHOICE_KEY, "ProgId", PROGID);
     }
     notify_shell();
     Ok(modern)
@@ -245,5 +253,17 @@ mod tests {
         assert_eq!(parse_windows_major("11"), Some(11));
         assert_eq!(parse_windows_major(""), None);
         assert_eq!(parse_windows_major("abc"), None);
+    }
+
+    /// 真实 HKCU 注册表往返（写→查→清理→查）。#[ignore] 默认跳过，
+    /// 诊断时 `cargo test live_registry -- --ignored --nocapture` 手动运行。
+    #[test]
+    #[ignore]
+    fn live_registry_roundtrip() {
+        let needs_ui = super::enable_pdf_assoc().expect("enable_pdf_assoc failed");
+        println!("needs_system_ui={needs_ui}");
+        assert!(super::pdf_assoc_enabled(), "state should be enabled after write");
+        super::disable_pdf_assoc();
+        assert!(!super::pdf_assoc_enabled(), "state should be disabled after cleanup");
     }
 }

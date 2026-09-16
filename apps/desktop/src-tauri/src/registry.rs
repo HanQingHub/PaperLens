@@ -120,6 +120,64 @@ pub(crate) fn read_registry_string(_hive: usize, _key: &str, _value_name: &str) 
     None
 }
 
+/// Read a `REG_DWORD` value from registry hive `hive`, subkey `key`.
+#[cfg(windows)]
+pub(crate) fn read_registry_dword(
+    hive: windows_sys::Win32::System::Registry::HKEY,
+    key: &str,
+    value_name: &str,
+) -> Option<u32> {
+    use windows_sys::Win32::Foundation::{ERROR_SUCCESS, WIN32_ERROR};
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, KEY_READ, REG_DWORD,
+    };
+
+    let subkey: Vec<u16> = key.encode_utf16().chain(std::iter::once(0)).collect();
+    let value: Vec<u16> = value_name.encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let mut hkey: HKEY = std::ptr::null_mut();
+        let opened: WIN32_ERROR = RegOpenKeyExW(hive, subkey.as_ptr(), 0, KEY_READ, &mut hkey);
+        if opened != ERROR_SUCCESS {
+            return None;
+        }
+        let mut ty = 0u32;
+        let mut len = 0u32;
+        let mut result = None;
+        if RegQueryValueExW(
+            hkey,
+            value.as_ptr(),
+            std::ptr::null(),
+            &mut ty,
+            std::ptr::null_mut(),
+            &mut len,
+        ) == ERROR_SUCCESS
+            && ty == REG_DWORD
+            && len == 4
+        {
+            let mut buf = 0u32;
+            if RegQueryValueExW(
+                hkey,
+                value.as_ptr(),
+                std::ptr::null(),
+                &mut ty,
+                (&mut buf as *mut u32).cast(),
+                &mut len,
+            ) == ERROR_SUCCESS
+            {
+                result = Some(buf);
+            }
+        }
+        RegCloseKey(hkey);
+        result
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn read_registry_dword(_hive: usize, _key: &str, _value_name: &str) -> Option<u32> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

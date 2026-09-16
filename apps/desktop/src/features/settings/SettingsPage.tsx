@@ -161,7 +161,8 @@ export default function SettingsPage() {
         toast('已取消 PDF 默认打开方式', 'ok')
       }
     } catch (e) {
-      toast(e instanceof Error ? e.message : '设置失败', 'error')
+      // Tauri invoke 失败 reject 的是字符串（Rust Err(String)），必须 String(e) 保真
+      toast(e instanceof Error ? e.message : String(e) || '设置失败', 'error')
     } finally {
       setAssocBusy(false)
     }
