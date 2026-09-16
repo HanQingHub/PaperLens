@@ -663,7 +663,7 @@ export default function SettingsPage() {
         <Section title="文件关联">
           <Row
             label="设为 PDF 默认打开方式"
-            hint="开启后可在资源管理器双击 PDF 直接用 PaperLens 打开，文件会自动收进文库「打开过」分组；系统会弹设置页供确认"
+            hint="开启后双击 PDF 默认用 PaperLens 打开，文件会自动收进文库「打开过」分组，图标保持 PDF 样式"
           >
             <Toggle checked={pdfAssoc} onChange={() => togglePdfAssoc()} />
           </Row>

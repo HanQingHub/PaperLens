@@ -16,6 +16,7 @@
 //! - `update_cleanup`: stale updater temp package cleanup
 //! - `pending_open`: PDF paths queued from shell launch args (file association)
 //! - `assoc`: PDF file association (default opener) registry management
+//! - `userchoice`: Windows UserChoice direct write (hash scheme, PS-SFTA-derived)
 
 mod app_icon;
 mod assoc;
@@ -26,6 +27,7 @@ mod shortcut;
 mod sidecar;
 mod update_cleanup;
 mod updater_check;
+mod userchoice;
 
 use std::path::Path;
 use std::sync::Mutex;

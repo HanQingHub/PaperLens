@@ -1,6 +1,6 @@
 [package]
 name = "paperlens-desktop"
-version = "0.7.8"
+version = "0.7.9"
 description = "PaperLens desktop shell (Tauri v2 thin shell)"
 authors = ["筝青寒"]
 edition = "2021"
@@ -34,6 +34,9 @@ serde_json = "1"
 getrandom = "0.2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+# UserChoice 哈希（userchoice.rs）所需
+md-5 = "0.10"
+base64 = "0.22"
 
 [target.'cfg(windows)'.dependencies]
 # 快捷方式自愈（shortcut.rs）用的 ShellLink COM 封装；crate 已随 tauri/wry
@@ -56,8 +59,14 @@ windows-sys = { version = "0.59", features = [
     # Required by the JobObjects API signatures (SECURITY_ATTRIBUTES in
     # CreateJobObjectW), even though the crate code never names it directly.
     "Win32_Security",
+    # ConvertSidToStringSidW（userchoice.rs 用户 SID 提取）
+    "Win32_Security_Authorization",
     # SHChangeNotify（assoc.rs 文件关联变更后刷新资源管理器）
     "Win32_UI_Shell",
+    # GetLocalTime（userchoice.rs 分钟截断时间）
+    "Win32_System_SystemInformation",
+    # TzSpecificLocalTimeToSystemTime / SystemTimeToFileTime
+    "Win32_System_Time",
 ] }
 
 [profile.release]

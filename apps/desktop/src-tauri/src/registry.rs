@@ -178,6 +178,300 @@ pub(crate) fn read_registry_dword(_hive: usize, _key: &str, _value_name: &str) -
     None
 }
 
+/// 写 `REG_SZ` 值（value_name 为空串 = 默认值）；键不存在则创建。
+#[cfg(windows)]
+pub(crate) fn write_registry_string(
+    hive: windows_sys::Win32::System::Registry::HKEY,
+    key: &str,
+    value_name: &str,
+    data: &str,
+) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, KEY_WRITE, REG_OPTION_NON_VOLATILE,
+        REG_SZ,
+    };
+
+    let subkey: Vec<u16> = key.encode_utf16().chain(std::iter::once(0)).collect();
+    let name: Vec<u16> = value_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut data16: Vec<u16> = data.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let mut hkey: HKEY = std::ptr::null_mut();
+        let opened = RegCreateKeyExW(
+            hive,
+            subkey.as_ptr(),
+            0,
+            std::ptr::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_WRITE,
+            std::ptr::null(),
+            &mut hkey,
+            std::ptr::null_mut(),
+        );
+        if opened != ERROR_SUCCESS {
+            return Err(format!("RegCreateKeyExW failed: {opened}"));
+        }
+        let err = RegSetValueExW(
+            hkey,
+            name.as_ptr(),
+            0,
+            REG_SZ,
+            data16.as_mut_ptr().cast(),
+            (data16.len() * 2) as u32,
+        );
+        RegCloseKey(hkey);
+        if err != ERROR_SUCCESS {
+            return Err(format!("RegSetValueExW failed: {err}"));
+        }
+    }
+    Ok(())
+}
+
+/// 写 `REG_DWORD` 值；键不存在则创建。
+#[cfg(windows)]
+pub(crate) fn write_registry_dword(
+    hive: windows_sys::Win32::System::Registry::HKEY,
+    key: &str,
+    value_name: &str,
+    data: u32,
+) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, KEY_WRITE, REG_OPTION_NON_VOLATILE,
+        REG_DWORD,
+    };
+
+    let subkey: Vec<u16> = key.encode_utf16().chain(std::iter::once(0)).collect();
+    let name: Vec<u16> = value_name.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let mut hkey: HKEY = std::ptr::null_mut();
+        let opened = RegCreateKeyExW(
+            hive,
+            subkey.as_ptr(),
+            0,
+            std::ptr::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_WRITE,
+            std::ptr::null(),
+            &mut hkey,
+            std::ptr::null_mut(),
+        );
+        if opened != ERROR_SUCCESS {
+            return Err(format!("RegCreateKeyExW failed: {opened}"));
+        }
+        let err = RegSetValueExW(
+            hkey,
+            name.as_ptr(),
+            0,
+            REG_DWORD,
+            (&data as *const u32).cast(),
+            4,
+        );
+        RegCloseKey(hkey);
+        if err != ERROR_SUCCESS {
+            return Err(format!("RegSetValueExW failed: {err}"));
+        }
+    }
+    Ok(())
+}
+
+/// 删除整棵子键（UserChoice 等受保护键的唯一可行清理/重建前置路径）。
+#[cfg(windows)]
+pub(crate) fn delete_registry_tree(hive: windows_sys::Win32::System::Registry::HKEY, key: &str) {
+    use windows_sys::Win32::System::Registry::RegDeleteTreeW;
+
+    let subkey: Vec<u16> = key.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        RegDeleteTreeW(hive, subkey.as_ptr());
+    }
+}
+
+/// SFTA 同款删键：RegDeleteKeyW（legacy 逐键删除）。受 ACL 保护的
+/// FileExts UserChoice 键上 RegDeleteTreeW 会被拒（静默失败），此 API 实证可用。
+/// 返回 Ok(()) 或原始错误码（诊断用）。
+#[cfg(windows)]
+pub(crate) fn delete_registry_key(hive: windows_sys::Win32::System::Registry::HKEY, key: &str) -> Result<(), u32> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::RegDeleteKeyW;
+
+    let subkey: Vec<u16> = key.encode_utf16().chain(std::iter::once(0)).collect();
+    let code = unsafe { RegDeleteKeyW(hive, subkey.as_ptr()) };
+    if code == ERROR_SUCCESS { Ok(()) } else { Err(code) }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn delete_registry_key(_hive: usize, _key: &str) -> Result<(), u32> {
+    Err(0)
+}
+
+/// 删除单个值（value_name 为空串 = 默认值）；值不存在时静默忽略。
+#[cfg(windows)]
+pub(crate) fn delete_registry_value(
+    hive: windows_sys::Win32::System::Registry::HKEY,
+    key: &str,
+    value_name: &str,
+) {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, HKEY, KEY_WRITE,
+    };
+
+    let subkey: Vec<u16> = key.encode_utf16().chain(std::iter::once(0)).collect();
+    let name: Vec<u16> = value_name.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let mut hkey: HKEY = std::ptr::null_mut();
+        if RegOpenKeyExW(hive, subkey.as_ptr(), 0, KEY_WRITE, &mut hkey) == ERROR_SUCCESS {
+            RegDeleteValueW(hkey, name.as_ptr());
+            RegCloseKey(hkey);
+        }
+    }
+}
+
+/// 枚举某键下全部子键名。
+#[cfg(windows)]
+pub(crate) fn enum_subkeys(
+    hive: windows_sys::Win32::System::Registry::HKEY,
+    key: &str,
+) -> Vec<String> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, HKEY, KEY_READ};
+
+    let subkey: Vec<u16> = key.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut out = Vec::new();
+    unsafe {
+        let mut hkey: HKEY = std::ptr::null_mut();
+        if RegOpenKeyExW(hive, subkey.as_ptr(), 0, KEY_READ, &mut hkey) != ERROR_SUCCESS {
+            return out;
+        }
+        let mut idx = 0u32;
+        loop {
+            let mut name = [0u16; 256];
+            let mut name_len = 256u32;
+            let err = RegEnumKeyExW(hkey, idx, name.as_mut_ptr(), &mut name_len, std::ptr::null_mut(),
+                std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
+            if err != ERROR_SUCCESS {
+                break;
+            }
+            out.push(String::from_utf16_lossy(&name[..name_len as usize]));
+            idx += 1;
+        }
+        RegCloseKey(hkey);
+    }
+    out
+}
+
+/// 枚举某键下全部值名。
+#[cfg(windows)]
+pub(crate) fn enum_value_names(
+    hive: windows_sys::Win32::System::Registry::HKEY,
+    key: &str,
+) -> Vec<String> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegEnumValueW, RegOpenKeyExW, HKEY, KEY_READ,
+    };
+
+    let subkey: Vec<u16> = key.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut out = Vec::new();
+    unsafe {
+        let mut hkey: HKEY = std::ptr::null_mut();
+        if RegOpenKeyExW(hive, subkey.as_ptr(), 0, KEY_READ, &mut hkey) != ERROR_SUCCESS {
+            return out;
+        }
+        let mut idx = 0u32;
+        loop {
+            let mut name = [0u16; 256];
+            let mut name_len = 256u32;
+            let err = RegEnumValueW(hkey, idx, name.as_mut_ptr(), &mut name_len, std::ptr::null_mut(),
+                std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
+            if err != ERROR_SUCCESS {
+                break;
+            }
+            out.push(String::from_utf16_lossy(&name[..name_len as usize]));
+            idx += 1;
+        }
+        RegCloseKey(hkey);
+    }
+    out
+}
+
+/// 读取键 LastWriteTime（UTC FILETIME，100ns）。用于 UserChoice 写入后的
+/// 跨分钟自检（系统按键 LastWriteTime 的分钟截断重算哈希校验）。
+#[cfg(windows)]
+pub(crate) fn query_last_write_filetime(
+    hive: windows_sys::Win32::System::Registry::HKEY,
+    key: &str,
+) -> Option<i64> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, RegQueryInfoKeyW, HKEY, KEY_READ};
+
+    let subkey: Vec<u16> = key.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let mut hkey: HKEY = std::ptr::null_mut();
+        if RegOpenKeyExW(hive, subkey.as_ptr(), 0, KEY_READ, &mut hkey) != ERROR_SUCCESS {
+            return None;
+        }
+        let mut ft = 0i64;
+        let err = RegQueryInfoKeyW(
+            hkey,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut ft as *mut i64 as *mut _,
+        );
+        RegCloseKey(hkey);
+        (err == ERROR_SUCCESS).then_some(ft)
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn write_registry_string(
+    _hive: usize,
+    _key: &str,
+    _value_name: &str,
+    _data: &str,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn write_registry_dword(
+    _hive: usize,
+    _key: &str,
+    _value_name: &str,
+    _data: u32,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub(crate) fn delete_registry_tree(_hive: usize, _key: &str) {}
+
+#[cfg(not(windows))]
+pub(crate) fn delete_registry_value(_hive: usize, _key: &str, _value_name: &str) {}
+
+#[cfg(not(windows))]
+pub(crate) fn enum_subkeys(_hive: usize, _key: &str) -> Vec<String> {
+    Vec::new()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn enum_value_names(_hive: usize, _key: &str) -> Vec<String> {
+    Vec::new()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn query_last_write_filetime(_hive: usize, _key: &str) -> Option<i64> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
