@@ -9,12 +9,25 @@ export type ViewMode = 'single' | 'continuous'
 export const ANNO_COLORS = ['yellow', 'green', 'blue', 'pink', 'purple'] as const
 export type AnnoColor = (typeof ANNO_COLORS)[number]
 
-/** 画笔工具集：自由笔触（pen/highlighter）与图形（line/arrow/rect/ellipse）+ 橡皮擦（eraser，仅前端擦除态，不落库） */
-export type InkTool = 'pen' | 'highlighter' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'eraser'
+/** 画笔工具集：自由笔触（pen/highlighter）、图形（line/arrow/dblArrow/rect/ellipse/circle/tri/triRight/diamond/trapezoid）+ 橡皮擦（eraser，仅前端擦除态，不落库） */
+export type InkTool =
+  | 'pen'
+  | 'highlighter'
+  | 'line'
+  | 'arrow'
+  | 'dblArrow'
+  | 'rect'
+  | 'ellipse'
+  | 'circle'
+  | 'tri'
+  | 'triRight'
+  | 'diamond'
+  | 'trapezoid'
+  | 'eraser'
 
 /**
  * ink 笔迹（page 单位，scale=1 左上原点，x∈[0,baseW] y∈[0,baseH]）：
- * pen/highlighter 为 N 个采样点；图形恰 2 点（起点/终点，rect/ellipse 为包围盒对角）。
+ * pen/highlighter 为 N 个采样点；图形恰 2 点（起点/终点，rect/ellipse 为包围盒对角，circle 为直径两端点）。
  * 与 PDF 用户空间（y 向上）的批注坐标系并存——InkLayer 渲染只需 ×hiScale。
  */
 export interface InkStroke {
@@ -61,7 +74,20 @@ export interface ReaderAnnotation {
 }
 
 /** 可落库工具白名单（eraser 为纯前端擦除态，永不持久化；parse 拒收即渲染层跳过） */
-const INK_TOOLS: readonly string[] = ['pen', 'highlighter', 'line', 'arrow', 'rect', 'ellipse']
+const INK_TOOLS: readonly string[] = [
+  'pen',
+  'highlighter',
+  'line',
+  'arrow',
+  'dblArrow',
+  'rect',
+  'ellipse',
+  'circle',
+  'tri',
+  'triRight',
+  'diamond',
+  'trapezoid',
+]
 
 /** anchor_json（type='ink'）→ InkStroke；损坏/缺字段降级为 null（渲染层跳过） */
 function parseInkStroke(anchorJson: string): InkStroke | null {

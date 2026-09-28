@@ -16,10 +16,12 @@
 //! - `update_cleanup`: stale updater temp package cleanup
 //! - `pending_open`: PDF paths queued from shell launch args (file association)
 //! - `assoc`: PDF file association (default opener) registry management
+//! - `foreground`: force the window to the foreground on single-instance wake
 //! - `userchoice`: Windows UserChoice direct write (hash scheme, PS-SFTA-derived)
 
 mod app_icon;
 mod assoc;
+mod foreground;
 mod pending_open;
 mod proxy;
 mod registry;
@@ -93,15 +95,20 @@ pub fn run() {
         )))
         // 单实例必须最先注册（插件约定）：二次启动聚焦既有窗口，
         // 防止第二个实例抢占固定端口 8737 并并发写同一 SQLite 数据目录。
-        // 带 .pdf 参数的二次启动（文件关联双击）：路径入队 + 发唤醒事件
+        // 带 .pdf 参数的二次启动（文件关联双击）：路径入队 + 发唤醒事件。
+        // 窗口先 show/unminimize/force_foreground 再 emit——前台锁会拒绝后台
+        // 进程的 SetForegroundWindow（tao set_focus 含 Alt 模拟兜底仍被拦，
+        // 最小化时还是 no-op），AttachThreadInput 挂入前台线程输入队列后放行。
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             let paths = pending_open::collect_pdf_args(args.iter().map(String::as_str));
             if let Some(state) = app.try_state::<pending_open::PendingOpens>() {
                 state.0.lock().unwrap().extend(paths);
             }
             if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                foreground::force_foreground(&w);
                 let _ = w.emit("paperlens:open-pdfs", ());
-                let _ = w.set_focus();
             }
         }))
         .plugin(tauri_plugin_shell::init())

@@ -7,9 +7,9 @@ export const MIN_POINT_DIST = 1.2
 export const MIN_SHAPE_SIZE = 3
 
 /** 落库有效性：freehand ≥1 点（单击成点：渲染层 smoothPathD 单点分支 + 圆帽成点，
- *  橡皮擦 hitTest 单点分支命中）；line/arrow 按欧氏长度（水平/垂直线合法）；
- *  rect/ellipse 恰 2 点且双边 ≥ MIN_SHAPE_SIZE（零位移单击/压扁误触丢弃）；
- *  eraser 为纯前端擦除态，永不落库 */
+ *  橡皮擦 hitTest 单点分支命中）；line/arrow/dblArrow/circle 按欧氏长度（直径两端点
+ *  语义，水平/垂直合法）；rect/ellipse/tri/triRight/diamond/trapezoid 恰 2 点且双边
+ *  ≥ MIN_SHAPE_SIZE（零位移单击/压扁误触丢弃）；eraser 为纯前端擦除态，永不落库 */
 export function isCommittableStroke(stroke: Pick<InkStroke, 'tool' | 'points'>): boolean {
   const { tool, points } = stroke
   if (tool === 'eraser') return false
@@ -18,8 +18,56 @@ export function isCommittableStroke(stroke: Pick<InkStroke, 'tool' | 'points'>):
   const [a, b] = points
   const dx = Math.abs(b[0] - a[0])
   const dy = Math.abs(b[1] - a[1])
-  if (tool === 'line' || tool === 'arrow') return Math.hypot(dx, dy) >= MIN_SHAPE_SIZE
+  if (tool === 'line' || tool === 'arrow' || tool === 'dblArrow' || tool === 'circle')
+    return Math.hypot(dx, dy) >= MIN_SHAPE_SIZE
   return dx >= MIN_SHAPE_SIZE && dy >= MIN_SHAPE_SIZE
+}
+
+/** 包围盒类图形工具子集（boxShapePolygons 的合法入参，调用方已类型层收窄） */
+type BoxShapeTool = Extract<InkStroke['tool'], 'tri' | 'triRight' | 'diamond' | 'trapezoid'>
+
+/**
+ * 包围盒类图形（tri/triRight/diamond/trapezoid）的顶点序列（page 单位，a/b 为
+ * 包围盒对角）：渲染 path 与橡皮擦逐边命中共用同一几何，口径一致。
+ * tri 等腰（底在下）；triRight 直角边贴左下；diamond 四边中点；
+ * trapezoid 上底两端各内缩 25% 包围盒宽。
+ */
+export function boxShapePolygons(tool: BoxShapeTool, a: [number, number], b: [number, number]): [number, number][] {
+  const minX = Math.min(a[0], b[0])
+  const maxX = Math.max(a[0], b[0])
+  const minY = Math.min(a[1], b[1])
+  const maxY = Math.max(a[1], b[1])
+  const cx = (minX + maxX) / 2
+  if (tool === 'triRight') {
+    return [
+      [minX, minY],
+      [minX, maxY],
+      [maxX, maxY],
+    ]
+  }
+  if (tool === 'diamond') {
+    return [
+      [cx, minY],
+      [maxX, (minY + maxY) / 2],
+      [cx, maxY],
+      [minX, (minY + maxY) / 2],
+    ]
+  }
+  if (tool === 'trapezoid') {
+    const inset = (maxX - minX) * 0.25
+    return [
+      [minX + inset, minY],
+      [maxX - inset, minY],
+      [maxX, maxY],
+      [minX, maxY],
+    ]
+  }
+  // tri：等腰三角形（底在下）
+  return [
+    [cx, minY],
+    [maxX, maxY],
+    [minX, maxY],
+  ]
 }
 
 /** 中点二次贝塞尔平滑：M p0 → Q pᵢ midᵢ → L pₙ（希沃/Edge 式圆滑笔触）；k=坐标倍率 */
@@ -66,7 +114,9 @@ export function pointSegDist(p: [number, number], a: [number, number], b: [numbe
 
 /**
  * 橡皮擦命中判定（描边语义：擦过笔迹路径即删整笔）：
- * pen/highlighter 逐段判交；line/arrow 主线段 + 箭头尖点；rect 四边（内部不算命中）；
+ * pen/highlighter 逐段判交；line/arrow/dblArrow 主线段 + 尖点圆域（arrow 单端、
+ * dblArrow 两端）；circle 沿圆周 48 点折线近似；rect 四边（内部不算命中）；
+ * tri/triRight/diamond/trapezoid 按 boxShapePolygons 顶点逐边（内部不算命中）；
  * ellipse 采样 48 点折线近似判交。阈值 = 擦除半径 + 笔迹半宽。
  */
 export function hitTestInkStroke(
@@ -88,9 +138,13 @@ export function hitTestInkStroke(
   if (points.length !== 2) return false
   const [a, b] = points
   if (tool === 'line') return pointSegDist(p, a, b) <= tol
-  if (tool === 'arrow') {
+  if (tool === 'arrow' || tool === 'dblArrow') {
     if (pointSegDist(p, a, b) <= tol) return true
-    return Math.hypot(p[0] - b[0], p[1] - b[1]) <= tol + Math.max(10, width * 4)
+    // 尖点圆域（与 arrowHeadD 翼长同源）：arrow 仅终点，dblArrow 两端
+    const tipR = tol + Math.max(10, width * 4)
+    if (Math.hypot(p[0] - b[0], p[1] - b[1]) <= tipR) return true
+    if (tool === 'dblArrow' && Math.hypot(p[0] - a[0], p[1] - a[1]) <= tipR) return true
+    return false
   }
   if (tool === 'rect') {
     const corners: [number, number][] = [
@@ -101,6 +155,28 @@ export function hitTestInkStroke(
     ]
     for (let i = 0; i < 4; i++) {
       if (pointSegDist(p, corners[i], corners[(i + 1) % 4]) <= tol) return true
+    }
+    return false
+  }
+  if (tool === 'tri' || tool === 'triRight' || tool === 'diamond' || tool === 'trapezoid') {
+    const poly = boxShapePolygons(tool, a, b)
+    for (let i = 0; i < poly.length; i++) {
+      if (pointSegDist(p, poly[i], poly[(i + 1) % poly.length]) <= tol) return true
+    }
+    return false
+  }
+  if (tool === 'circle') {
+    const cx = (a[0] + b[0]) / 2
+    const cy = (a[1] + b[1]) / 2
+    const r = Math.hypot(b[0] - a[0], b[1] - a[1]) / 2
+    if (r <= 0) return false
+    const N = 48
+    let prev: [number, number] = [cx + r, cy]
+    for (let i = 1; i <= N; i++) {
+      const t = (i / N) * Math.PI * 2
+      const cur: [number, number] = [cx + r * Math.cos(t), cy + r * Math.sin(t)]
+      if (pointSegDist(p, prev, cur) <= tol) return true
+      prev = cur
     }
     return false
   }

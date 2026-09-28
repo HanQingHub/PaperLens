@@ -1,7 +1,7 @@
-// 画笔浮动工具条：6 绘制工具 + 橡皮擦 + 6 色 + 3 档粗细（粗细档复用为擦除半径）+ 撤回 + 清除本页 + 退出。
+// 画笔浮动工具条：6 绘制工具 + 6 数学图形 + 橡皮擦 + 6 色 + 3 档粗细（粗细档复用为擦除半径）+ 撤回 + 清除本页 + 退出。
 // 撤回 = 删除最近一笔 ink 批注（max(id)）；清除本页 = 删除当前页全部 ink；橡皮擦 = 点按/拖过删除命中的整笔。
 // 键盘：Ctrl+Z 撤回 / Esc 退出（input/textarea 聚焦时不抢占）。
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { api } from '../../api/client'
 import { useReader, type InkTool } from '../../stores/readerStore'
 import { useReaderBus } from '../../stores/readerBus'
@@ -13,18 +13,35 @@ const I = ({ d, size = 15 }: { d: string; size?: number }) => (
   </svg>
 )
 
-const TOOLS: { key: InkTool; icon: string; title: string }[] = [
-  { key: 'pen', icon: 'M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z', title: '画笔' },
-  { key: 'highlighter', icon: 'M9 11l-6 6v3h9l3-3 M22 12l-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4z', title: '荧光笔' },
-  { key: 'line', icon: 'M5 19L19 5', title: '直线' },
-  { key: 'arrow', icon: 'M5 19L19 5 M9 5h10v10', title: '箭头' },
-  { key: 'rect', icon: 'M5 5h14v14H5z', title: '矩形' },
-  { key: 'ellipse', icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', title: '椭圆' },
-  {
-    key: 'eraser',
-    icon: 'm7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21 M22 21H7 M5 11l9 9',
-    title: '橡皮擦（点按/拖过删除整笔）',
-  },
+// 工具按组分段渲染（组间竖分隔线）：自由笔触 | 线箭 | 数学图形 | 橡皮擦
+const TOOL_GROUPS: { key: InkTool; icon: string; title: string }[][] = [
+  [
+    { key: 'pen', icon: 'M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z', title: '画笔' },
+    { key: 'highlighter', icon: 'M9 11l-6 6v3h9l3-3 M22 12l-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4z', title: '荧光笔' },
+  ],
+  [
+    { key: 'line', icon: 'M5 19L19 5', title: '直线' },
+    { key: 'arrow', icon: 'M5 19L19 5 M9 5h10v10', title: '箭头' },
+    { key: 'dblArrow', icon: 'M5 19L19 5 M9 5h10v10 M15 19H5v-10', title: '双向箭头' },
+  ],
+  [
+    { key: 'rect', icon: 'M5 5h14v14H5z', title: '矩形' },
+    { key: 'ellipse', icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', title: '椭圆' },
+    { key: 'circle', icon: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16z', title: '圆（拖出直径两端点）' },
+  ],
+  [
+    { key: 'tri', icon: 'M12 5l9 14H3z', title: '三角形' },
+    { key: 'triRight', icon: 'M5 5v14h14z', title: '直角三角形' },
+    { key: 'diamond', icon: 'M12 3l9 9-9 9-9-9z', title: '菱形' },
+    { key: 'trapezoid', icon: 'M8 6h8l4 12H4z', title: '梯形' },
+  ],
+  [
+    {
+      key: 'eraser',
+      icon: 'm7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21 M22 21H7 M5 11l9 9',
+      title: '橡皮擦（点按/拖过删除整笔）',
+    },
+  ],
 ]
 
 const COLORS = ['#e74c3c', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#2a2f36']
@@ -107,11 +124,16 @@ export default function InkToolbar() {
     }`
 
   return (
-    <div className="glass fade-in absolute left-1/2 top-12 z-30 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-border px-2 py-1.5 shadow-[var(--shadow-2)]">
-      {TOOLS.map((t) => (
-        <button key={t.key} className={btn(ink.tool === t.key)} title={t.title} onClick={() => setInk({ tool: t.key })}>
-          <I d={t.icon} />
-        </button>
+    <div className="glass fade-in absolute left-1/2 top-12 z-30 flex max-w-[calc(100vw-2.5rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-1 rounded-xl border border-border px-2 py-1.5 shadow-[var(--shadow-2)]">
+      {TOOL_GROUPS.map((group, gi) => (
+        <Fragment key={gi}>
+          {gi > 0 && <span className="mx-1 h-4 w-px bg-border-strong" />}
+          {group.map((t) => (
+            <button key={t.key} className={btn(ink.tool === t.key)} title={t.title} onClick={() => setInk({ tool: t.key })}>
+              <I d={t.icon} />
+            </button>
+          ))}
+        </Fragment>
       ))}
 
       <span className="mx-1 h-4 w-px bg-border-strong" />

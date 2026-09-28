@@ -1,16 +1,19 @@
-// 画笔层：自由笔触（pen/highlighter）与图形（line/arrow/rect/ellipse）采集 + 渲染 + 橡皮擦。
+// 画笔层：自由笔触（pen/highlighter）与图形（line/arrow/dblArrow/rect/ellipse/circle/
+// tri/triRight/diamond/trapezoid）采集 + 渲染 + 橡皮擦。
 //  - 挂 PageView 舞台内，z-index 6（高于批注层 3-5）：激活时拦截指针（绘制/擦除模式），
 //    未激活时 pointer-events:none 纯展示（不挡批注卡片/锚点交互）。
 //  - 坐标：采集 client → 舞台局部（÷stretch，SelectionOverlay 同款）→ page 单位
 //    （÷hiScale）；持久化为 page 单位，任意缩放下渲染只需 ×hiScale。
 //  - 每笔一行 type='ink' 批注（anchor_json={tool,color,width,points}），撤回=删行。
 //  - 橡皮擦（eraser）：点按/拖过删除命中的整笔（行删除语义，与撤回同源），永不落库。
+//  - 双指手势让渡：touch 绘制/擦除中第二指落下 → 取消当前手势（live 弃笔/擦除结算），
+//    touch 冒泡到容器由 ReaderPage 捏合监听接管缩放；异类型指针（鼠标/触控笔）不受影响。
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { api, createAnnotation } from '../../api/client'
 import { parseAnnotation, useReader, type InkStroke } from '../../stores/readerStore'
 import { useReaderBus } from '../../stores/readerBus'
 import { toast } from '../shared/Toast'
-import { MIN_POINT_DIST, arrowHeadD, eraserRadius, hitTestInkStroke, isCommittableStroke, smoothPathD } from './inkStroke'
+import { MIN_POINT_DIST, arrowHeadD, boxShapePolygons, eraserRadius, hitTestInkStroke, isCommittableStroke, smoothPathD } from './inkStroke'
 
 interface InkLayerProps {
   pageIndex: number
@@ -50,12 +53,39 @@ function StrokeShape({ stroke, k }: { stroke: InkStroke; k: number }) {
       </>
     )
   }
+  if (tool === 'dblArrow') {
+    return (
+      <>
+        <path d={`M ${a[0] * k} ${a[1] * k} L ${b[0] * k} ${b[1] * k}`} {...common} />
+        <path d={arrowHeadD(a, b, width, k)} {...common} />
+        <path d={arrowHeadD(b, a, width, k)} {...common} />
+      </>
+    )
+  }
+  if (tool === 'circle') {
+    // 直径两端点语义：a/b 为圆直径两端（圆规式拖拽）
+    return (
+      <circle
+        cx={((a[0] + b[0]) / 2) * k}
+        cy={((a[1] + b[1]) / 2) * k}
+        r={(Math.hypot(b[0] - a[0], b[1] - a[1]) / 2) * k}
+        {...common}
+      />
+    )
+  }
   const x = Math.min(a[0], b[0]) * k
   const y = Math.min(a[1], b[1]) * k
   const w = Math.abs(b[0] - a[0]) * k
   const h = Math.abs(b[1] - a[1]) * k
   if (tool === 'rect') return <rect x={x} y={y} width={w} height={h} rx={2} {...common} />
-  return <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} {...common} />
+  if (tool === 'ellipse') return <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} {...common} />
+  if (tool === 'tri' || tool === 'triRight' || tool === 'diamond' || tool === 'trapezoid') {
+    const d = boxShapePolygons(tool, a, b)
+      .map(([px, py], i) => `${i === 0 ? 'M' : 'L'} ${px * k} ${py * k}`)
+      .join(' ')
+    return <path d={`${d} Z`} {...common} />
+  }
+  return null
 }
 
 const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stageRef }: InkLayerProps) {
@@ -67,13 +97,17 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
   /** 当前活动指针（首指 pointerId）：触摸多指时第二指的 move/up 不污染笔画、
    *  不提前结算（触摸 pointer 有 implicit capture，仅 isPrimary 守卫挡不住后续事件） */
   const activePointerId = useRef<number | null>(null)
+  /** 活动指针类型（touch/pen/mouse）：双指手势让渡仅对 touch→touch 生效。
+   *  手势结束不复位——读取以 activePointerId 非空为前提，且每次新手势必然覆写 */
+  const activePointerType = useRef<string | null>(null)
   /** 擦除手势进行中（eraser 工具落笔后至抬起） */
   const erasingRef = useRef(false)
   /** 已发删除请求、待服务端确认的批注 id（防拖擦重复发） */
   const deletingRef = useRef(new Set<number>())
   /** 在途删除 promise（抬笔时等待全部落定再 bump，避免 GET 重拉跑赢 DELETE 致已删笔复活） */
   const pendingDeletesRef = useRef<Promise<void>[]>([])
-  /** 本次擦除手势计数（ok 含失败回补前的值；抬笔时一次性 toast + bump） */
+  /** 本次擦除手势计数（ok 含失败回补前的值；eraseAt 失败回写闭包捕获本对象，
+   *  结算换代后旧对象仍归属本手势——抬笔时一次性 toast + bump） */
   const eraseStatsRef = useRef({ ok: 0, failed: 0 })
 
   const pageInks = useMemo(
@@ -105,17 +139,20 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
       )
       if (!hits.length) return
       const st = useReader.getState()
+      const stats = eraseStatsRef.current
       for (const h of hits) {
         deletingRef.current.add(h.id)
         st.removeAnnotation(h.id)
-        eraseStatsRef.current.ok += 1
+        stats.ok += 1
         const p = api
           .deleteAnnotation(h.id)
           .then(
             () => {},
             () => {
-              eraseStatsRef.current.failed += 1
-              eraseStatsRef.current.ok -= 1
+              // 失败回写闭包捕获本手势的计数对象：结算把 ref 换代到新对象后，
+              // 在途失败的回写仍落旧对象——await 后读旧对象不丢计数，也不污染后续手势
+              stats.failed += 1
+              stats.ok -= 1
             },
           )
           .finally(() => {
@@ -127,8 +164,58 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
     [ink.width, pageInks],
   )
 
+  /** 擦除结算（抬笔与双指取消共用）：等在途 DELETE 全部落定再 bump，防已删笔复活。
+   *  计数对象在 await 前换代（后续手势/笔画拿到的全新对象不受旧失败回写污染），
+   *  本手势快照在 await 后读取（在途 DELETE 的失败回写落在本手势对象上，不丢）；
+   *  重入（结算后再进）看到零计数即空转，幂等。 */
+  const settleEraser = useCallback(async () => {
+    erasingRef.current = false
+    const stats = eraseStatsRef.current
+    eraseStatsRef.current = { ok: 0, failed: 0 }
+    const pending = pendingDeletesRef.current
+    pendingDeletesRef.current = []
+    if (pending.length) await Promise.allSettled(pending)
+    if (stats.ok > 0 || stats.failed > 0) {
+      if (stats.failed > 0) toast(`已擦除 ${stats.ok} 笔，${stats.failed} 笔失败，已与服务器对齐`, 'error')
+      useReaderBus.getState().bumpAnnotations()
+    }
+  }, [])
+
+  /** 双指手势让渡：第二根手指落下时取消进行中的笔画/擦除，手势交给容器捏合缩放
+   *  （触屏绘图软件标准语义：单指画、双指起即弃笔转缩放）。绘制中的 live 笔迹
+   *  未落库直接弃（无网络请求）；擦除走与抬笔相同的结算（在途 DELETE 落定再 bump）。 */
+  const cancelActiveGesture = useCallback(
+    (e: React.PointerEvent<SVGSVGElement>) => {
+      const id = activePointerId.current
+      activePointerId.current = null
+      if (id !== null) {
+        try {
+          e.currentTarget.releasePointerCapture(id)
+        } catch {
+          /* 指针已消失：捕获随之中止，静默 */
+        }
+      }
+      if (drawingRef.current) {
+        drawingRef.current = false
+        setLive(null)
+      }
+      if (erasingRef.current) void settleEraser()
+    },
+    [settleEraser],
+  )
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
+      // 双指手势让渡：活动指针存续期间收到同为 touch 的新 down → 取消当前手势。
+      // 异类型（鼠标/触控笔绘制中手指落下）不取消，仅拦截。此块必须位于下方
+      // isPrimary 守卫之前：第二根 touch 手指 isPrimary=false，会在下方守卫的
+      // !e.isPrimary 处短路，放后面则取消路径永不可达。
+      if (activePointerId.current !== null) {
+        if (activePointerType.current === 'touch' && e.pointerType === 'touch') {
+          cancelActiveGesture(e)
+        }
+        return
+      }
       // isPrimary：触摸第二指（双指捏合/多指）不开启新笔画/擦除；后续事件由
       // activePointerId 过滤（见上注释）。活动指针存续期间（activePointerId 非
       // null）拦截一切后续 down——含异类型 primary（如鼠标绘制中落下的第一根
@@ -138,6 +225,7 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
       e.stopPropagation()
       e.currentTarget.setPointerCapture(e.pointerId)
       activePointerId.current = e.pointerId
+      activePointerType.current = e.pointerType
       if (ink.tool === 'eraser') {
         erasingRef.current = true
         eraseStatsRef.current = { ok: 0, failed: 0 }
@@ -147,7 +235,7 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
       drawingRef.current = true
       setLive({ tool: ink.tool, color: ink.color, width: ink.width, points: [clientToPage(e.clientX, e.clientY)] })
     },
-    [ink, clientToPage, eraseAt],
+    [ink, clientToPage, eraseAt, cancelActiveGesture],
   )
 
   const onPointerMove = useCallback(
@@ -189,17 +277,7 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
       // 擦除结束结算：正常抬笔，或 Esc 中途退出后（erasing 已清，但有在途/已删计数仍需结算）
       const st = eraseStatsRef.current
       if (erasingRef.current || st.ok > 0 || st.failed > 0 || pendingDeletesRef.current.length > 0) {
-        erasingRef.current = false
-        // 等在途 DELETE 全部落定再 bump：否则全量 GET 可能读到删除前快照致已删笔复活
-        const pending = pendingDeletesRef.current
-        pendingDeletesRef.current = []
-        if (pending.length) await Promise.allSettled(pending)
-        const { ok, failed } = eraseStatsRef.current
-        eraseStatsRef.current = { ok: 0, failed: 0 }
-        if (ok > 0 || failed > 0) {
-          if (failed > 0) toast(`已擦除 ${ok} 笔，${failed} 笔失败，已与服务器对齐`, 'error')
-          useReaderBus.getState().bumpAnnotations()
-        }
+        await settleEraser()
         return
       }
       if (!drawingRef.current) return
@@ -239,7 +317,7 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
         toast('笔迹保存失败', 'error')
       }
     },
-    [live, pageIndex, geom.baseW, geom.baseH],
+    [live, pageIndex, geom.baseW, geom.baseH, settleEraser],
   )
 
   return (

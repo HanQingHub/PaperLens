@@ -44,6 +44,9 @@ base64 = "0.22"
 windows = { version = "0.61", default-features = false, features = [
     "Win32_System_Com",
     "Win32_UI_Shell",
+    # SetForegroundWindow/AttachThreadInput（foreground.rs 单实例唤起前置）
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
     # IShellLinkW::GetPath 的 WIN32_FIND_DATAW 参数类型所在 feature：
     # 该方法被用于跳过已正确的 .lnk，避免无谓重写
     "Win32_Storage_FileSystem",
