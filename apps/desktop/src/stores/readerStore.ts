@@ -9,7 +9,8 @@ export type ViewMode = 'single' | 'continuous'
 export const ANNO_COLORS = ['yellow', 'green', 'blue', 'pink', 'purple'] as const
 export type AnnoColor = (typeof ANNO_COLORS)[number]
 
-/** 画笔工具集：自由笔触（pen/highlighter）、图形（line/arrow/dblArrow/rect/ellipse/circle/tri/triRight/diamond/trapezoid）+ 橡皮擦（eraser，仅前端擦除态，不落库） */
+/** 画笔工具集：自由笔触（pen/highlighter）、图形（基础 10 种 + 折线族 11 种，
+ *  折线族清单见 inkStroke.OUTLINE_TOOLS）+ 橡皮擦（eraser，仅前端擦除态，不落库） */
 export type InkTool =
   | 'pen'
   | 'highlighter'
@@ -23,6 +24,17 @@ export type InkTool =
   | 'triRight'
   | 'diamond'
   | 'trapezoid'
+  | 'roundRect'
+  | 'parallelogram'
+  | 'pentagon'
+  | 'hexagon'
+  | 'octagon'
+  | 'star'
+  | 'heart'
+  | 'cross'
+  | 'cylinder'
+  | 'semicircle'
+  | 'arc'
   | 'eraser'
 
 /**
@@ -73,7 +85,8 @@ export interface ReaderAnnotation {
   ink: InkStroke | null
 }
 
-/** 可落库工具白名单（eraser 为纯前端擦除态，永不持久化；parse 拒收即渲染层跳过） */
+/** 可落库工具白名单（eraser 为纯前端擦除态，永不持久化；parse 拒收未知工具即渲染层跳过，
+ *  旧版本应用读到新增工具时安全降级） */
 const INK_TOOLS: readonly string[] = [
   'pen',
   'highlighter',
@@ -87,6 +100,17 @@ const INK_TOOLS: readonly string[] = [
   'triRight',
   'diamond',
   'trapezoid',
+  'roundRect',
+  'parallelogram',
+  'pentagon',
+  'hexagon',
+  'octagon',
+  'star',
+  'heart',
+  'cross',
+  'cylinder',
+  'semicircle',
+  'arc',
 ]
 
 /** anchor_json（type='ink'）→ InkStroke；损坏/缺字段降级为 null（渲染层跳过） */

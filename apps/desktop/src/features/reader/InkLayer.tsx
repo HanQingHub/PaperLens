@@ -1,5 +1,6 @@
-// 画笔层：自由笔触（pen/highlighter）与图形（line/arrow/dblArrow/rect/ellipse/circle/
-// tri/triRight/diamond/trapezoid）采集 + 渲染 + 橡皮擦。
+// 画笔层：自由笔触（pen/highlighter）与图形（基础 10 种 line/arrow/dblArrow/rect/
+// ellipse/circle/tri/triRight/diamond/trapezoid + 折线族 11 种，全集见 InkTool/
+// inkStroke.OUTLINE_TOOLS）采集 + 渲染 + 橡皮擦。
 //  - 挂 PageView 舞台内，z-index 6（高于批注层 3-5）：激活时拦截指针（绘制/擦除模式），
 //    未激活时 pointer-events:none 纯展示（不挡批注卡片/锚点交互）。
 //  - 坐标：采集 client → 舞台局部（÷stretch，SelectionOverlay 同款）→ page 单位
@@ -9,11 +10,11 @@
 //  - 双指手势让渡：touch 绘制/擦除中第二指落下 → 取消当前手势（live 弃笔/擦除结算），
 //    touch 冒泡到容器由 ReaderPage 捏合监听接管缩放；异类型指针（鼠标/触控笔）不受影响。
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { api, createAnnotation } from '../../api/client'
+import { api, ApiError, createAnnotation } from '../../api/client'
 import { parseAnnotation, useReader, type InkStroke } from '../../stores/readerStore'
-import { useReaderBus } from '../../stores/readerBus'
+import { trackInkOp, useReaderBus } from '../../stores/readerBus'
 import { toast } from '../shared/Toast'
-import { MIN_POINT_DIST, arrowHeadD, boxShapePolygons, eraserRadius, hitTestInkStroke, isCommittableStroke, smoothPathD } from './inkStroke'
+import { MIN_POINT_DIST, arrowHeadD, boxShapePolygons, eraserRadius, hitTestInkStroke, isCommittableStroke, isOutlineTool, outlinePathD, smoothPathD } from './inkStroke'
 
 interface InkLayerProps {
   pageIndex: number
@@ -73,6 +74,8 @@ function StrokeShape({ stroke, k }: { stroke: InkStroke; k: number }) {
       />
     )
   }
+  // 折线族图形：shapeOutline 顶点/采样序列（与橡皮擦命中同源，closed 子路径首尾重复）
+  if (isOutlineTool(tool)) return <path d={outlinePathD(tool, a, b, k)} {...common} />
   const x = Math.min(a[0], b[0]) * k
   const y = Math.min(a[1], b[1]) * k
   const w = Math.abs(b[0] - a[0]) * k
@@ -148,8 +151,10 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
           .deleteAnnotation(h.id)
           .then(
             () => {},
-            () => {
-              // 失败回写闭包捕获本手势的计数对象：结算把 ref 换代到新对象后，
+            (err) => {
+              if (err instanceof ApiError && err.status === 404) return
+              // 404 = 服务器已无此笔（复活对齐前的残留/重复擦除）：乐观移除即终态，不计失败。
+              // 其余失败回写闭包捕获本手势的计数对象：结算把 ref 换代到新对象后，
               // 在途失败的回写仍落旧对象——await 后读旧对象不丢计数，也不污染后续手势
               stats.failed += 1
               stats.ok -= 1
@@ -158,7 +163,7 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
           .finally(() => {
             deletingRef.current.delete(h.id)
           })
-        pendingDeletesRef.current.push(p)
+        pendingDeletesRef.current.push(trackInkOp(p))
       }
     },
     [ink.width, pageInks],
@@ -300,22 +305,28 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
         setLive(null)
         return
       }
-      try {
-        const raw = await createAnnotation(paperId, {
-          page_no: pageIndex + 1,
-          type: 'ink',
-          anchor_json: JSON.stringify({ tool: stroke.tool, color: stroke.color, width: stroke.width, points }),
-        })
-        // upsert 与清 live 同一微任务：React 19 自动批处理合并为一次 commit——
-        // pageInks 新笔挂载与 live 卸载原子切换，零空窗零闪烁
-        useReader.getState().upsertAnnotation(parseAnnotation(raw))
-        setLive((cur) => (cur === stroke ? null : cur))
-        useReaderBus.getState().bumpAnnotations()
-      } catch {
-        // 引用守卫：await 期间已落第二笔（live 引用已变）时不误清新笔
-        setLive((cur) => (cur === stroke ? null : cur))
-        toast('笔迹保存失败', 'error')
-      }
+      // 落库整链注册为在途操作：撤回/清除执行前 settleInkOps 等到 upsert 完成再按
+      // 最新 store 计算目标（否则在途新笔不在快照里——撤回错删上一笔/清除漏删）
+      const commit = (async () => {
+        try {
+          const raw = await createAnnotation(paperId, {
+            page_no: pageIndex + 1,
+            type: 'ink',
+            anchor_json: JSON.stringify({ tool: stroke.tool, color: stroke.color, width: stroke.width, points }),
+          })
+          // upsert 与清 live 同一微任务：React 19 自动批处理合并为一次 commit——
+          // pageInks 新笔挂载与 live 卸载原子切换，零空窗零闪烁
+          useReader.getState().upsertAnnotation(parseAnnotation(raw))
+          setLive((cur) => (cur === stroke ? null : cur))
+          useReaderBus.getState().bumpAnnotations()
+        } catch {
+          // 引用守卫：await 期间已落第二笔（live 引用已变）时不误清新笔
+          setLive((cur) => (cur === stroke ? null : cur))
+          toast('笔迹保存失败', 'error')
+        }
+      })()
+      trackInkOp(commit)
+      await commit
     },
     [live, pageIndex, geom.baseW, geom.baseH, settleEraser],
   )

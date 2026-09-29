@@ -1,12 +1,27 @@
-// 画笔层落库有效性纯函数测试：图形零位移单击/误触不落库不崩溃（闸门审核 R1 回归）。
-import { describe, expect, it } from 'vitest'
+// 画笔层落库有效性纯函数测试：图形零位移单击/误触不落库不崩溃（闸门审核 R1 回归）、
+// 折线族图形几何（shapeOutline/outlinePathD）、落库解析白名单（parseAnnotation）。
+import { describe, expect, it, vi } from 'vitest'
 import {
   boxShapePolygons,
   eraserRadius,
   hitTestInkStroke,
   isCommittableStroke,
+  outlinePathD,
   pointSegDist,
+  shapeOutline,
 } from '../features/reader/inkStroke'
+import { parseAnnotation } from '../stores/readerStore'
+
+// parseAnnotation 用例需 import readerStore——其 store 创建期读 localStorage（mode
+// 持久化），node 测试环境无此 API：vi.hoisted 在模块加载前打桩（vi.hoisted 会被
+// 提升至 import 之前执行）
+vi.hoisted(() => {
+  ;(globalThis as unknown as { localStorage: unknown }).localStorage = {
+    getItem: () => null,
+    setItem: () => {},
+    removeItem: () => {},
+  }
+})
 
 describe('isCommittableStroke', () => {
   it('图形工具零位移单击（仅 1 点）：丢弃且不崩溃', () => {
@@ -59,6 +74,28 @@ describe('isCommittableStroke', () => {
       expect(isCommittableStroke({ tool, points: [[10, 10], [11, 50]] })).toBe(false)
       expect(isCommittableStroke({ tool, points: [[10, 10]] })).toBe(false)
     }
+  })
+
+  it('折线族包围盒类按双边判定（压扁丢弃），arc 按欧氏长度（端点语义）', () => {
+    for (const tool of [
+      'roundRect',
+      'parallelogram',
+      'pentagon',
+      'hexagon',
+      'octagon',
+      'star',
+      'heart',
+      'cross',
+      'cylinder',
+      'semicircle',
+    ] as const) {
+      expect(isCommittableStroke({ tool, points: [[10, 10], [60, 50]] })).toBe(true)
+      expect(isCommittableStroke({ tool, points: [[10, 10], [60, 11]] })).toBe(false)
+      expect(isCommittableStroke({ tool, points: [[10, 10], [11, 50]] })).toBe(false)
+      expect(isCommittableStroke({ tool, points: [[10, 10]] })).toBe(false)
+    }
+    expect(isCommittableStroke({ tool: 'arc', points: [[10, 10], [100, 10]] })).toBe(true)
+    expect(isCommittableStroke({ tool: 'arc', points: [[10, 10], [12, 10.5]] })).toBe(false)
   })
 })
 
@@ -172,5 +209,135 @@ describe('hitTestInkStroke', () => {
     const pen = { tool: 'pen' as const, points: [[0, 0], [100, 0]] as [number, number][], width: 2 }
     expect(hitTestInkStroke(pen, [50, 9], eraserRadius(1.5))).toBe(false)
     expect(hitTestInkStroke(pen, [50, 9], eraserRadius(5))).toBe(true)
+  })
+
+  it('star：顶点命中、中心内部不命中（描边语义）', () => {
+    const star = { tool: 'star' as const, points: [[0, 0], [100, 100]] as [number, number][], width: 2 }
+    expect(hitTestInkStroke(star, [50, 0], 4)).toBe(true)
+    expect(hitTestInkStroke(star, [50, 50], 4)).toBe(false)
+  })
+
+  it('cylinder：上椭圆顶与下前弧最低点命中、轴心内部不命中', () => {
+    const cyl = { tool: 'cylinder' as const, points: [[0, 0], [100, 80]] as [number, number][], width: 2 }
+    expect(hitTestInkStroke(cyl, [50, 0], 4)).toBe(true)
+    expect(hitTestInkStroke(cyl, [50, 80], 4)).toBe(true)
+    expect(hitTestInkStroke(cyl, [50, 40], 4)).toBe(false)
+  })
+
+  it('arc：弧顶命中、底边弦位不命中（开放弧线无底边）', () => {
+    const arc = { tool: 'arc' as const, points: [[0, 0], [100, 40]] as [number, number][], width: 2 }
+    expect(hitTestInkStroke(arc, [50, 0], 4)).toBe(true)
+    expect(hitTestInkStroke(arc, [50, 40], 4)).toBe(false)
+  })
+})
+
+describe('shapeOutline（折线族图形）', () => {
+  const A: [number, number] = [0, 0]
+  const B: [number, number] = [100, 80]
+
+  it('closed 子路径长度=去重顶点+1：pentagon 6/hexagon 7/octagon 9/star 11/cross 13/parallelogram 5/roundRect 17/semicircle 17', () => {
+    expect(shapeOutline('pentagon', A, B)[0]).toHaveLength(6)
+    expect(shapeOutline('hexagon', A, B)[0]).toHaveLength(7)
+    expect(shapeOutline('octagon', A, B)[0]).toHaveLength(9)
+    expect(shapeOutline('star', A, B)[0]).toHaveLength(11)
+    expect(shapeOutline('cross', A, B)[0]).toHaveLength(13)
+    expect(shapeOutline('parallelogram', A, B)[0]).toHaveLength(5)
+    expect(shapeOutline('roundRect', A, B)[0]).toHaveLength(17)
+    // semicircle/arc 弧段 16 段采样 = 17 点（含两端），closed 再加首点重复 = 18
+    expect(shapeOutline('semicircle', A, B)[0]).toHaveLength(18)
+    expect(shapeOutline('arc', A, B)[0]).toHaveLength(17)
+  })
+
+  it('closed 首尾点重复；arc 与 cylinder 身体开放（首尾不同）', () => {
+    for (const t of ['roundRect', 'parallelogram', 'pentagon', 'hexagon', 'octagon', 'star', 'heart', 'cross', 'semicircle'] as const) {
+      const sub = shapeOutline(t, A, B)[0]
+      expect(sub[0]).toEqual(sub[sub.length - 1])
+    }
+    const arc = shapeOutline('arc', A, B)[0]
+    expect(arc[0]).not.toEqual(arc[arc.length - 1])
+    const cyl = shapeOutline('cylinder', A, B)
+    expect(cyl).toHaveLength(2)
+    expect(cyl[0][0]).toEqual(cyl[0][cyl[0].length - 1])
+    expect(cyl[1][0]).not.toEqual(cyl[1][cyl[1].length - 1])
+  })
+
+  it('cylinder 上椭圆 24 采样闭合（25 点）；身体从左上沿经下前弧到右上沿', () => {
+    const [top, body] = shapeOutline('cylinder', A, B)
+    expect(top).toHaveLength(25)
+    expect(body[0]).toEqual([0, 26.666666666666668])
+    expect(body[body.length - 1]).toEqual([100, 26.666666666666668])
+    // 下前弧最低点 (cx, maxY)——cos(3π/2) 非精确零（~1e-16 级）引入浮点误差，容差断言
+    expect(body.some(([x, y]) => Math.abs(x - 50) < 1e-9 && Math.abs(y - 80) < 1e-9)).toBe(true)
+  })
+
+  it('正多边形顶点朝上内切于包围盒：pentagon 首点 (cx, minY)', () => {
+    const sub = shapeOutline('pentagon', [0, 0], [100, 100])[0]
+    expect(sub[0][0]).toBeCloseTo(50)
+    expect(sub[0][1]).toBeCloseTo(0)
+  })
+
+  it('heart 首尾相同且采样全部落在包围盒内', () => {
+    const sub = shapeOutline('heart', [10, 20], [110, 90])[0]
+    expect(sub[0]).toEqual(sub[sub.length - 1])
+    for (const [x, y] of sub) {
+      expect(x).toBeGreaterThanOrEqual(10)
+      expect(x).toBeLessThanOrEqual(110)
+      expect(y).toBeGreaterThanOrEqual(20)
+      expect(y).toBeLessThanOrEqual(90)
+    }
+  })
+
+  it('对角点先后顺序无关（min/max 归一）', () => {
+    expect(shapeOutline('star', B, A)).toEqual(shapeOutline('star', A, B))
+  })
+})
+
+describe('outlinePathD', () => {
+  it('closed 以 Z 收口、坐标随 k 倍率（首点 (cx,minY)×2）', () => {
+    const d = outlinePathD('pentagon', [0, 0], [100, 100], 2)
+    expect(d.startsWith('M 100 0')).toBe(true)
+    expect(d).toContain('L')
+    expect(d.endsWith(' Z')).toBe(true)
+  })
+
+  it('open（arc）不含 Z', () => {
+    expect(outlinePathD('arc', [0, 0], [100, 40], 1).includes('Z')).toBe(false)
+  })
+})
+
+describe('parseAnnotation ink 白名单', () => {
+  const raw = (tool: string) => ({
+    id: 9,
+    paper_id: 1,
+    page_no: 1,
+    type: 'ink' as const,
+    anchor_json: JSON.stringify({ tool, color: '#e74c3c', width: 3, points: [[0, 0], [100, 80]] }),
+    card_json: null,
+    color: 'yellow',
+    text: '',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+  })
+
+  it('折线族新工具落库解析通过', () => {
+    for (const tool of [
+      'roundRect',
+      'parallelogram',
+      'pentagon',
+      'hexagon',
+      'octagon',
+      'star',
+      'heart',
+      'cross',
+      'cylinder',
+      'semicircle',
+      'arc',
+    ] as const) {
+      expect(parseAnnotation(raw(tool)).ink?.tool).toBe(tool)
+    }
+  })
+
+  it('未知工具拒收（ink=null 渲染层跳过，旧版本应用读到新数据安全降级）', () => {
+    expect(parseAnnotation(raw('hexagram')).ink).toBeNull()
   })
 })
