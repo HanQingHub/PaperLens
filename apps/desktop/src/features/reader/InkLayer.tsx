@@ -6,7 +6,8 @@
 //  - 坐标：采集 client → 舞台局部（÷stretch，SelectionOverlay 同款）→ page 单位
 //    （÷hiScale）；持久化为 page 单位，任意缩放下渲染只需 ×hiScale。
 //  - 每笔一行 type='ink' 批注（anchor_json={tool,color,width,points}），撤回=删行。
-//  - 橡皮擦（eraser）：点按/拖过删除命中的整笔（行删除语义，与撤回同源），永不落库。
+//  - 橡皮擦（eraser）：点按/拖过删除命中的整笔（行删除语义，与撤回同源），永不落库；
+//    在途 live 笔（落库 POST 未返回）命中即弃笔并抑制落库，即时生效不等 POST。
 //  - 双指手势让渡：touch 绘制/擦除中第二指落下 → 取消当前手势（live 弃笔/擦除结算），
 //    touch 冒泡到容器由 ReaderPage 捏合监听接管缩放；异类型指针（鼠标/触控笔）不受影响。
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
@@ -96,6 +97,17 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
   const annotations = useReader((s) => s.annotations)
   /** 绘制中的笔迹（page 单位；仅本组件消费，落库后清除） */
   const [live, setLive] = useState<InkStroke | null>(null)
+  /** live 的同步镜像：全部写入经 setLiveInk，读方（eraseAt 擦在途笔）不经渲染
+   *  时序——闭包 stale（笔已 upsert 进 store 而旧闭包仍持 live）不会误走抑制分支 */
+  const liveRef = useRef<InkStroke | null>(null)
+  const setLiveInk = useCallback(
+    (v: InkStroke | null | ((cur: InkStroke | null) => InkStroke | null)) => {
+      const next = typeof v === 'function' ? v(liveRef.current) : v
+      liveRef.current = next
+      setLive(next)
+    },
+    [],
+  )
   const drawingRef = useRef(false)
   /** 当前活动指针（首指 pointerId）：触摸多指时第二指的 move/up 不污染笔画、
    *  不提前结算（触摸 pointer 有 implicit capture，仅 isPrimary 守卫挡不住后续事件） */
@@ -112,6 +124,9 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
   /** 本次擦除手势计数（ok 含失败回补前的值；eraseAt 失败回写闭包捕获本对象，
    *  结算换代后旧对象仍归属本手势——抬笔时一次性 toast + bump） */
   const eraseStatsRef = useRef({ ok: 0, failed: 0 })
+  /** 落库前已被橡皮擦擦掉的 live 笔：commit 落库时发现即撤销刚创建的行（不进
+   *  store），擦除即时生效不等 POST。key 为笔迹对象引用 */
+  const suppressedRef = useRef(new Set<InkStroke>())
 
   const pageInks = useMemo(
     () => annotations.filter((a) => a.type === 'ink' && a.page_no === pageIndex + 1 && a.ink),
@@ -133,10 +148,21 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
     [stageRef, geom.scale],
   )
 
-  /** 橡皮擦：删除落点半径内的本页整笔（乐观移除 + 服务端删除；抬笔时等在途删除落定后一次重拉对齐） */
+  /** 橡皮擦：删除落点半径内的本页整笔（乐观移除 + 服务端删除；抬笔时等在途删除落定后一次重拉对齐）。
+   *  在途 live 笔（POST 未落库，不在 pageInks）直接弃笔并抑制落库，擦除即时生效。 */
   const eraseAt = useCallback(
     (pt: [number, number]) => {
       const radius = eraserRadius(ink.width)
+      // 在途 live 笔命中：直接弃笔并抑制落库（commit 落库时发现即撤销刚创建的行）。
+      // drawingRef 守卫为纯防御——现事件流单一活动指针下"绘制中"与"擦除中"互斥。
+      // 命中即返回：单次点按只擦 live 一笔，重叠的落库笔留待拖擦 move/再次点击
+      const cur = liveRef.current
+      if (cur && !drawingRef.current && hitTestInkStroke(cur, pt, radius)) {
+        suppressedRef.current.add(cur)
+        setLiveInk(null)
+        eraseStatsRef.current.ok += 1
+        return
+      }
       const hits = pageInks.filter(
         (a) => a.ink && !deletingRef.current.has(a.id) && hitTestInkStroke(a.ink, pt, radius),
       )
@@ -166,7 +192,7 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
         pendingDeletesRef.current.push(trackInkOp(p))
       }
     },
-    [ink.width, pageInks],
+    [ink.width, pageInks, setLiveInk],
   )
 
   /** 擦除结算（抬笔与双指取消共用）：等在途 DELETE 全部落定再 bump，防已删笔复活。
@@ -202,11 +228,11 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
       }
       if (drawingRef.current) {
         drawingRef.current = false
-        setLive(null)
+        setLiveInk(null)
       }
       if (erasingRef.current) void settleEraser()
     },
-    [settleEraser],
+    [settleEraser, setLiveInk],
   )
 
   const onPointerDown = useCallback(
@@ -238,9 +264,9 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
         return
       }
       drawingRef.current = true
-      setLive({ tool: ink.tool, color: ink.color, width: ink.width, points: [clientToPage(e.clientX, e.clientY)] })
+      setLiveInk({ tool: ink.tool, color: ink.color, width: ink.width, points: [clientToPage(e.clientX, e.clientY)] })
     },
-    [ink, clientToPage, eraseAt, cancelActiveGesture],
+    [ink, clientToPage, eraseAt, cancelActiveGesture, setLiveInk],
   )
 
   const onPointerMove = useCallback(
@@ -258,7 +284,7 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
       }
       if (!drawingRef.current) return
       const p = clientToPage(e.clientX, e.clientY)
-      setLive((cur) => {
+      setLiveInk((cur) => {
         if (!cur) return cur
         if (cur.tool === 'pen' || cur.tool === 'highlighter') {
           const last = cur.points[cur.points.length - 1]
@@ -271,7 +297,7 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
         return { ...cur, points: [cur.points[0], p] }
       })
     },
-    [clientToPage, eraseAt],
+    [clientToPage, eraseAt, setLiveInk],
   )
 
   const onPointerUp = useCallback(
@@ -297,16 +323,16 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
         ([x, y]) => [clamp(x, geom.baseW), clamp(y, geom.baseH)] as [number, number],
       )
       if (!isCommittableStroke({ tool: stroke.tool, points })) {
-        setLive(null)
+        setLiveInk(null)
         return
       }
       const paperId = useReader.getState().paper?.id
       if (!paperId) {
-        setLive(null)
+        setLiveInk(null)
         return
       }
       // 落库整链注册为在途操作：撤回/清除执行前 settleInkOps 等到 upsert 完成再按
-      // 最新 store 计算目标（否则在途新笔不在快照里——撤回错删上一笔/清除漏删）
+      // 最新状态计算目标（否则在途新笔不在快照里——撤回错删上一笔/清除漏删）
       const commit = (async () => {
         try {
           const raw = await createAnnotation(paperId, {
@@ -314,21 +340,36 @@ const InkLayer = memo(function InkLayer({ pageIndex, geom, stageW, stageH, stage
             type: 'ink',
             anchor_json: JSON.stringify({ tool: stroke.tool, color: stroke.color, width: stroke.width, points }),
           })
+          if (suppressedRef.current.delete(stroke)) {
+            // 落库前已被橡皮擦擦掉：撤销刚创建的行，不进 store。删除无论成败都 bump
+            // 重拉——擦除手势结算（settleEraser）在 (create, delete) 落定前已发过
+            // bump，其 GET 可读到 create 已提交、delete 未到达的快照使被抑制笔复活
+            // 进 store；此处落定后的 bump 以终态覆盖，复活幽灵不滞留
+            try {
+              await api.deleteAnnotation(raw.id)
+            } catch {
+              /* 404=已删除；其余失败同样交下方 bump 对齐（笔短暂重现可再擦） */
+            }
+            setLiveInk((cur) => (cur === stroke ? null : cur))
+            useReaderBus.getState().bumpAnnotations()
+            return
+          }
           // upsert 与清 live 同一微任务：React 19 自动批处理合并为一次 commit——
           // pageInks 新笔挂载与 live 卸载原子切换，零空窗零闪烁
           useReader.getState().upsertAnnotation(parseAnnotation(raw))
-          setLive((cur) => (cur === stroke ? null : cur))
+          setLiveInk((cur) => (cur === stroke ? null : cur))
           useReaderBus.getState().bumpAnnotations()
         } catch {
           // 引用守卫：await 期间已落第二笔（live 引用已变）时不误清新笔
-          setLive((cur) => (cur === stroke ? null : cur))
+          setLiveInk((cur) => (cur === stroke ? null : cur))
+          suppressedRef.current.delete(stroke)
           toast('笔迹保存失败', 'error')
         }
       })()
       trackInkOp(commit)
       await commit
     },
-    [live, pageIndex, geom.baseW, geom.baseH, settleEraser],
+    [live, pageIndex, geom.baseW, geom.baseH, settleEraser, setLiveInk],
   )
 
   return (

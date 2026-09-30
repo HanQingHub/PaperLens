@@ -6,11 +6,15 @@ import { create } from 'zustand'
  *  或在 DELETE 提交前重拉 GET 使已擦笔复活。模块级存放：非渲染态，不进 zustand。 */
 const pendingInkOps = new Set<Promise<unknown>>()
 
-/** 注册在途批注操作，返回原 promise（链式调用无感） */
+/** 注册在途批注操作，返回原 promise（链式调用无感）。计数同步进 bus：
+ *  工具条据此在落库窗口内保持撤回/清除按钮可点（首笔 POST 在途时 store 尚无
+ *  笔迹，仅按已落库计数启用会让按钮灰死、settle 协调无从触发）。 */
 export function trackInkOp<T>(p: Promise<T>): Promise<T> {
   pendingInkOps.add(p)
+  useReaderBus.setState((s) => ({ inkOpsInFlight: s.inkOpsInFlight + 1 }))
   return p.finally(() => {
     pendingInkOps.delete(p)
+    useReaderBus.setState((s) => ({ inkOpsInFlight: s.inkOpsInFlight - 1 }))
   })
 }
 
@@ -28,6 +32,8 @@ interface ReaderBusState {
   /** 批注数据版本号：阅读器写入批注后 bump，面板监听刷新 */
   annotationsVersion: number
   bumpAnnotations: () => void
+  /** 在途笔迹操作数（trackInkOp 注册/落定同步增减）：工具条据此在落库窗口内保持撤回/清除可点 */
+  inkOpsInFlight: number
   /** 术语表版本号 */
   glossaryVersion: number
   bumpGlossary: () => void
@@ -42,6 +48,7 @@ export const useReaderBus = create<ReaderBusState>((set, get) => ({
   },
   annotationsVersion: 0,
   bumpAnnotations: () => set((s) => ({ annotationsVersion: s.annotationsVersion + 1 })),
+  inkOpsInFlight: 0,
   glossaryVersion: 0,
   bumpGlossary: () => set((s) => ({ glossaryVersion: s.glossaryVersion + 1 })),
 }))

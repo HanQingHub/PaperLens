@@ -1,12 +1,14 @@
 // 画笔浮动工具条：自由笔触（画笔/荧光笔）+ 图形选择面板（入口按钮 1 个，鼠标悬浮/
-// 触摸点按展开 21 种图形）+ 橡皮擦 + 6 色 + 3 档粗细（粗细档复用为擦除半径）+ 撤回 + 清除本页 + 退出。
-// 撤回 = 删除最近一笔 ink 批注（max(id)），执行前等在途笔迹操作（落库 POST/擦除 DELETE）
-// 落定再按最新 store 计算目标，404（笔迹已不存在）按已删除处理；清除本页 = 删除当前页全部 ink，口径同；
-// 橡皮擦 = 点按/拖过删除命中的整笔。
+// 触摸点按展开 21 种图形，双层桥面防穿缝误关）+ 橡皮擦 + 6 色 + 3 档粗细（粗细档
+// 复用为擦除半径）+ 撤回 + 清除本页 + 退出。
+// 撤回 = 删除最近一笔 ink 批注（max(id)），执行前等在途笔迹操作（落库 POST/擦除
+// DELETE）落定并按服务器终态刷新目标，404（笔迹已不存在）按已删除处理；清除本页
+// = 删除当前页全部 ink，口径同；在途落库窗口内（inkOpsInFlight>0）两按钮保持可点，
+// 点击后 settle 协调生效。橡皮擦 = 点按/拖过删除命中的整笔。
 // 键盘：Ctrl+Z 撤回 / Esc 退出（图形面板开着先关面板；input/textarea 聚焦时不抢占）。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError } from '../../api/client'
-import { useReader, type InkTool } from '../../stores/readerStore'
+import { parseAnnotation, useReader, type InkTool } from '../../stores/readerStore'
 import { settleInkOps, useReaderBus } from '../../stores/readerBus'
 import { outlinePathD } from './inkStroke'
 import { toast } from '../shared/Toast'
@@ -61,11 +63,27 @@ const SHAPES_ICON = 'M4 5h7v7H4z M13 13h7v7h-7z M16.5 4a4.5 4.5 0 1 0 0 9 4.5 4.
 const COLORS = ['#e74c3c', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#2a2f36']
 const WIDTHS = [1.5, 3, 5]
 
+// 撤回/清除目标以服务器终态计算：settle 后全部在途写已提交（响应晚于服务端提交），
+// 此刻 GET 即终态——store 可能含擦除 DELETE 提交前并发 GET 回写的复活幽灵（max(id)
+// 锁错对象→404 吞掉撤回），顺带把幽灵清出 store；GET 失败（服务器忙碌）退回 store
+// 快照，不阻塞操作
+const refreshAnnotationsFromServer = async () => {
+  const pid = useReader.getState().paper?.id
+  if (pid == null) return
+  try {
+    const fresh = await api.annotations(pid)
+    useReader.getState().setAnnotations(fresh.map(parseAnnotation))
+  } catch {
+    /* 退回 store 快照 */
+  }
+}
+
 export default function InkToolbar() {
   const ink = useReader((s) => s.ink)
   const setInk = useReader((s) => s.setInk)
   const annotations = useReader((s) => s.annotations)
   const currentPage = useReader((s) => s.currentPage)
+  const inkOps = useReaderBus((s) => s.inkOpsInFlight)
   const [busy, setBusy] = useState(false)
   const [shapeOpen, setShapeOpen] = useState(false)
   const shapeWrapRef = useRef<HTMLDivElement>(null)
@@ -84,6 +102,7 @@ export default function InkToolbar() {
       // 在途笔迹 POST/擦除 DELETE 先落定：否则按 store 快照取 max(id) 会错删上一笔、
       // 漏掉刚画仍在途的笔
       await settleInkOps()
+      await refreshAnnotationsFromServer()
       const inkAnnos = useReader.getState().annotations.filter((a) => a.type === 'ink')
       if (!inkAnnos.length) return
       const last = inkAnnos.reduce((m, a) => (a.id > m.id ? a : m))
@@ -110,6 +129,7 @@ export default function InkToolbar() {
     try {
       // 在途笔迹操作先落定（同 undo）：清除后新笔落库不残留
       await settleInkOps()
+      await refreshAnnotationsFromServer()
       const st = useReader.getState()
       const page = st.currentPage
       const doomed = st.annotations.filter((a) => a.type === 'ink' && a.page_no === page)
@@ -209,22 +229,27 @@ export default function InkToolbar() {
           <I d={currentShape ? currentShape.icon : SHAPES_ICON} />
         </button>
         {shapeOpen && (
-          <div className="glass fade-in absolute left-1/2 top-full z-40 mt-2 grid w-[248px] -translate-x-1/2 grid-cols-5 gap-1 rounded-xl border border-border p-2 shadow-[var(--shadow-2)]">
-            {SHAPE_ITEMS.map((s) => (
-              <button
-                key={s.key}
-                className={`flex h-9 items-center justify-center rounded-md transition-colors ${
-                  ink.tool === s.key ? 'bg-accent-soft text-accent' : 'text-text-soft hover:bg-bg-soft hover:text-text'
-                }`}
-                title={s.title}
-                onClick={() => {
-                  setInk({ tool: s.key })
-                  setShapeOpen(false)
-                }}
-              >
-                <I d={s.icon} size={20} />
-              </button>
-            ))}
+          // 双层结构：外层 pt-2 为 8px 透明桥面（外边距产生的缝隙不属于 wrapper
+          // 命中面，鼠标穿缝会触发 pointerLeave 误关面板——内边距属于子元素则否），
+          // 内层玻璃卡片与单层版本视觉一致
+          <div className="absolute left-1/2 top-full z-40 w-[248px] -translate-x-1/2 pt-2">
+            <div className="glass fade-in grid grid-cols-5 gap-1 rounded-xl border border-border p-2 shadow-[var(--shadow-2)]">
+              {SHAPE_ITEMS.map((s) => (
+                <button
+                  key={s.key}
+                  className={`flex h-9 items-center justify-center rounded-md transition-colors ${
+                    ink.tool === s.key ? 'bg-accent-soft text-accent' : 'text-text-soft hover:bg-bg-soft hover:text-text'
+                  }`}
+                  title={s.title}
+                  onClick={() => {
+                    setInk({ tool: s.key })
+                    setShapeOpen(false)
+                  }}
+                >
+                  <I d={s.icon} size={20} />
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -262,13 +287,20 @@ export default function InkToolbar() {
 
       <span className="mx-1 h-4 w-px bg-border-strong" />
 
-      <button className={`${btn(false)} ${!inkAnnos.length || busy ? 'opacity-40' : ''}`} title="撤回最近一笔 (Ctrl+Z)" disabled={!inkAnnos.length || busy} onClick={undo}>
+      {/* 在途落库窗口内保持可点（inkOps）：settle 协调要靠点击进 handler 才生效，
+          仅按已落库计数启用会让首笔 POST 在途时按钮灰死（"无法撤回/清除"） */}
+      <button
+        className={`${btn(false)} ${(!inkAnnos.length && inkOps === 0) || busy ? 'opacity-40' : ''}`}
+        title="撤回最近一笔 (Ctrl+Z)"
+        disabled={(!inkAnnos.length && inkOps === 0) || busy}
+        onClick={undo}
+      >
         <I d="M3 7v6h6 M21 17a9 9 0 0 0-15-6.7L3 13" />
       </button>
       <button
-        className={`${btn(false)} ${!pageInkCount || busy ? 'opacity-40' : ''}`}
-        title={`清除本页笔迹（当前 ${pageInkCount} 笔）`}
-        disabled={!pageInkCount || busy}
+        className={`${btn(false)} ${(!pageInkCount && inkOps === 0) || busy ? 'opacity-40' : ''}`}
+        title={`清除本页笔迹（当前 ${pageInkCount} 笔${inkOps > 0 ? '，含落库中' : ''}）`}
+        disabled={(!pageInkCount && inkOps === 0) || busy}
         onClick={clearPage}
       >
         <I d="M3 6h18 M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2 M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6 M10 11v6 M14 11v6" />
