@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { api, saveBlobWithDialog } from '../../api/client'
-import type { AppIconVariant, LLMModelInfo, LLMStatus } from '../../api/types'
+import type { AppIconVariant, AppSettings, LLMModelInfo, LLMStatus } from '../../api/types'
 import { useAuth } from '../../stores/auth'
 import { useUpdater, type UpdatePolicy } from '../../stores/updater'
 import { updaterAvailable } from '../../api/updaterCore'
@@ -12,11 +12,13 @@ import { IconBook, IconPencil, IconX } from '../../components/shared/Icon'
 import { toast } from '../shared/Toast'
 import { guardMdNav } from '../reader/mdDirty'
 
-const THEMES: { key: 'warm' | 'light' | 'dark' | 'system'; label: string; colors: [string, string, string] }[] = [
+const THEMES: { key: AppSettings['theme']; label: string; colors: [string, string, string] }[] = [
   { key: 'warm', label: '暖纸', colors: ['#faf7f0', '#ffffff', '#33658a'] },
   { key: 'light', label: '浅色', colors: ['#f5f6f8', '#ffffff', '#33658a'] },
   { key: 'dark', label: '深色', colors: ['#23252a', '#2b2e34', '#7fa6c9'] },
   { key: 'system', label: '跟随系统', colors: ['#f5f6f8', '#2b2e34', '#33658a'] },
+  { key: 'apple', label: 'Apple', colors: ['#f2f2f7', '#ffffff', '#007aff'] },
+  { key: 'claude', label: 'Claude', colors: ['#faf9f5', '#ffffff', '#c96442'] },
 ]
 
 const ANNO_COLORS: { key: string; label: string; css: string }[] = [
@@ -427,7 +429,7 @@ export default function SettingsPage() {
         {/* 外观 */}
         <Section title="外观">
           <Row label="主题">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {THEMES.map((t) => (
                 <button
                   key={t.key}

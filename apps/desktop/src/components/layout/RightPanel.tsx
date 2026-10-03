@@ -17,7 +17,7 @@ export default function RightPanel() {
 
   return (
     <aside
-      className="slide-in z-35 flex h-full w-[340px] shrink-0 flex-col border-l border-border bg-panel shadow-[var(--shadow-2)]"
+      className="pl-rightpanel slide-in z-35 flex h-full w-[340px] shrink-0 flex-col border-l border-border bg-panel shadow-[var(--shadow-2)]"
     >
       {/* pr-20：为右上角常驻窗口控制小部件（最小化/X）预留空间，避免与面板关闭按钮重叠 */}
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border pl-4 pr-20">

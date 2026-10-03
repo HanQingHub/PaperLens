@@ -178,7 +178,7 @@ export default function PaperCard({
                 </span>
               </button>
               <button
-                className="flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors text-danger hover:bg-[rgba(181,72,60,.1)]"
+                className="danger-hover flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors text-danger"
                 onClick={() => { setMenuOpen(false); onDelete(paper) }}
               >
                 <span className="flex min-w-0 items-center gap-1.5 truncate">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -23,22 +23,21 @@ import SettingsPage from './features/settings/SettingsPage'
 import ReviewPage from './features/review/ReviewPage'
 import UpdaterBoot from './features/updater/UpdaterBoot'
 
-/** 主题色 → [r,g,b]（0-1），供 WebGL uniform 使用 */
-function useThemeColors() {
-  return useMemo(() => {
-    const cs = getComputedStyle(document.documentElement)
-    const toRgb = (name: string, fallback: [number, number, number]): [number, number, number] => {
-      const m = /^#([0-9a-f]{6})$/i.exec(cs.getPropertyValue(name).trim())
-      if (!m) return fallback
-      const n = parseInt(m[1], 16)
-      return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
-    }
-    return {
-      accent: toRgb('--accent', [0.2, 0.4, 0.54]),
-      accentHex: cs.getPropertyValue('--accent').trim() || '#33658a',
-      textHex: cs.getPropertyValue('--text').trim() || '#2a2f36',
-    }
-  }, [])
+/** 主题色 → [r,g,b]（0-1），供 WebGL uniform 使用。须在 applyTheme 之后的
+ *  layout effect 里调用，读到的才是当前主题色而非未设 data-theme 的默认值 */
+function readThemeColors() {
+  const cs = getComputedStyle(document.documentElement)
+  const toRgb = (name: string, fallback: [number, number, number]): [number, number, number] => {
+    const m = /^#([0-9a-f]{6})$/i.exec(cs.getPropertyValue(name).trim())
+    if (!m) return fallback
+    const n = parseInt(m[1], 16)
+    return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]
+  }
+  return {
+    accent: toRgb('--accent', [0.2, 0.4, 0.54]),
+    accentHex: cs.getPropertyValue('--accent').trim() || '#33658a',
+    textHex: cs.getPropertyValue('--text').trim() || '#2a2f36',
+  }
 }
 
 function BrandIcon() {
@@ -97,7 +96,7 @@ function ExternalOpenBridge() {
 
 export default function App() {
   const { booted, boot, bootError, retryBoot, user, settings } = useAuth()
-  const themeColors = useThemeColors()
+  const [themeColors, setThemeColors] = useState(readThemeColors)
   const animationsOn = settings.animations !== false
 
   useEffect(() => {
@@ -125,10 +124,13 @@ export default function App() {
     return () => setUnauthorizedHandler(null)
   }, [])
 
-  useEffect(() => {
+  // 主题/动效/字号应用提前到 layout effect：paint 前写 data-theme，并按当前
+  // 主题重取启动画布取色，首帧不再出现默认暖纸色
+  useLayoutEffect(() => {
     applyTheme(settings.theme)
     document.documentElement.classList.toggle('no-motion', !settings.animations)
     document.documentElement.style.fontSize = `${14 * (settings.font_scale || 1)}px`
+    setThemeColors(readThemeColors())
   }, [settings.theme, settings.animations, settings.font_scale])
 
   // Sync shortcut/window icon with current variant (covers orbit/diamond switch + update cache clear)

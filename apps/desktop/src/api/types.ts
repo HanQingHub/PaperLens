@@ -193,7 +193,7 @@ export type TranslateEvent =
 export type AppIconVariant = 'orbit' | 'diamond'
 
 export interface AppSettings {
-  theme: 'warm' | 'light' | 'dark' | 'system'
+  theme: 'warm' | 'light' | 'dark' | 'system' | 'apple' | 'claude'
   font_scale: number
   highlight_enabled: boolean
   highlight_style: 1 | 2 | 3

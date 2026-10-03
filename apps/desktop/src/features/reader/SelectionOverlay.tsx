@@ -112,9 +112,9 @@ const SelectionOverlay = memo(function SelectionOverlay({
       {rects.map((r, i) => (
         <rect
           key={`sel-${i}`}
+          className="sel-rect"
           x={r.left} y={r.top} width={r.width} height={r.height}
           rx={2}
-          fill="rgba(51,101,138,.35)"
         />
       ))}
     </svg>

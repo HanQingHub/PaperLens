@@ -635,7 +635,10 @@ export default function TranslateCard({
         )}
 
         {status === 'error' && (
-          <div className="mt-1 flex items-center justify-between rounded-md bg-[rgba(181,72,60,.07)] px-2 py-1.5 text-[11px] text-danger">
+          <div
+            className="mt-1 flex items-center justify-between rounded-md px-2 py-1.5 text-[11px] text-danger"
+            style={{ background: 'color-mix(in srgb, var(--danger) 7%, transparent)' }}
+          >
             <span>{errorDetail || '出错了，已保留已收内容'}</span>
             <button
               className="btn px-2 py-0.5 text-[11px]"

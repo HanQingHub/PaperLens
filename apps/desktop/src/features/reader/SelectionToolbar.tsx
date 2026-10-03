@@ -39,7 +39,7 @@ const Btn = ({
     onMouseDown={(e) => e.preventDefault()}
     onClick={onClick}
     className={`flex h-7 w-7 items-center justify-center rounded-md text-[13px] transition-all duration-100 ${
-      danger ? 'text-danger hover:bg-[rgba(181,72,60,.1)]' : 'text-text-soft hover:bg-accent-soft hover:text-accent'
+      danger ? 'danger-hover text-danger' : 'text-text-soft hover:bg-accent-soft hover:text-accent'
     }`}
   >
     {label}

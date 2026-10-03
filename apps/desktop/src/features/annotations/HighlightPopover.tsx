@@ -98,7 +98,7 @@ export default function HighlightPopover({
           ))}
         </div>
         <button
-          className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-danger hover:bg-[rgba(181,72,60,.1)]"
+          className="danger-hover ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-danger"
           title="删除高亮"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {

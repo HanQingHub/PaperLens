@@ -432,13 +432,13 @@ export default function ReviewPage() {
                     </div>
                   )}
                   <div className="flex gap-2 justify-center">
-                    <button className="btn flex-1 bg-red-50 text-red-600 hover:bg-red-100" onClick={() => answer(2)} disabled={reviewing} title="快捷键 1">
+                    <button className="btn flex-1 bg-red-50! text-red-600! hover:bg-red-100!" onClick={() => answer(2)} disabled={reviewing} title="快捷键 1">
                       忘了
                     </button>
-                    <button className="btn flex-1 bg-yellow-50 text-yellow-700 hover:bg-yellow-100" onClick={() => answer(3)} disabled={reviewing} title="快捷键 2">
+                    <button className="btn flex-1 bg-yellow-50! text-yellow-700! hover:bg-yellow-100!" onClick={() => answer(3)} disabled={reviewing} title="快捷键 2">
                       模糊
                     </button>
-                    <button className="btn flex-1 bg-green-50 text-green-700 hover:bg-green-100" onClick={() => answer(5)} disabled={reviewing} title="快捷键 3">
+                    <button className="btn flex-1 bg-green-50! text-green-700! hover:bg-green-100!" onClick={() => answer(5)} disabled={reviewing} title="快捷键 3">
                       记得
                     </button>
                   </div>

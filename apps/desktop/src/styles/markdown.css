@@ -6,7 +6,9 @@
   --code-fg: #d4d4d4;
   --code-border: rgba(255, 255, 255, 0.08);
 }
-[data-theme='light'] {
+[data-theme='light'],
+[data-theme='apple'],
+[data-theme='claude'] {
   --code-bg: #f6f8fa;
   --code-head-bg: #eaeef2;
   --code-fg: #24292f;
@@ -123,6 +125,8 @@
 }
 .markdown-body pre .code-copy:hover { background: rgba(255,255,255,0.08); }
 [data-theme='light'] .markdown-body pre .code-copy:hover,
+[data-theme='apple'] .markdown-body pre .code-copy:hover,
+[data-theme='claude'] .markdown-body pre .code-copy:hover,
 [data-theme='warm'] .markdown-body pre .code-copy:hover { background: rgba(0,0,0,0.06); }
 
 .markdown-body pre code {
@@ -141,6 +145,8 @@
 }
 .markdown-body .code-line:hover { background: rgba(255,255,255,0.04); }
 [data-theme='light'] .markdown-body .code-line:hover,
+[data-theme='apple'] .markdown-body .code-line:hover,
+[data-theme='claude'] .markdown-body .code-line:hover,
 [data-theme='warm'] .markdown-body .code-line:hover { background: rgba(0,0,0,0.03); }
 .markdown-body .line-no {
   display: inline-block;

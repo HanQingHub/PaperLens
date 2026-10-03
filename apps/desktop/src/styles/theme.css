@@ -8,12 +8,15 @@
 
   --radius-panel: 10px;
   --radius-card: 8px;
+  --radius-ctl: 7px;
+  --tracking-ui: 0.01em;
   --shadow-1: 0 1px 2px rgba(20, 20, 18, 0.05), 0 2px 8px rgba(20, 20, 18, 0.06);
   --shadow-2: 0 4px 12px rgba(20, 20, 18, 0.1), 0 8px 28px rgba(20, 20, 18, 0.08);
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --dur-1: 120ms;
   --dur-2: 200ms;
   --dur-3: 250ms;
+  --dur-4: 300ms;
 }
 
 /* 暖纸（默认） */
@@ -53,6 +56,105 @@
   --glass: rgba(255, 255, 255, 0.85);
 }
 
+/* Apple 风（HIG 系统色，克制 hairline） */
+[data-theme="apple"] {
+  --bg: #f2f2f7;
+  --bg-soft: #e5e5ea;
+  --panel: #ffffff;
+  --panel-soft: #f7f7fa;
+  --text: #1d1d1f;
+  --text-soft: #6e6e73;
+  --text-faint: #8e8e93;
+  --accent: #007aff;
+  --accent-soft: rgba(0, 122, 255, 0.1);
+  --accent-strong: #0064d6;
+  --border: rgba(60, 60, 67, 0.12);
+  --border-strong: rgba(60, 60, 67, 0.22);
+  --danger: #ff3b30;
+  --ok: #34c759;
+  --glass: rgba(255, 255, 255, 0.82);
+  --radius-panel: 12px;
+  --radius-card: 10px;
+  --radius-ctl: 8px;
+  --tracking-ui: 0em;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.07), 0 8px 28px rgba(0, 0, 0, 0.06);
+}
+
+/* Claude 风（赤陶橙 + 暖米） */
+[data-theme="claude"] {
+  --bg: #faf9f5;
+  --bg-soft: #ede9de;
+  --panel: #ffffff;
+  --panel-soft: #f5f4ef;
+  --text: #3d3929;
+  --text-soft: #535146;
+  --text-faint: #9b988c;
+  --accent: #c96442;
+  --accent-soft: rgba(201, 100, 66, 0.1);
+  --accent-strong: #b0562f;
+  --border: rgba(61, 57, 41, 0.14);
+  --border-strong: rgba(61, 57, 41, 0.24);
+  --danger: #d64545;
+  --ok: #788c5d;
+  --glass: rgba(250, 249, 245, 0.88);
+  --radius-panel: 14px;
+  --radius-card: 12px;
+  --radius-ctl: 8px;
+  --shadow-1: 0 1px 3px rgba(60, 50, 40, 0.07), 0 2px 8px rgba(60, 50, 40, 0.05);
+  --shadow-2: 0 2px 6px rgba(60, 50, 40, 0.1), 0 8px 24px rgba(60, 50, 40, 0.08);
+}
+
+/* ── 主题组件形态（包内组件规格的桌面紧凑控件降档）────────── */
+
+/* Apple：胶囊按钮、圆润输入框、轻投影面板 */
+[data-theme="apple"] .btn {
+  border-radius: 999px;
+  font-weight: 500;
+}
+[data-theme="apple"] .btn:not(.btn-primary):not(.btn-danger):not(.btn-ghost) {
+  background: var(--bg-soft);
+  border-color: transparent;
+}
+[data-theme="apple"] .btn:not(.btn-primary):not(.btn-danger):not(.btn-ghost):hover {
+  background: color-mix(in srgb, var(--text) 8%, var(--bg-soft));
+  border-color: transparent;
+}
+[data-theme="apple"] .input {
+  border-radius: 10px;
+}
+[data-theme="apple"] .panel {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+[data-theme="apple"] .pl-toast {
+  border-radius: 12px;
+}
+
+/* Claude：暖灰填充次级按钮、大圆角控件、暖纸面板 */
+[data-theme="claude"] .btn {
+  border-radius: 10px;
+}
+[data-theme="claude"] .btn:not(.btn-primary):not(.btn-danger):not(.btn-ghost) {
+  background: var(--bg-soft);
+  border-color: transparent;
+}
+[data-theme="claude"] .btn:not(.btn-primary):not(.btn-danger):not(.btn-ghost):hover {
+  background: color-mix(in srgb, var(--text) 8%, var(--bg-soft));
+  border-color: transparent;
+}
+[data-theme="claude"] .input {
+  border-radius: 12px;
+}
+[data-theme="claude"] .panel:not(.pl-modal-card),
+[data-theme="claude"] .pl-sidebar,
+[data-theme="claude"] .pl-rightpanel {
+  background: var(--panel-soft);
+}
+[data-theme="claude"] .pl-nav-item:hover,
+[data-theme="claude"] .pl-side-collapse:hover {
+  background: var(--bg-soft);
+}
+
 /* 深色 */
 [data-theme="dark"] {
   --bg: #23252a;
@@ -87,7 +189,7 @@
     --border: rgba(232, 230, 225, 0.12);
     --border-strong: rgba(232, 230, 225, 0.22);
     --danger: #d9756a;
-    --ok: #8fb874;
+    --ok: #8fb87f;
     --glass: rgba(43, 46, 52, 0.85);
   }
 }
@@ -126,7 +228,7 @@ body {
   font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.55;
-  letter-spacing: 0.01em;
+  letter-spacing: var(--tracking-ui);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -157,7 +259,7 @@ h1, h2, h3, h4, button, input, textarea, select {
 }
 
 ::selection {
-  background: rgba(51, 101, 138, 0.25);
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
 /* ── 通用组件类 ──────────────────────────────────────────── */
@@ -178,7 +280,7 @@ h1, h2, h3, h4, button, input, textarea, select {
   align-items: center;
   gap: 6px;
   padding: 6px 14px;
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   border: 1px solid var(--border-strong);
   background: var(--panel);
   color: var(--text);
@@ -219,7 +321,7 @@ h1, h2, h3, h4, button, input, textarea, select {
 .input {
   width: 100%;
   padding: 7px 11px;
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   border: 1px solid var(--border-strong);
   background: var(--panel);
   color: var(--text);
@@ -328,7 +430,7 @@ h1, h2, h3, h4, button, input, textarea, select {
   fill: none;
 }
 .word-hl-svg .search-hit { fill: rgba(245, 197, 92, 0.5); }
-.word-hl-svg .search-hit-current { fill: rgba(51, 101, 138, 0.55); }
+.word-hl-svg .search-hit-current { fill: color-mix(in srgb, var(--accent) 55%, transparent); }
 
 /* ── 设置页三档预览专用（独立类，不随词带层方案变动）──────── */
 .hl-preview-0 { border-radius: 2px; }
@@ -356,6 +458,12 @@ h1, h2, h3, h4, button, input, textarea, select {
 [data-theme="dark"] .anno-pink,
 [data-theme="dark"] .anno-purple {
   filter: saturate(0.75) brightness(0.85);
+}
+
+/* 划词选区蓝块（SelectionOverlay SVG rect，独立类——.anno-rect-svg 后代选择器
+   会以更高特异性压过 .anno-* 五色 fill） */
+.sel-rect {
+  fill: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 /* ── PDF 文本层（pdf.js v6 官方契约，web/pdf_viewer.css 6.2.108）───────── */
@@ -447,6 +555,22 @@ h1, h2, h3, h4, button, input, textarea, select {
   }
 }
 
+/* 主题切换过渡：applyTheme 检测到主题值变化时挂 theme-anim 类，350ms 后摘除；
+   加类路径与 no-motion 互斥（JS 判定），共存窗口由源序保证 no-motion 优先 */
+.theme-anim,
+.theme-anim *,
+.theme-anim *::before,
+.theme-anim *::after {
+  transition:
+    background-color var(--dur-4) var(--ease),
+    color var(--dur-4) var(--ease),
+    border-color var(--dur-4) var(--ease),
+    fill var(--dur-4) var(--ease),
+    stroke var(--dur-4) var(--ease),
+    box-shadow var(--dur-4) var(--ease),
+    border-radius var(--dur-4) var(--ease) !important;
+}
+
 /* 动效关闭（设置项） */
 .no-motion *,
 .no-motion *::before,
@@ -465,6 +589,11 @@ h1, h2, h3, h4, button, input, textarea, select {
 .btn-danger:hover {
   filter: brightness(1.08);
   border-color: var(--danger);
+}
+
+/* 危险操作悬停底色（卡片菜单/弹窗/工具条的删除项共用） */
+.danger-hover:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 .spinner {
@@ -586,7 +715,7 @@ h1, h2, h3, h4, button, input, textarea, select {
   color: var(--accent);
 }
 .menu-pop > button.danger:hover {
-  background: rgba(181, 72, 60, 0.1);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
 }
 
@@ -801,7 +930,7 @@ svg.flash-anim {
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 7px;
+  border-radius: var(--radius-ctl);
   border: none;
   background: transparent;
   color: var(--text-soft);
@@ -1159,7 +1288,7 @@ a:focus-visible {
   overflow: visible;
 }
 .link-hover-svg rect {
-  fill: rgba(51, 101, 138, 0.08);
+  fill: color-mix(in srgb, var(--accent) 8%, transparent);
   stroke: var(--accent);
   stroke-width: 1;
 }

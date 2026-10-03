@@ -5,7 +5,7 @@ import StrokeText from '../../components/shared/StrokeText'
 import { APP_ICONS, resolveAppIcon } from '../appIcon/variants'
 import { type SavedAccount, loadAccounts, removeAccount } from './accounts'
 
-/** 主题色 → Threads RGB + StrokeText hex，对齐 App.tsx useThemeColors 逻辑 */
+/** 主题色 → Threads RGB + StrokeText hex，对齐 App.tsx readThemeColors 逻辑 */
 function useAuthTheme() {
   return useMemo(() => {
     const cs = getComputedStyle(document.documentElement)
@@ -145,7 +145,14 @@ export default function AuthPage() {
             </label>
           )}
 
-          {err && <div className="mb-3 rounded-md bg-[rgba(181,72,60,.08)] px-3 py-2 text-xs text-danger">{err}</div>}
+          {err && (
+            <div
+              className="mb-3 rounded-md px-3 py-2 text-xs text-danger"
+              style={{ background: 'color-mix(in srgb, var(--danger) 8%, transparent)' }}
+            >
+              {err}
+            </div>
+          )}
 
           <button className="btn btn-primary w-full justify-center py-2" disabled={busy}>
             {busy ? '请稍候…' : mode === 'login' ? '登 录' : '创建账号'}

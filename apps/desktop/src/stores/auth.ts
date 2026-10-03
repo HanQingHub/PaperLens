@@ -4,8 +4,15 @@ import { api, ApiError, setToken, waitForBackend } from '../api/client'
 import type { AppSettings, User } from '../api/types'
 import { upsertAccount, removeAccount } from '../features/auth/accounts'
 
+/** 主题消毒（coerceSettings 与 pl_theme 本地镜像共用一份白名单） */
+function coerceTheme(v: unknown): AppSettings['theme'] {
+  return typeof v === 'string' && ['warm', 'light', 'dark', 'system', 'apple', 'claude'].includes(v)
+    ? (v as AppSettings['theme'])
+    : 'warm'
+}
+
 const DEFAULT_SETTINGS: AppSettings = {
-  theme: 'warm',
+  theme: coerceTheme(localStorage.getItem('pl_theme')),
   font_scale: 1,
   highlight_enabled: true,
   highlight_style: 2,
@@ -33,7 +40,7 @@ export function coerceSettings(raw: Partial<AppSettings> | null | undefined): Ap
   s.highlight_enabled = truthy(s.highlight_enabled)
   s.highlight_only_current_paper = truthy(s.highlight_only_current_paper)
   s.animations = truthy(s.animations)
-  if (!s.theme || !['warm', 'light', 'dark', 'system'].includes(s.theme)) s.theme = 'warm'
+  s.theme = coerceTheme(s.theme)
   if (s.app_icon !== 'orbit' && s.app_icon !== 'diamond') s.app_icon = 'orbit'
   return s
 }
@@ -119,7 +126,13 @@ export const useAuth = create<AuthState>((set, get) => ({
     const current = get().user?.username
     await api.logout().catch(() => {})
     setToken(null)
-    set({ token: null, user: null, settings: DEFAULT_SETTINGS })
+    // 主题回到本地镜像（最近应用的主题）而非模块加载快照：会话内换过主题后登出，
+    // 登录页与重启后保持一致观感
+    set({
+      token: null,
+      user: null,
+      settings: coerceSettings({ theme: coerceTheme(localStorage.getItem('pl_theme')) }),
+    })
     if (current) removeAccount(current) // logout 已服务端销毁 session，摘除死 token
   },
 
@@ -137,7 +150,20 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 }))
 
-// 主题应用到 <html data-theme>
+let themeAnimTimer: number | undefined
+
+// 主题应用到 <html data-theme>，并写 pl_theme 本地镜像（登录页/启动画布在
+// 服务端设置到达前按镜像呈现；登出后读镜像回填 settings）。
+// 主题值变化且动效开启时挂 300ms 全局过渡类（首次应用/同值不挂）。
 export function applyTheme(theme: AppSettings['theme']) {
-  document.documentElement.dataset.theme = theme
+  const root = document.documentElement
+  if (root.dataset.theme === theme) return
+  if (root.dataset.theme && !root.classList.contains('no-motion')) {
+    root.classList.add('theme-anim')
+    void root.offsetWidth // 防御性强制样式计算，规避引擎批处理差异（规范上 after-change style 已足以启动过渡）
+    clearTimeout(themeAnimTimer)
+    themeAnimTimer = window.setTimeout(() => root.classList.remove('theme-anim'), 350)
+  }
+  root.dataset.theme = theme
+  localStorage.setItem('pl_theme', theme)
 }
