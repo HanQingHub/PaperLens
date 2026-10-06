@@ -1,12 +1,16 @@
 //! Stale updater package cleanup: removes `%TEMP%\PaperLens-<version>-updater-<rand>`
-//! directories left behind by tauri-plugin-updater after install.
+//! directories left behind by tauri-plugin-updater after install, plus stale
+//! `%TEMP%\PaperLens-choose.*` anchor files from the open-with chooser
+//! (`assoc::show_open_with`).
 //!
 //! Safety guards (all must hold before deleting):
-//! - directory name matches `PaperLens-*-updater-*`
-//! - the directory contains an `*-installer.exe` file (update package signature;
-//!   download-interrupted directories never match and are left alone by design)
-//! - directory mtime is at least 24h old (download/install runs take minutes,
-//!   so a fresh mtime means the updater may still be using it)
+//! - directory name matches `PaperLens-*-updater-*` and contains an
+//!   `*-installer.exe` file (update package signature; download-interrupted
+//!   directories never match and are left alone by design)
+//! - file name matches `PaperLens-choose.*` (open-with anchor;判定在目录名
+//!   规则之前——否则被目录 continue 短路永不触发)
+//! - mtime is at least 24h old (download/install runs take minutes, so a
+//!   fresh mtime means the updater or chooser may still be using it)
 //!
 //! Failures are logged and skipped; cleanup never blocks or fails app startup.
 
@@ -16,8 +20,8 @@ use std::time::SystemTime;
 /// Minimum age (in seconds) before a leftover updater directory may be deleted.
 const STALE_AFTER_SECS: u64 = 24 * 3600;
 
-/// Remove stale updater temp directories under the system temp dir.
-/// Returns the number of directories removed.
+/// Remove stale updater temp directories and anchor files under the system
+/// temp dir. Returns the number of items removed.
 pub fn cleanup_stale_update_installers(now: SystemTime) -> usize {
     cleanup_stale_update_installers_in(&std::env::temp_dir(), now)
 }
@@ -37,6 +41,16 @@ fn cleanup_stale_update_installers_in(root: &Path, now: SystemTime) -> usize {
         let path = entry.path();
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
+        // openas 锚文件（assoc::show_open_with 创建）：必须在目录名规则之前判定
+        if is_anchor_file_name(name) {
+            if path.is_file() && is_stale(&path, now) {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => removed += 1,
+                    Err(e) => println!("[warn] update cleanup: failed to remove '{}': {e}", path.display()),
+                }
+            }
+            continue;
+        }
         if !is_updater_dir_name(name) {
             continue;
         }
@@ -46,17 +60,8 @@ fn cleanup_stale_update_installers_in(root: &Path, now: SystemTime) -> usize {
         if !contains_installer_exe(&path) {
             continue;
         }
-        match entry.metadata().and_then(|m| m.modified()) {
-            Ok(mtime) => {
-                let age = now.duration_since(mtime).map(|d| d.as_secs()).unwrap_or(0);
-                if age < STALE_AFTER_SECS {
-                    continue;
-                }
-            }
-            Err(e) => {
-                println!("[warn] update cleanup: cannot stat '{}': {e}", path.display());
-                continue;
-            }
+        if !is_stale(&path, now) {
+            continue;
         }
         match std::fs::remove_dir_all(&path) {
             Ok(()) => removed += 1,
@@ -65,7 +70,7 @@ fn cleanup_stale_update_installers_in(root: &Path, now: SystemTime) -> usize {
     }
 
     if removed > 0 {
-        println!("[PaperLens] removed {removed} stale updater temp dir(s)");
+        println!("[PaperLens] removed {removed} stale temp leftover(s)");
     }
     removed
 }
@@ -74,6 +79,23 @@ fn cleanup_stale_update_installers_in(root: &Path, now: SystemTime) -> usize {
 /// configured product name verbatim).
 fn is_updater_dir_name(name: &str) -> bool {
     name.starts_with("PaperLens-") && name.contains("-updater-")
+}
+
+/// openas 锚文件名（由 assoc::show_open_with 以固定大小写创建，判定区分大小写）。
+fn is_anchor_file_name(name: &str) -> bool {
+    name.starts_with("PaperLens-choose.")
+}
+
+/// mtime 是否至少 STALE_AFTER_SECS 旧（stat 失败按不陈旧处理并告警；
+/// fs::metadata 对符号链接跟随语义仅在 Unix 与 DirEntry::metadata 有差，Windows 无感）。
+fn is_stale(path: &Path, now: SystemTime) -> bool {
+    match std::fs::metadata(path).and_then(|m| m.modified()) {
+        Ok(mtime) => now.duration_since(mtime).map(|d| d.as_secs()).unwrap_or(0) >= STALE_AFTER_SECS,
+        Err(e) => {
+            println!("[warn] update cleanup: cannot stat '{}': {e}", path.display());
+            false
+        }
+    }
 }
 
 /// The update package signature file: `*-installer.exe` directly inside the dir.
@@ -194,5 +216,26 @@ mod tests {
 
         assert_eq!(cleanup_stale_update_installers_in(&s.0, now), 1);
         assert!(!d.exists());
+    }
+
+    #[test]
+    fn removes_stale_anchor_file_keeps_fresh() {
+        let s = Scratch::new();
+        let stale = s.0.join("PaperLens-choose.md");
+        touch(&stale);
+        set_mtime(&stale, SystemTime::now() - Duration::from_secs(48 * 3600));
+        // 新鲜锚文件可能仍被对话框引用 → 保留
+        let fresh = s.0.join("PaperLens-choose.pdf");
+        touch(&fresh);
+        // 名字不匹配锚前缀（含不同大小写形态，NTFS 上与同名文件不可共存故用别的名字）
+        let unrelated = s.0.join("paperlens-notes.md");
+        touch(&unrelated);
+        set_mtime(&unrelated, SystemTime::now() - Duration::from_secs(48 * 3600));
+
+        let now = SystemTime::now();
+        assert_eq!(cleanup_stale_update_installers_in(&s.0, now), 1);
+        assert!(!stale.exists());
+        assert!(fresh.exists());
+        assert!(unrelated.exists());
     }
 }

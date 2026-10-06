@@ -31,6 +31,7 @@ def paper_dict(p: Paper, annotation_count: int | None = None) -> dict:
         "file_hash": p.file_hash, "file_type": getattr(p, "file_type", "pdf") or "pdf",
         "orig_filename": getattr(p, "orig_filename", None),
         "source_path": getattr(p, "source_path", None),
+        "ephemeral": bool(getattr(p, "ephemeral", 0)),
         "page_count": p.page_count, "open_count": p.open_count,
         "is_scanned": bool(p.is_scanned), "ocr_status": p.ocr_status,
         "tags": json.loads(p.tags) if p.tags else [],
@@ -307,6 +308,8 @@ async def upload(
 
 class OpenExternalIn(BaseModel):
     path: str
+    # false = 临时阅读：Paper 以 ephemeral=1 落库（不进文库/统计，页签关闭/启动清扫即删）
+    save: bool = True
 
 
 @router.post("/open-external")
@@ -315,13 +318,16 @@ async def open_external(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """文件关联打开：服务端直读本地路径 → hash 去重复用 → 落库（含 source_path）。
+    """文件关联打开：服务端直读本地路径 → hash 三层去重 → 落库（含 source_path）。
 
-    与 upload 的差异：以 (user, file_hash) 查既有 Paper，命中则复用（不重复入库），
-    并把 source_path 刷新为最近一次打开的来源路径。"""
+    PDF/Markdown 双类型。三层去重：正式件（ephemeral=0）命中即复用；临时件
+    （ephemeral=1）命中时 save=true 升格为正式（批注/进度随之保留）、save=false
+    复用；均无则新建（save=false 建临时件）。source_path 刷新为最近一次打开
+    的来源路径。"""
     p = body.path.strip().strip('"')
-    if not p.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="仅支持 PDF 文件")
+    lower = p.lower()
+    if not lower.endswith((".pdf", ".md", ".markdown")):
+        raise HTTPException(status_code=400, detail="仅支持 PDF 或 Markdown 文件")
     src = Path(p)
     if not src.is_file():
         raise HTTPException(status_code=404, detail="文件不存在或无法访问")
@@ -329,19 +335,74 @@ async def open_external(
 
     data = await asyncio.to_thread(src.read_bytes)
     digest = hashlib.sha256(data).hexdigest()
-    existing = (
+    if lower.endswith(".pdf"):
+        saved = _find_assoc_paper(db, user.id, digest, "pdf", ephemeral=0)
+        if saved is not None:
+            _refresh_source_path(saved, p, db)
+            return {"paper": paper_dict(saved), "created": False}
+        temp = _find_assoc_paper(db, user.id, digest, "pdf", ephemeral=1)
+        if temp is not None:
+            if body.save:
+                temp.ephemeral = 0  # 升格：临时件转正式，已产生的批注/进度随之保留
+                if temp.source_path != p:
+                    temp.source_path = p
+                db.commit()
+                return {"paper": paper_dict(temp), "created": True}
+            _refresh_source_path(temp, p, db)
+            return {"paper": paper_dict(temp), "created": False}
+        paper = await _import_pdf_bytes(
+            data, user, db, filename=src.name, source_path=p,
+            ephemeral=0 if body.save else 1,
+        )
+        return {"paper": paper_dict(paper), "created": True}
+    # Markdown：与 upload 的 md 预检同口径（大小/编码），防非 UTF-8 文件 500
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Markdown 文件需 ≤5MB")
+    try:
+        data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="Markdown 需为 UTF-8 编码")
+    saved = _find_assoc_paper(db, user.id, digest, "markdown", ephemeral=0)
+    if saved is not None:
+        _refresh_source_path(saved, p, db)
+        return {"paper": paper_dict(saved), "created": False}
+    temp = _find_assoc_paper(db, user.id, digest, "markdown", ephemeral=1)
+    if temp is not None:
+        if body.save:
+            temp.ephemeral = 0  # 升格：临时件转正式，已产生的批注/进度随之保留
+            if temp.source_path != p:
+                temp.source_path = p
+            db.commit()
+            return {"paper": paper_dict(temp), "created": True}
+        _refresh_source_path(temp, p, db)
+        return {"paper": paper_dict(temp), "created": False}
+    paper = await _import_markdown_bytes(
+        data, user, db, filename=src.name, source_path=p,
+        ephemeral=0 if body.save else 1,
+    )
+    return {"paper": paper_dict(paper), "created": True}
+
+
+def _find_assoc_paper(
+    db: Session, user_id: int, digest: str, file_type: str, *, ephemeral: int
+) -> Paper | None:
+    return (
         db.query(Paper)
-        .filter(Paper.user_id == user.id, Paper.file_hash == digest, Paper.file_type == "pdf")
+        .filter(
+            Paper.user_id == user_id,
+            Paper.file_hash == digest,
+            Paper.file_type == file_type,
+            Paper.ephemeral == ephemeral,
+        )
         .order_by(Paper.id.asc())
         .first()
     )
-    if existing is not None:
-        if existing.source_path != p:
-            existing.source_path = p
-            db.commit()
-        return {"paper": paper_dict(existing), "created": False}
-    paper = await _import_pdf_bytes(data, user, db, filename=src.name, source_path=p)
-    return {"paper": paper_dict(paper), "created": True}
+
+
+def _refresh_source_path(paper: Paper, p: str, db: Session) -> None:
+    if paper.source_path != p:
+        paper.source_path = p
+        db.commit()
 
 
 def _paper_file_path(file_hash: str, file_type: str) -> Path:
@@ -365,6 +426,8 @@ async def _import_markdown_bytes(
     *,
     project_id: int | None = None,
     filename: str | None = None,
+    source_path: str | None = None,
+    ephemeral: int = 0,
 ) -> Paper:
     settings = get_settings()
     settings.ensure_dirs()
@@ -384,7 +447,8 @@ async def _import_markdown_bytes(
     text = data.decode("utf-8-sig")
     line_count = max(1, text.count("\n") + 1)
     return await _create_paper_record(
-        db, user, project_id, digest, dest, text, filename, line_count, file_type="markdown",
+        db, user, project_id, digest, dest, text, filename, line_count,
+        file_type="markdown", source_path=source_path, ephemeral=ephemeral,
     )
 
 
@@ -398,6 +462,8 @@ async def _create_paper_record(
     filename: str | None,
     page_count: int,
     file_type: str,
+    source_path: str | None = None,
+    ephemeral: int = 0,
 ) -> Paper:
     with write_lock:
         ref = db.get(FileRef, digest)
@@ -416,6 +482,7 @@ async def _create_paper_record(
             orig_filename=filename, page_count=page_count,
             year=None, doi=None, arxiv_id=None,
             is_scanned=0, ocr_status="none",
+            source_path=source_path, ephemeral=ephemeral,
             tags="[]", created_at=now_iso(),
             sort_order=0 if max_order is None else max_order + 1,
         )
@@ -434,6 +501,7 @@ async def _import_pdf_bytes(
     is_scanned: bool = False,
     filename: str | None = None,
     source_path: str | None = None,
+    ephemeral: int = 0,
 ) -> Paper:
     """上传管道共用入口（upload 与 arXiv 导入）：写盘+hash 去重 → 元数据提取 →
     FileRef/Paper 落库 → OCR/tfidf 分派。阻塞段（解析/提取）卸载到线程。"""
@@ -471,7 +539,7 @@ async def _import_pdf_bytes(
             user_id=user.id, project_id=project_id,
             title=meta.title or title_fallback,
             authors=meta.authors, file_hash=digest, file_type="pdf", orig_filename=filename,
-            source_path=source_path,
+            source_path=source_path, ephemeral=ephemeral,
             page_count=meta.page_count,
             year=meta.year, doi=meta.doi, arxiv_id=meta.arxiv_id,
             is_scanned=int(is_scanned),
@@ -503,7 +571,7 @@ def list_papers(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Paper).filter(Paper.user_id == user.id)
+    query = db.query(Paper).filter(Paper.user_id == user.id, Paper.ephemeral == 0)  # 临时件不进文库
     if project_id is not None:
         query = query.filter(Paper.project_id == project_id)
     if tag:
@@ -760,30 +828,47 @@ def _skip_ocr(db: Session, paper: Paper) -> None:
 
 @router.delete("/{paper_id}", status_code=204)
 def delete_paper(paper: Paper = Depends(get_owned_paper), db: Session = Depends(get_db)):
+    with write_lock:
+        _delete_paper_cascaded(db, paper)
+    return None
+
+
+def _delete_paper_cascaded(db: Session, paper: Paper) -> None:
+    """级联删除单篇论文的全部业务数据 + FileRef/文件（write_lock 由调用方持有）。
+
+    words 生词本体保留（用户域数据）；ocr/tfidf 在途任务与 file token 一并取消。"""
     from app.main import app
 
-    with write_lock:
-        app.state.ocr_manager.cancel(paper.id)
-        tfidf_service.cancel(paper.id)
-        file_tokens.revoke_paper(paper.id)
-        # 级联删除业务数据（words 生词本体保留）
-        for model in (Annotation, WordOccurrence, GlossaryTerm, TranslationCache,
-                      ReadingProgress, ReadingSession, Excerpt, OcrDoc):
-            db.query(model).filter(model.paper_id == paper.id).delete()
-        ref = db.get(FileRef, paper.file_hash)
-        if ref is not None:
-            ref.ref_count -= 1
-            if ref.ref_count <= 0:
-                db.delete(ref)
-                ext = "md" if getattr(paper, "file_type", "pdf") == "markdown" else "pdf"
-                f = get_settings().files_dir / f"{paper.file_hash}.{ext}"
-                f.unlink(missing_ok=True)
-                # 兼容旧孤儿：若另一后缀存在亦清理
-                other = "pdf" if ext == "md" else "md"
-                (get_settings().files_dir / f"{paper.file_hash}.{other}").unlink(missing_ok=True)
-        db.delete(paper)
-        db.commit()
-    return None
+    app.state.ocr_manager.cancel(paper.id)
+    tfidf_service.cancel(paper.id)
+    file_tokens.revoke_paper(paper.id)
+    # 级联删除业务数据（words 生词本体保留）
+    for model in (Annotation, WordOccurrence, GlossaryTerm, TranslationCache,
+                  ReadingProgress, ReadingSession, Excerpt, OcrDoc):
+        db.query(model).filter(model.paper_id == paper.id).delete()
+    ref = db.get(FileRef, paper.file_hash)
+    if ref is not None:
+        ref.ref_count -= 1
+        if ref.ref_count <= 0:
+            db.delete(ref)
+            ext = "md" if getattr(paper, "file_type", "pdf") == "markdown" else "pdf"
+            f = get_settings().files_dir / f"{paper.file_hash}.{ext}"
+            f.unlink(missing_ok=True)
+            # 兼容旧孤儿：若另一后缀存在亦清理
+            other = "pdf" if ext == "md" else "md"
+            (get_settings().files_dir / f"{paper.file_hash}.{other}").unlink(missing_ok=True)
+    db.delete(paper)
+    db.commit()
+
+
+def sweep_ephemeral_papers(db: Session) -> int:
+    """启动清扫：临时件（关联打开未入库）生命周期=阅读会话，崩溃/强杀残留
+    在此全删。write_lock 由调用方持有；须在 ocr_manager 构造并 recover 之后
+    调用（cancel 依赖），见 main.py startup。"""
+    papers = db.query(Paper).filter(Paper.ephemeral == 1).all()
+    for paper in papers:
+        _delete_paper_cascaded(db, paper)
+    return len(papers)
 
 
 # ---- 文件访问（唯一免 Bearer 端点：一次性 token 查询参数）----

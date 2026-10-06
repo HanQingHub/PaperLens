@@ -102,11 +102,12 @@ export const api = {
     fd.append('is_scanned', String(isScanned))
     return request<{ paper: Paper }>('/papers/upload', { method: 'POST', body: fd })
   },
-  // 文件关联打开：服务端直读本地路径，hash 去重复用既有 Paper（created=false）
-  openExternalPdf: (path: string) =>
+  // 文件关联打开：服务端直读本地路径，hash 三层去重（正式件复用 created=false /
+  // 临时件升格 created=true）；save=false 建临时件（不进文库，页签关闭即删）
+  openExternalPdf: (path: string, save = true) =>
     request<{ paper: Paper; created: boolean }>('/papers/open-external', {
       method: 'POST',
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, save }),
     }),
   updatePaper: (id: number, patch: Partial<Paper>) =>
     request<Paper>(`/papers/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),

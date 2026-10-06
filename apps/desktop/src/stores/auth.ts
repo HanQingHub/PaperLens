@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   llm_unload_policy: 10,
   animations: true,
   app_icon: 'orbit',
+  assoc_open_save: true,
 }
 
 /** 布尔兼容：历史脏数据可能是 "True"/"1" 等 */
@@ -40,6 +41,7 @@ export function coerceSettings(raw: Partial<AppSettings> | null | undefined): Ap
   s.highlight_enabled = truthy(s.highlight_enabled)
   s.highlight_only_current_paper = truthy(s.highlight_only_current_paper)
   s.animations = truthy(s.animations)
+  s.assoc_open_save = truthy(s.assoc_open_save)
   s.theme = coerceTheme(s.theme)
   if (s.app_icon !== 'orbit' && s.app_icon !== 'diamond') s.app_icon = 'orbit'
   return s

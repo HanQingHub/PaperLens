@@ -120,6 +120,7 @@ def _infer_revision_from_schema(con, tables: set[str]):
     """按标记列/表从新到旧反推库结构对应的 revision；推断不出返回 None。
 
     标记与迁移的对应关系（新 → 旧）：
+      papers.ephemeral              → c9e4f7a2b5d8（加 ephemeral）
       papers.source_path            → a7f3d9c1e2b4（加 source_path）
       papers.file_type              → e8a1f2c3b4d5（加 file_type/orig_filename）
       word_groups 表                → d4e5f6a7b8c9d0（建 word_groups）
@@ -136,6 +137,8 @@ def _infer_revision_from_schema(con, tables: set[str]):
         return {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
 
     papers_cols = columns("papers")
+    if "ephemeral" in papers_cols:
+        return "c9e4f7a2b5d8"
     if "source_path" in papers_cols:
         return "a7f3d9c1e2b4"
     if "file_type" in papers_cols:
@@ -333,6 +336,22 @@ async def lifespan(app: FastAPI):
 
     app.state.ocr_manager = OCRManager(settings, db_mod.SessionLocal)
     app.state.ocr_manager.recover()
+
+    # 临时件（关联打开未入库）生命周期=阅读会话：崩溃/强杀残留在此清扫。
+    # 必须在 ocr_manager 构造且 recover 之后（_delete_paper_cascaded 的
+    # cancel 依赖），start_poll 之前（被删件已恢复的 OCR 任务不可能被消费）。
+    from app.api.papers import sweep_ephemeral_papers
+    from app.core.db import write_lock
+
+    with write_lock:
+        db = db_mod.SessionLocal()
+        try:
+            swept = sweep_ephemeral_papers(db)
+        finally:
+            db.close()
+    if swept:
+        print(f"[PaperLens] swept {swept} ephemeral paper(s)")
+
     app.state.ocr_manager.start_poll()
 
     llm_service.start_idle_watch()

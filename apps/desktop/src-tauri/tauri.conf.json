@@ -36,7 +36,8 @@
       "ocr-dist/paperlens-ocr": "resources/paperlens-ocr",
       "resources/icons/orbit.ico": "resources/icons/orbit.ico",
       "resources/icons/diamond.ico": "resources/icons/diamond.ico",
-      "resources/icons/pdf-file.ico": "resources/icons/pdf-file.ico"
+      "resources/icons/pdf-file.ico": "resources/icons/pdf-file.ico",
+      "resources/icons/md-file.ico": "resources/icons/md-file.ico"
     },
     "icon": [
       "icons/32x32.png",

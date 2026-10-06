@@ -7,7 +7,7 @@ import { useAuth, applyTheme } from './stores/auth'
 import { useUi } from './stores/ui'
 import { useReaderTabs } from './stores/readerTabs'
 import { useCompareStore } from './stores/compareStore'
-import { useExternalOpen } from './stores/externalOpen'
+import { useExternalOpen, markEphemeral, forgetEphemeral } from './stores/externalOpen'
 import { api, setUnauthorizedHandler } from './api/client'
 import { toast } from './features/shared/Toast'
 import AppShell from './components/layout/AppShell'
@@ -47,8 +47,9 @@ function BrandIcon() {
   return <img src={APP_ICONS[icon]} alt="" className="h-16 w-16 rounded-2xl shadow-sm object-contain" />
 }
 
-/** 文件关联打开桥接：冷启动拉取 + 唤醒信号重拉 + 登录后串行消费（入库→跳阅读器）。
- *  挂载在登录态内外两个分支（与 UpdaterBoot 同层），未登录时路径滞留队列、登录后自动消化。 */
+/** 文件关联打开桥接：冷启动拉取 + 唤醒信号重拉 + 登录后串行消费（按设置入库或临时
+ *  打开→跳阅读器）。挂载在登录态内外两个分支（与 UpdaterBoot 同层），未登录时路径
+ *  滞留队列、登录后自动消化。 */
 function ExternalOpenBridge() {
   const navigate = useNavigate()
   const user = useAuth((s) => s.user)
@@ -85,8 +86,14 @@ function ExternalOpenBridge() {
     const path = useExternalOpen.getState().shift()
     if (!path) return
     useExternalOpen.getState().setProcessing(true)
-    api.openExternalPdf(path)
-      .then(({ paper }) => navigate(`/reader/${paper.id}`))
+    const save = useAuth.getState().settings.assoc_open_save
+    api.openExternalPdf(path, save)
+      .then(({ paper }) => {
+        // ephemeral 双向维护：false 覆盖"临时件升格"路径，防关页签误删正式件
+        if (paper.ephemeral) markEphemeral(paper.id)
+        else forgetEphemeral(paper.id)
+        navigate(`/reader/${paper.id}`)
+      })
       .catch(() => toast('文件不存在或无法读取', 'error'))
       .finally(() => useExternalOpen.getState().setProcessing(false))
   }, [user, queue, processing, navigate])

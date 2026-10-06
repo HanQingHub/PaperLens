@@ -1,6 +1,8 @@
 // 全局页签状态：文库 / 生词复习 / 设置 / 论文阅读器四类页签 + 每账号持久化 +
 // 解析态 PDF 文档 LRU 缓存。活动态由当前路由派生（TabBar/AppShell 比对 location），
 // store 不持有活动指针；固定类页签全应用单实例，论文页签按 paperId 去重。
+// 本模块引入 api/client（临时件关签删除）——禁止被 node 环境单测间接引入
+// （client 模块级读 localStorage），见 externalOpen.ts 头部同款约束。
 //
 // 所有权不变式（PDF 文档）：一个 PDFDocumentProxy 任意时刻至多被一处持有
 //（显示中 / 缓存）——takeDoc 命中即移除；卸载时按"页签仍开 → stash /
@@ -8,7 +10,9 @@
 import { create } from 'zustand'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import type { Paper } from '../api/types'
+import { api } from '../api/client'
 import { useCompareStore } from './compareStore'
+import { isEphemeral, forgetEphemeral } from './externalOpen'
 import {
   MAX_TABS,
   decideReaderOpen,
@@ -38,6 +42,24 @@ export function takeDoc(pid: number): PDFDocumentProxy | null {
   const doc = docCache.get(pid) ?? null
   if (doc) docCache.delete(pid)
   return doc
+}
+
+// md 论文无解析态缓存可判定"重新加载"，打开计数以会话级页签集合判定：
+// 首进页签算一次打开（reading-progress open=true），切签/离开路由保留
+// （不算重新打开），关页签移除（关后再开 = 重新打开）。与 PDF 的 takeDoc
+// 缓存 miss 口径对齐；差异是 md 无 LRU 淘汰重计（缓存换出后 PDF 会重计）。
+const mdOpenedPids = new Set<number>()
+
+/** 首见返回 true 并记录；同会话内重复进入返回 false */
+export function takeMdFirstOpen(pid: number): boolean {
+  if (mdOpenedPids.has(pid)) return false
+  mdOpenedPids.add(pid)
+  return true
+}
+
+/** 页签关闭时移除记录，使关后再开重新计一次打开 */
+export function forgetMdOpened(pid: number): void {
+  mdOpenedPids.delete(pid)
 }
 
 /** 存回缓存：同 pid 先丢弃旧条目；超容淘汰最旧并销毁 */
@@ -171,7 +193,14 @@ export const useReaderTabs = create<AppTabsState>((set, get) => ({
     if (closed.kind === 'reader' && closed.paperId != null) {
       // 显示中文档按所有权不变式不在缓存中，其销毁由 ReaderPage 卸载清理负责
       dropDoc(closed.paperId)
+      forgetMdOpened(closed.paperId)
       tabViews.delete(closed.paperId)
+      // 临时阅读件（关联打开未入库）：页签关闭即删（fire-and-forget，失败由
+      // 启动清扫兜底）；先清本地标记再异步删，防重复删
+      if (isEphemeral(closed.paperId)) {
+        forgetEphemeral(closed.paperId)
+        void api.deletePaper(closed.paperId).catch(() => {})
+      }
     }
     let next = tabs.filter((t) => t.id !== id)
     if (next.length === 0) next = [{ id: 'library', kind: 'library', title: '文库' }]

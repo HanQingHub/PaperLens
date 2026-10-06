@@ -33,6 +33,8 @@ export interface Paper {
   file_type: 'pdf' | 'markdown'
   orig_filename?: string | null
   source_path?: string | null
+  /** 关联打开未入库的临时件：不进文库/统计，页签关闭即删 */
+  ephemeral?: boolean
   page_count: number
   open_count: number
   is_scanned: boolean
@@ -203,6 +205,8 @@ export interface AppSettings {
   llm_unload_policy: number // 分钟；0=用完即卸 -1=常驻
   animations: boolean
   app_icon: AppIconVariant
+  /** 关联双击打开的文件是否保存入库（false=临时阅读） */
+  assoc_open_save: boolean
 }
 
 // ── LLM 模型下载 SSE 事件（llm.py /download：progress|done|error）──

@@ -10,7 +10,7 @@ import { parseAnnotation, useReader } from '../../stores/readerStore'
 import { useReaderBus } from '../../stores/readerBus'
 import { useWords } from '../../stores/words'
 import { useUi } from '../../stores/ui'
-import { useReaderTabs, takeDoc, stashDoc, getView, hasReaderTab } from '../../stores/readerTabs'
+import { useReaderTabs, takeDoc, stashDoc, getView, hasReaderTab, takeMdFirstOpen } from '../../stores/readerTabs'
 import { guardMdNav } from './mdDirty'
 import { useCompareStore } from '../../stores/compareStore'
 import { useRefLink } from '../../stores/refLinkStore'
@@ -291,6 +291,8 @@ export default function ReaderPage() {
         const prog = await api.readingProgress(pid).catch(() => null)
         if (cancelled || loadGenRef.current !== gen || abort.signal.aborted) return
         restoreRef.current = { page: Math.max(1, prog?.page_no ?? 1), ratio: prog?.scroll_y ?? 0 }
+        // md 无解析态缓存，打开计数以会话级页签集合判定（对齐 PDF「切回标签不算重新打开」）
+        if (takeMdFirstOpen(pid)) await saveProgress(pid, 1, restoreRef.current.ratio, true).catch(() => {})
         return
       }
       // 标签缓存命中：take 语义（命中即出缓存），跳过 fileToken + bytes 拉取 + getDocument。

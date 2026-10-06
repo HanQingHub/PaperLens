@@ -21,8 +21,9 @@ def test_migrations_apply_all_and_create_indexes(tmp_path, monkeypatch):
         assert {"ix_papers_user_id", "ix_projects_user_id", "ix_review_logs_word_id"}.issubset(indexes)
         paper_cols = {r[1] for r in con.execute("PRAGMA table_info(papers)").fetchall()}
         assert "source_path" in paper_cols  # a7f3d9c1e2b4 首次引入
+        assert "ephemeral" in paper_cols  # c9e4f7a2b5d8 首次引入
         version = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert version == "a7f3d9c1e2b4"
+        assert version == "c9e4f7a2b5d8"
     finally:
         con.close()
 
@@ -45,7 +46,7 @@ def test_migrations_idempotent(tmp_path, monkeypatch):
     con = sqlite3.connect(str(data / "paperlens.db"))
     try:
         version = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert version == "a7f3d9c1e2b4"
+        assert version == "c9e4f7a2b5d8"
     finally:
         con.close()
 
@@ -166,7 +167,7 @@ def test_dirty_db_create_all_repairs(tmp_path, monkeypatch):
     con = sqlite3.connect(str(data / "paperlens.db"))
     try:
         version = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert version == "a7f3d9c1e2b4"
+        assert version == "c9e4f7a2b5d8"
     finally:
         con.close()
 
@@ -196,7 +197,7 @@ def test_dirty_db_stale_stamp_repairs(tmp_path, monkeypatch):
     con = sqlite3.connect(str(data / "paperlens.db"))
     try:
         version = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert version == "a7f3d9c1e2b4"
+        assert version == "c9e4f7a2b5d8"
     finally:
         con.close()
 
@@ -234,7 +235,7 @@ def test_dirty_db_keeps_data_b5d2_to_head(tmp_path, monkeypatch):
     con = sqlite3.connect(str(data / "paperlens.db"))
     try:
         version = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert version == "a7f3d9c1e2b4"
+        assert version == "c9e4f7a2b5d8"
         # 原数据保留 + e8a 的 file_type 按默认值回填
         row = con.execute("SELECT title, open_count, file_type, arxiv_id FROM papers").fetchone()
         assert row == ("保留题名", 3, "pdf", "2401.00001")
@@ -272,7 +273,7 @@ def test_dirty_db_leaked_tmp_table_repairs(tmp_path, monkeypatch):
     con = sqlite3.connect(str(data / "paperlens.db"))
     try:
         version = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert version == "a7f3d9c1e2b4"
+        assert version == "c9e4f7a2b5d8"
         cols = {r[1] for r in con.execute("PRAGMA table_info(papers)").fetchall()}
         assert {"file_type", "orig_filename"}.issubset(cols)
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -334,7 +335,7 @@ def test_ensure_migrated_retry_on_already_exists(tmp_path, monkeypatch):
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "_alembic_tmp_papers" not in tables
         version = con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert version == "a7f3d9c1e2b4"
+        assert version == "c9e4f7a2b5d8"
     finally:
         con.close()
 

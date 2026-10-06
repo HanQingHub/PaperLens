@@ -139,28 +139,36 @@ export default function SettingsPage() {
     }
   }
 
-  // ── 文件关联：设为 PDF 默认打开方式 ──
+  // ── 文件关联：设为 PDF / Markdown 默认打开方式 ──
   const [pdfAssoc, setPdfAssoc] = useState(false)
+  const [mdAssoc, setMdAssoc] = useState(false)
   const [assocBusy, setAssocBusy] = useState(false)
   useEffect(() => {
     if (!isTauri()) return
     invoke<boolean>('get_pdf_assoc_state').then(setPdfAssoc).catch(() => {})
+    invoke<boolean>('get_md_assoc_state').then(setMdAssoc).catch(() => {})
   }, [])
-  const togglePdfAssoc = async () => {
+  const toggleAssoc = async (kind: 'pdf' | 'md') => {
     if (assocBusy) return
-    const enable = !pdfAssoc
+    const enable = !(kind === 'pdf' ? pdfAssoc : mdAssoc)
+    const setAssoc = kind === 'pdf' ? setPdfAssoc : setMdAssoc
+    const label = kind === 'pdf' ? 'PDF' : 'Markdown'
     setAssocBusy(true)
     try {
-      const res = await invoke<{ needs_system_ui: boolean }>('set_pdf_assoc', { enable })
-      setPdfAssoc(enable)
+      const res = await invoke<{ needs_system_ui: boolean }>(
+        kind === 'pdf' ? 'set_pdf_assoc' : 'set_md_assoc',
+        { enable },
+      )
+      setAssoc(enable)
       if (enable && res.needs_system_ui) {
-        // Win10+ UserChoice 受哈希保护无法静默直写：注册后跳系统设置由用户确认
-        invoke('open_external', { url: 'ms-settings:defaultapps' }).catch(() => {})
-        toast('已注册打开方式：请在系统设置中将 .pdf 默认应用选为 PaperLens', 'ok')
+        // 新构建（UCPD.sys）拒绝第三方直写 UserChoice：注册已完成但默认未生效，
+        // 弹应用内模态由用户选「打开方式」一键完成（openas，系统亲手写哈希）
+        // 或跳系统设置兜底
+        setChooseExt(kind)
       } else if (enable) {
-        toast('已设为 PDF 默认打开方式', 'ok')
+        toast(`已设为 ${label} 默认打开方式`, 'ok')
       } else {
-        toast('已取消 PDF 默认打开方式', 'ok')
+        toast(`已取消 ${label} 默认打开方式`, 'ok')
       }
     } catch (e) {
       // Tauri invoke 失败 reject 的是字符串（Rust Err(String)），必须 String(e) 保真
@@ -168,6 +176,33 @@ export default function SettingsPage() {
     } finally {
       setAssocBusy(false)
     }
+  }
+
+  // ── 选择打开方式模态：openas 一键（主）/ 系统设置（兜底）──
+  const [chooseExt, setChooseExt] = useState<'pdf' | 'md' | null>(null)
+  const chooseInTauri = chooseExt !== null && isTauri()
+  const closeChooseModal = () => {
+    const ext = chooseExt
+    setChooseExt(null)
+    if (!ext || !isTauri()) return
+    // 对话框关闭后复查默认是否已生效（用户在系统框里勾了「始终」）
+    invoke<boolean>('get_assoc_effective', { ext: `.${ext}` })
+      .then((ok) => {
+        if (ok) toast('已设为默认打开方式', 'ok')
+      })
+      .catch(() => {})
+  }
+  const runOpenWith = async () => {
+    if (!chooseExt) return
+    try {
+      await invoke('show_open_with', { ext: `.${chooseExt}` })
+      closeChooseModal()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e) || '无法拉起打开方式选择框', 'error')
+    }
+  }
+  const runOpenSettings = () => {
+    invoke('open_external', { url: 'ms-settings:defaultapps' }).catch(() => {})
   }
 
   // 字号滑杆：本地即时预览 + 防抖落库
@@ -665,9 +700,21 @@ export default function SettingsPage() {
         <Section title="文件关联">
           <Row
             label="设为 PDF 默认打开方式"
-            hint="开启后双击 PDF 默认用 PaperLens 打开，文件会自动收进文库「打开过」分组，图标保持 PDF 样式"
+            hint="开启后双击 PDF 默认用 PaperLens 打开并自动收进文库（保存行为见下方开关），图标保持 PDF 样式"
           >
-            <Toggle checked={pdfAssoc} onChange={() => togglePdfAssoc()} />
+            <Toggle checked={pdfAssoc} onChange={() => toggleAssoc('pdf')} />
+          </Row>
+          <Row
+            label="设为 Markdown 默认打开方式"
+            hint="开启后双击 Markdown（.md）文件默认用 PaperLens 打开并自动收进文库（保存行为见下方开关）"
+          >
+            <Toggle checked={mdAssoc} onChange={() => toggleAssoc('md')} />
+          </Row>
+          <Row
+            label="关联打开时保存到文库"
+            hint="关闭后双击打开的文件仅临时阅读：不进文库与统计，关闭页签即清除（生词库保留）；再次以保存模式打开同一文件会自动转正式"
+          >
+            <Toggle checked={settings.assoc_open_save} onChange={(v) => save({ assoc_open_save: v })} />
           </Row>
         </Section>
 
@@ -840,6 +887,23 @@ export default function SettingsPage() {
             </li>
           ))}
         </ul>
+      </Modal>
+      <Modal open={chooseInTauri} title="默认打开方式未生效" onClose={closeChooseModal} width={430}>
+        <p className="text-[13px] leading-6">
+          PaperLens 已注册打开方式，但系统默认仍指向其他应用（新版 Windows 会拦截应用直改默认）。
+          <br />
+          <span className="text-xs text-text-faint">
+            推荐「选择打开方式」：在弹出的系统选择框中选中 PaperLens 并勾选「始终」，即可完成默认设置，全程无需离开应用。
+          </span>
+        </p>
+        <div className="mt-4 flex gap-2">
+          <button className="btn btn-primary flex-1 px-3 py-1.5 text-[13px]" onClick={runOpenWith}>
+            选择打开方式
+          </button>
+          <button className="btn flex-1 px-3 py-1.5 text-[13px]" onClick={runOpenSettings}>
+            打开系统设置
+          </button>
+        </div>
       </Modal>
     </div>
   )
