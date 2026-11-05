@@ -10,7 +10,8 @@ import { useCompareStore } from '../../stores/compareStore'
 import { useWords } from '../../stores/words'
 import { createAnnotation } from '../../api/client'
 import { parseAnnotation } from '../../stores/readerStore'
-import { citationSuffix, wordCount } from './readerUtils'
+import { citationSuffix } from './readerUtils'
+import { isSentenceSelection } from './translateView'
 import { lemmaCandidates, resolveLemma } from './lemma'
 import { IconQuote } from '../../components/shared/Icon'
 
@@ -51,7 +52,7 @@ export default function SelectionToolbar({
   onToast,
   actionsRef,
 }: {
-  onTranslate: (mode: 'word' | 'dict') => void
+  onTranslate: (mode: 'word' | 'dict' | 'sentence') => void
   onToast: (msg: string) => void
   /** ReaderPage 快捷键复用动作句柄（可选） */
   actionsRef?: React.MutableRefObject<SelectionActions | null>
@@ -193,16 +194,17 @@ export default function SelectionToolbar({
     setSelection(null)
   }
 
+  // 选区语义：≥4 词或长文本按整句处理（与 ReaderPage.onTranslate 同口径）
+  const isSentence = isSentenceSelection(selection.text)
+
   // 供 ReaderPage 快捷键复用（T/B/W/H）
   actionsImpl.current = {
-    translate: () => onTranslate('word'),
+    translate: () => onTranslate(isSentence ? 'sentence' : 'word'),
     dict: () => onTranslate('dict'),
     addWord,
     startLinking,
     highlight: cycleHighlight,
   }
-
-  const isSentence = wordCount(selection.text) > 6
 
   return (
     <div
@@ -213,7 +215,7 @@ export default function SelectionToolbar({
         transform: 'translateX(-50%)',
       }}
     >
-      <Btn label={<b className="font-serif">T</b>} title={isSentence ? '翻译（整句）' : '翻译'} onClick={() => onTranslate('word')} />
+      <Btn label={<b className="font-serif">T</b>} title={isSentence ? '翻译（整句）' : '翻译'} onClick={() => onTranslate(isSentence ? 'sentence' : 'word')} />
       <Btn label="典" title="词典释义（ECDICT）" onClick={() => onTranslate('dict')} />
       <Btn label={<b>W</b>} title="入生词库" onClick={addWord} />
       {!fromCompare && (

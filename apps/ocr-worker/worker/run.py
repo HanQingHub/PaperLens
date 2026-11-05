@@ -142,14 +142,22 @@ def write_result(task_dir: Path, status, pages_done, error=None):
 
 
 def ocr_page(engine, pdf, page_no, scale):
+    """渲染 → OCR → 段落聚合 → PDF 显示空间。
+    返回 (blocks, page_rot, rendered_w_px, rendered_h_px)。"""
     page = pdf[page_no]
-    page_h_pt = page.get_size()[1]
+    page_w_pt, page_h_pt = page.get_size()
     page_rot = page.get_rotation()
     bitmap = page.render(scale=scale, grayscale=True)
     img = bitmap.to_numpy()
     boxes, txts, scores = engine(img)
-    blocks_px = group_lines(boxes, txts, scores)
-    return blocks_to_pdf(blocks_px, scale, page_h_pt), page_rot
+    # 栏检测必须用真实页面宽度：单栏页的短行会让"内容宽度"远小于页宽
+    blocks_px = group_lines(boxes, txts, scores, page_w=img.shape[1] if hasattr(img, "shape") else None)
+    return (
+        blocks_to_pdf(blocks_px, scale, page_h_pt, page_w_pt),
+        page_rot,
+        img.shape[1] if hasattr(img, "shape") else int(page_w_pt * scale),
+        img.shape[0] if hasattr(img, "shape") else int(page_h_pt * scale),
+    )
 
 
 def process_task(claimed: Path, data_dir: Path):
@@ -166,7 +174,12 @@ def process_task(claimed: Path, data_dir: Path):
         return
     paper_id = task["paper_id"]
     pdf_path = Path(task["pdf_abs"]) if task.get("pdf_abs") else data_dir / task["pdf_rel"]
-    todo = task["pages_todo"]
+    todo = task.get("pages_todo")
+    if not isinstance(todo, list) or not todo:
+        write_result(task_dir, "failed", 0, "task.json 缺少 pages_todo")
+        log(f"paper_id={paper_id} 拒绝任务：pages_todo 非法 {todo!r}")
+        return
+    todo = [int(p) for p in todo if isinstance(p, (int, float)) or str(p).isdigit()]
     scale = resolve_scale(task)
     if not scale_valid(scale):
         write_result(task_dir, "failed", 0, f"dpi_scale 非法: {scale!r}")
@@ -201,7 +214,7 @@ def process_task(claimed: Path, data_dir: Path):
                     if attempt >= 2:
                         rebuild_engine()
                     engine = get_engine()
-                    blocks, page_rot = ocr_page(engine, pdf, page_no, scale)
+                    blocks, page_rot, px_w, px_h = ocr_page(engine, pdf, page_no, scale)
                     append_ndjson(
                         ndjson,
                         build_record(
@@ -211,7 +224,10 @@ def process_task(claimed: Path, data_dir: Path):
                     )
                     done.add(page_no)
                     touch_heartbeat(task_dir)
-                    log(f"  page {page_no}: {len(blocks)} blocks, {time.perf_counter() - t0:.1f}s")
+                    log(
+                        f"  page {page_no}: {len(blocks)} blocks, "
+                        f"{px_w}x{px_h}px, {time.perf_counter() - t0:.1f}s"
+                    )
                     if (data_dir / "ocr" / ".paused").exists():
                         try:
                             claimed.rename(task_dir / "task.json")
@@ -231,8 +247,8 @@ def process_task(claimed: Path, data_dir: Path):
                 write_result(task_dir, "failed", len(done), error)
                 log(f"paper_id={paper_id} 连续失败 {PAGE_RETRY} 次，标记 failed")
                 return
-        write_result(task_dir, "done", len(todo))
-        log(f"paper_id={paper_id} 完成，共 {len(todo)} 页")
+        write_result(task_dir, "done", len(done))
+        log(f"paper_id={paper_id} 完成，累计 {len(done)} 页")
     finally:
         pdf.close()
 

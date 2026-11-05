@@ -285,6 +285,7 @@ h1, h2, h3, h4, button, input, textarea, select {
   background: var(--panel);
   color: var(--text);
   font-size: 13px;
+  white-space: nowrap;
   cursor: pointer;
   transition: all var(--dur-1) var(--ease);
   user-select: none;

@@ -34,6 +34,12 @@ export const IconCheck = (p: IconProps) => (
     <path d="M20 6 9 17l-5-5" />
   </Base>
 )
+export const IconCopy = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="9" y="9" width="12" height="12" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </Base>
+)
 export const IconStar = (p: IconProps) => (
   <Base {...p} filled>
     <path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" />

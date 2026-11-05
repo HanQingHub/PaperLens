@@ -63,7 +63,11 @@ def test_layer3_cache_hit(client, tmp_path, data_dir):
         from app.services.llm_service import llm_service
 
         engine = f"llm-{llm_service.model_id}"
-        db.add(TranslationCache(user_id=1, paper_id=paper["id"], lemma="zzzunknown",
+        from app.services.translate_service import _word_cache_key
+
+        # 0.9.0：词缓存按 lemma + 语境指纹（句子哈希）隔离
+        db.add(TranslationCache(user_id=1, paper_id=paper["id"],
+                                lemma=_word_cache_key("zzzunknown", "..."),
                                 engine=engine, result_json=json.dumps({"translation": "缓存译法"})))
         db.commit()
     finally:
@@ -102,9 +106,10 @@ def test_llm_result_written_to_cache_then_layer3(client, tmp_path, fake_llm):
 
     db = SessionLocal()
     try:
-        rows = db.query(TranslationCache).filter(TranslationCache.lemma == "attention").all()
+        rows = db.query(TranslationCache).filter(TranslationCache.lemma.like("attention%")).all()
         assert len(rows) == 1
-        assert json.loads(rows[0].result_json)["translation"] == "【本文译法】注意力机制。"
+        # 0.9.0：输出归一为三分区（本文译法 → 文中意），缓存存归一结果
+        assert json.loads(rows[0].result_json)["translation"] == "【文中意】注意力机制。"
     finally:
         db.close()
     events = sse_read(client, "/api/translate/word", body, token)  # 二次查询走缓存
@@ -293,8 +298,10 @@ def test_context_budget_truncated(client, tmp_path, fake_llm):
     user = fake_llm.calls[0][1]["content"]
     assert "…" in user  # 被保头尾截断
     sys_prompt = fake_llm.calls[0][0]["content"]
+    from app.services.translate_service import INPUT_BUDGET_TOKENS
+
     total = _est_tokens(sys_prompt) + _est_tokens(user)
-    assert total <= 1000
+    assert total <= INPUT_BUDGET_TOKENS
 
 
 # ---- 边界处理：怪文本 / 噪声 / 模型异常输出 ----
@@ -324,7 +331,7 @@ def test_ligature_word_reaches_llm_normalized(client, tmp_path, fake_llm):
     events = sse_read(client, "/api/translate/word",
                       {"paper_id": paper["id"], "word": "ﬁne", "sentence": "s"}, token)
     assert "delta" in [e["event"] for e in events]
-    assert '解释单词 "fine"' in fake_llm.calls[0][1]["content"]
+    assert '目标单词: "fine"' in fake_llm.calls[0][1]["content"]
 
 
 def test_pure_number_rejected(client, tmp_path, fake_llm):
@@ -436,7 +443,7 @@ def test_max_tokens_forwarded_word_vs_sentence(client, tmp_path, monkeypatch):
              {"paper_id": paper["id"], "word": "qqqnoentry", "sentence": "s"}, token)
     sse_read(client, "/api/translate/sentence",
              {"paper_id": paper["id"], "text": "Hello world.", "prev": "", "next": ""}, token)
-    assert seen == [300, 500]
+    assert seen == [320, 768]
 
 
 def test_llm_interrupted_not_cached(client, tmp_path, fake_llm):

@@ -19,6 +19,8 @@ class WordIn(BaseModel):
     sentence: str = ""
     prev: str = ""
     next: str = ""
+    # 1 = 跳过词库/术语表/缓存三层命中，强制 LLM 结合上下文重译
+    force: int = 0
 
 
 class SentenceIn(BaseModel):

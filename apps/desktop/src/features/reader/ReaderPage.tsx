@@ -25,6 +25,7 @@ import MarkdownReader from './MarkdownReader'
 import { clearPageBitmaps, clearRenderQueue } from './renderScheduler'
 import SelectionToolbar, { type SelectionActions } from './SelectionToolbar'
 import TranslateCard, { type TranslateRequest } from './TranslateCard'
+import { isSentenceSelection } from './translateView'
 import { clearIrregularCache } from './lemma'
 import {
   ensurePageText,
@@ -825,20 +826,25 @@ export default function ReaderPage() {
   }, [])
 
   // ── 翻译请求（工具条 / 快捷键 T 共用；paperId 随选区，支持对照窗格来源）──
-  const onTranslate = useCallback((mode: 'word' | 'dict') => {
+  // 选区语义裁决：1-3 词 = 词/短语卡（不丢短语，整段交给后端解析）；
+  // ≥4 词或长文本 = 整句卡片（直接翻 sel.sentence，不再用 80 字符残句当"单词"）
+  const onTranslate = useCallback((mode: 'word' | 'dict' | 'sentence') => {
     const sel = useReader.getState().selection
     if (!sel) return
-    const words = sel.text.trim().split(/\s+/)
-    const isSentence = words.length > 6
+    const words = sel.text.trim().split(/\s+/).filter(Boolean)
+    const isSentence = mode === 'sentence' || (mode === 'word' && isSentenceSelection(sel.text))
+    const source = (sel.sentence || sel.text).trim()
+    console.debug(
+      `[translate] mode=${mode} selectedLen=${sel.text.length} sentenceLen=${source.length} prevLen=${sel.prev.length} nextLen=${sel.next.length}`,
+    )
     setTranslateReq({
       id: reqSeq.current++,
       paperId: sel.paperId,
-      word: mode === 'dict' || !isSentence ? (words[0] ?? '') : sel.text.slice(0, 80),
-      sentence: sel.sentence || sel.text,
+      word: mode === 'dict' ? (words[0] ?? '') : isSentence ? source.slice(0, 40) : sel.text.trim(),
+      sentence: source,
       prev: sel.prev,
       next: sel.next,
-      mode,
-      autoSentence: mode === 'word' && isSentence,
+      mode: mode === 'dict' ? 'dict' : isSentence ? 'sentence' : 'word',
       x: sel.toolbarX,
       y: sel.toolbarY + 42,
       below: true,
@@ -1651,7 +1657,7 @@ function OcrBanner({
           <span className="text-text-soft">
             OCR 解析中{progress ? ` · ${progress.done}/${progress.total} 页` : '…'}
           </span>
-          {status === 'pending' && (paper as { id?: number }).id && (
+          {(status === 'pending' || status === 'running') && (paper as { id?: number }).id && (
             <button
               className="btn px-2 py-0.5 text-[11px]"
               onClick={async () => {
@@ -1661,7 +1667,8 @@ function OcrBanner({
                   await api.cancelOcr(id)
                   // 服务端已回 none：同步本地状态并停轮询（tick 白名单亦兜底）
                   useReader.getState().setOcr('none')
-                  toast('已取消排队', 'ok')
+                  useReader.getState().setOcrProgress(null, null)
+                  toast('已取消 OCR', 'ok')
                 } catch {
                   toast('取消失败', 'error')
                 }

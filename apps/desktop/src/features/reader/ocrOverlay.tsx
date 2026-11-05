@@ -49,6 +49,9 @@ export const OcrOverlay = memo(function OcrOverlay({
         if (!block.lines?.length) return <FallbackBlockSpan key={i} block={block} geom={geom} />
         return block.lines.map((line, j) => {
           const css = ocrLineCss(line, geom)
+          // 行尾补空格：跨行划选 toString 不粘连；断行连字符（atten-）后不补，
+          // 否则会得到 "atten- tion"，复制出去的字面文本失真
+          const tail = /-$/.test(line.text) ? '' : ' '
           return (
             <span
               key={`${i}-${j}`}
@@ -61,7 +64,7 @@ export const OcrOverlay = memo(function OcrOverlay({
                 fontSize: ocrLineFontSize(line, geom),
               }}
             >
-              {line.text + ' '}
+              {line.text + tail}
             </span>
           )
         })

@@ -1,13 +1,14 @@
-// 翻译卡片：四层命中徽标 + LLM 流式打字机 + 句译 + 修正译法 + 入生词
-import { useEffect, useRef, useState } from 'react'
+// 翻译卡片：四层命中徽标 + LLM 流式打字机 + 整句模式 + 修正译法 + 入生词
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ssePost, SseTimeoutError } from '../../api/sse'
-import { IconCheck, IconHistory, IconPencil, IconPin, IconPlus, IconStar, IconX } from '../../components/shared/Icon'
+import { IconCheck, IconCopy, IconHistory, IconPencil, IconPin, IconPlus, IconStar, IconX } from '../../components/shared/Icon'
 import { api, addGlossaryTerm } from '../../api/client'
 import type { TranslateEvent } from '../../api/types'
 import { useReaderBus } from '../../stores/readerBus'
 import { useWords } from '../../stores/words'
 import { useReader } from '../../stores/readerStore'
 import { lemmaCandidates } from './lemma'
+import { chunkForTranslation, parseWordSections, pickTranslation } from './translateView'
 
 interface HistoryItem {
   id: number
@@ -26,10 +27,12 @@ export interface TranslateRequest {
   sentence: string
   prev: string
   next: string
-  /** dict = 仅词典释义（不发 LLM 词卡请求，直查 dictionary） */
-  mode: 'word' | 'dict'
-  /** 长选区：出卡后自动触发整句翻译 */
+  /** dict = 仅词典释义；sentence = 整句/多句翻译（不出词卡）；word = 词卡 */
+  mode: 'word' | 'dict' | 'sentence'
+  /** 长选区：出卡后自动触发整句翻译（旧字段，保留兼容） */
   autoSentence?: boolean
+  /** 跳过词库/术语表/缓存命中，强制 LLM 结合上下文重译（卡片"AI 重译"） */
+  force?: boolean
   /** 位置（fixed 视口坐标） */
   x: number
   y: number
@@ -74,16 +77,6 @@ function isLlmNotReady(code: string) {
   return code === 'llm_loading_timeout' || code === 'interrupted' || code === 'llm_timeout' || code === 'llm_empty'
 }
 
-/** 从 LLM 分区文本提取【文中意】行（入生词库默认译法） */
-function extractTranslation(stream: string, fallback: string) {
-  const m = stream.match(/【文中意】\s*([^\n【]+)/)
-  if (m) return m[1].trim().slice(0, 80)
-  const gloss = stream.match(/【基本义】\s*([^\n【]+)/)
-  if (gloss) return gloss[1].trim().slice(0, 80)
-  const clean = stream.replace(/【[^】]*】/g, '').replace(/\s+/g, ' ').trim()
-  return clean ? clean.slice(0, 80) : fallback
-}
-
 export default function TranslateCard({
   paperId,
   request,
@@ -111,9 +104,11 @@ export default function TranslateCard({
   const [sentenceText, setSentenceText] = useState('')
   const [sentenceStatus, setSentenceStatus] = useState<CardStatus | null>(null)
   const [sentenceError, setSentenceError] = useState('')
+  const [sentenceProgress, setSentenceProgress] = useState<{ done: number; total: number } | null>(null)
   const [fixOpen, setFixOpen] = useState(false)
   const [fixText, setFixText] = useState('')
   const [saved, setSaved] = useState(false)
+  const [copied, setCopied] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const sentenceAbortRef = useRef<AbortController | null>(null)
   // LLM 未就绪自动重试计数（word/sentence 共用；request.id 变化置 0；上限 2 次）
@@ -137,9 +132,12 @@ export default function TranslateCard({
   useEffect(() => {
     sentenceTextRef.current = sentenceText
   }, [sentenceText])
-      const bumpGlossary = useReaderBus((s) => s.bumpGlossary)
+  const bumpGlossary = useReaderBus((s) => s.bumpGlossary)
   const stageMap = useWords((s) => s.stageMap)
   const bumpHighlight = useReader((s) => s.bumpHighlight)
+
+  const isSentenceCard = request?.mode === 'sentence'
+  const sections = useMemo(() => parseWordSections(streamText), [streamText])
 
   // 位置跟随请求（钉住/拖动后不动）
   useEffect(() => {
@@ -173,7 +171,8 @@ export default function TranslateCard({
 
   const [llmHint, setLlmHint] = useState('')
   useEffect(() => {
-    if (status !== 'loading' || !request || request.mode === 'dict') {
+    const waiting = request?.mode === 'sentence' ? sentenceStatus === 'loading' : status === 'loading'
+    if (!waiting || !request || request.mode === 'dict') {
       setLlmHint('')
       return
     }
@@ -193,7 +192,7 @@ export default function TranslateCard({
     tick()
     const t = setInterval(() => { elapsed += 2; tick() }, 2000)
     return () => { cancelled = true; clearInterval(t); setLlmHint('') }
-  }, [status, request])
+  }, [status, sentenceStatus, request])
 
   // ── 等待 LLM 就绪后执行重试（word/sentence 共用；signal 取消即停）──
   // 返回 {ready}；未就绪时返回 {ready:false, failMsg} 由调用方落终态 UI。
@@ -241,6 +240,7 @@ export default function TranslateCard({
     abortRef.current?.abort()
     const ac = new AbortController()
     abortRef.current = ac
+    if (req.force) setHit(null)
     setStatus('loading')
     ;(async () => {
       try {
@@ -252,6 +252,7 @@ export default function TranslateCard({
             sentence: req.sentence,
             prev: req.prev,
             next: req.next,
+            force: req.force ? 1 : 0,
           },
           { signal: ac.signal },
         )
@@ -320,7 +321,95 @@ export default function TranslateCard({
     })()
   }
 
-  // ── 主请求（词翻译 SSE / 词典直查）──
+  // ── 句译（整句卡片 / 卡片内“译全句”）：长文按句切段顺序翻译 ──
+  const runSentence = (source?: string) => {
+    if (!request) return
+    const text = (source ?? request.sentence ?? '').trim()
+    if (!text) return
+    setSentenceMode(true)
+    setSentenceText('')
+    setSentenceStatus('loading')
+    setSentenceError('')
+    sentenceAbortRef.current?.abort()
+    const ac = new AbortController()
+    sentenceAbortRef.current = ac
+    const chunks = chunkForTranslation(text)
+    setSentenceProgress({ done: 0, total: chunks.length })
+    ;(async () => {
+      let acc = ''
+      try {
+        for (let i = 0; i < chunks.length; i++) {
+          if (ac.signal.aborted) return
+          let piece = ''
+          const gen = ssePost(
+            '/translate/sentence',
+            {
+              paper_id: paperId,
+              text: chunks[i],
+              prev: i === 0 ? request.prev : '',
+              next: i === chunks.length - 1 ? request.next : '',
+            },
+            { signal: ac.signal },
+          )
+          for await (const ev of gen as AsyncGenerator<TranslateEvent>) {
+            if (ev.event === 'hit') {
+              piece = ev.data.translation ?? ''
+              setSentenceText(acc ? `${acc}\n${piece}` : piece)
+            } else if (ev.event === 'delta') {
+              piece += ev.text
+              setSentenceStatus('streaming')
+              setSentenceText(acc ? `${acc}\n${piece}` : piece)
+            } else if (ev.event === 'done') {
+              break
+            } else if (ev.event === 'error') {
+              console.debug('[translate] sentence error', ev.code, ev.detail)
+              if (isLlmNotReady(ev.code) && autoRetriedRef.current < 2 && !ac.signal.aborted) {
+                autoRetriedRef.current += 1
+                setSentenceStatus('loading')
+                void (async () => {
+                  const r = await waitLlmReady(ac.signal)
+                  if (ac.signal.aborted) return
+                  if (r.ready) runSentence(text)
+                  else if (r.failMsg) {
+                    setSentenceError(r.failMsg)
+                    setSentenceStatus('error')
+                  }
+                })()
+                return
+              }
+              throw new Error(ERR_COPY[ev.code] ?? '服务暂不可用，可重试')
+            }
+          }
+          if (!piece.trim()) throw new Error('模型暂无有效输出')
+          acc = acc ? `${acc}\n${piece}` : piece
+          setSentenceText(acc)
+          setSentenceProgress({ done: i + 1, total: chunks.length })
+        }
+        setSentenceStatus('done')
+        setSentenceProgress(null)
+      } catch (e) {
+        if (ac.signal.aborted) return
+        // 看门狗掐断的静默句译流：无内容才兜底自动加载，有内容落 error 保内容
+        if (!acc && sentenceStatusRef.current === 'loading' && autoRetriedRef.current < 2) {
+          autoRetriedRef.current += 1
+          void (async () => {
+            const r = await waitLlmReady(ac.signal)
+            if (ac.signal.aborted) return
+            if (r.ready) runSentence(text)
+            else if (r.failMsg) {
+              setSentenceError(r.failMsg)
+              setSentenceStatus('error')
+            }
+          })()
+          return
+        }
+        setSentenceError(e instanceof Error && e.message ? e.message : '句译失败，可重试')
+        setSentenceStatus('error')
+      }
+    })()
+  }
+
+  // ── 主请求（词翻译 SSE / 词典直查 / 整句翻译）──
   useEffect(() => {
     if (!request) return
     autoRetriedRef.current = 0
@@ -329,11 +418,13 @@ export default function TranslateCard({
     setStreamText('')
     setEngine('')
     setSaved(false)
+    setCopied(false)
     setErrorDetail('')
     setSentenceMode(false)
     setSentenceText('')
     setSentenceStatus(null)
     setSentenceError('')
+    setSentenceProgress(null)
     setFixOpen(false)
     abortRef.current?.abort()
     sentenceAbortRef.current?.abort()
@@ -354,82 +445,21 @@ export default function TranslateCard({
         })
       return
     }
+    if (request.mode === 'sentence') {
+      setStatus('done')
+      runSentence()
+      return () => {
+        abortRef.current?.abort()
+        sentenceAbortRef.current?.abort()
+      }
+    }
     runWordRequest(request)
-    if (request.autoSentence) runSentence()
     return () => {
       abortRef.current?.abort()
       sentenceAbortRef.current?.abort()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request?.id])
-
-  // ── 句译（选句 >6 词自动；或卡片内“译全句”）──
-  const runSentence = () => {
-    if (!request) return
-    setSentenceMode(true)
-    setSentenceText('')
-    setSentenceStatus('loading')
-    setSentenceError('')
-    sentenceAbortRef.current?.abort()
-    const ac = new AbortController()
-    sentenceAbortRef.current = ac
-    ;(async () => {
-      try {
-        const gen = ssePost(
-          '/translate/sentence',
-          { paper_id: paperId, text: request.sentence, prev: request.prev, next: request.next },
-          { signal: ac.signal },
-        )
-        for await (const ev of gen as AsyncGenerator<TranslateEvent>) {
-          if (ev.event === 'hit') {
-            setSentenceText(ev.data.translation ?? '')
-            setSentenceStatus('done')
-          } else if (ev.event === 'delta') {
-            setSentenceStatus('streaming')
-            setSentenceText((t) => t + ev.text)
-          } else if (ev.event === 'done') {
-            setSentenceStatus('done')
-          } else if (ev.event === 'error') {
-            console.debug('[translate] sentence error', ev.code, ev.detail)
-            if (isLlmNotReady(ev.code) && autoRetriedRef.current < 2 && !ac.signal.aborted) {
-              autoRetriedRef.current += 1
-              setSentenceStatus('loading')
-              void (async () => {
-                const r = await waitLlmReady(ac.signal)
-                if (ac.signal.aborted) return
-                if (r.ready) runSentence()
-                else if (r.failMsg) {
-                  setSentenceError(r.failMsg)
-                  setSentenceStatus('error')
-                }
-              })()
-              return
-            }
-            setSentenceError(ERR_COPY[ev.code] ?? '服务暂不可用，可重试')
-            setSentenceStatus('error')
-          }
-        }
-      } catch {
-        if (!ac.signal.aborted) {
-          // 看门狗掐断的静默句译流：无内容才兜底自动加载，有内容落 error 保内容
-          if (sentenceStatusRef.current === 'loading' && !sentenceTextRef.current && autoRetriedRef.current < 2) {
-            autoRetriedRef.current += 1
-            void (async () => {
-              const r = await waitLlmReady(ac.signal)
-              if (ac.signal.aborted) return
-              if (r.ready) runSentence()
-              else if (r.failMsg) {
-                setSentenceError(r.failMsg)
-                setSentenceStatus('error')
-              }
-            })()
-            return
-          }
-          setSentenceStatus((s) => (s === 'done' ? s : 'error'))
-        }
-      }
-    })()
-  }
 
   if (!request) return null
 
@@ -438,7 +468,7 @@ export default function TranslateCard({
     const word = request.word.trim().split(/\s+/)[0] ?? ''
     if (!word) return
     const exists = lemmaCandidates(word).some((c) => stageMap.has(c))
-    const translation = extractTranslation(streamText, hit?.translation ?? '')
+    const translation = pickTranslation(streamText, hit?.translation ?? '')
     try {
       await api.addWord({
         lemma: word.toLowerCase(),
@@ -482,7 +512,7 @@ export default function TranslateCard({
     }
   }
   const starTranslation = () => {
-    const translation = extractTranslation(streamText, hit?.translation ?? '')
+    const translation = pickTranslation(streamText, hit?.translation ?? '')
     if (!translation) return
     const list = starList().filter((x) => x.word !== request.word)
     list.unshift({ word: request.word, translation })
@@ -490,12 +520,29 @@ export default function TranslateCard({
     onToast('已收藏译法')
   }
 
-  const cardX = dragPos ? dragPos.x : Math.min(Math.max(12, pos.x - 150), window.innerWidth - 330)
+  const copyText = async () => {
+    const body = isSentenceCard ? sentenceText : sections.parsed ? [sections.gloss, sections.context].filter(Boolean).join('\n') : streamText
+    if (!body.trim()) return
+    try {
+      await navigator.clipboard.writeText(body.trim())
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+      onToast('已复制译文')
+    } catch {
+      onToast('复制失败')
+    }
+  }
+
+  const cardW = isSentenceCard ? 380 : 320
+  const cardX = dragPos
+    ? dragPos.x
+    : Math.max(12, Math.min(pos.x - (isSentenceCard ? 190 : 150), window.innerWidth - cardW - 12))
   const cardY = dragPos ? dragPos.y : pos.below ? pos.y : Math.max(60, pos.y - 40)
+  const busy = isSentenceCard ? sentenceStatus === 'loading' || sentenceStatus === 'streaming' : status === 'loading' || status === 'streaming'
 
   return (
     <div
-      className={`fade-in fixed z-[45] flex max-h-[70vh] w-[320px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-lg border border-border-strong bg-panel text-[13px] shadow-[var(--shadow-2)] ${pinned ? 'ring-1 ring-accent/30 shadow-md' : ''} ${isDragging ? 'select-none' : ''}`}
+      className={`fade-in fixed z-[45] flex max-h-[72vh] ${isSentenceCard ? 'w-[380px]' : 'w-[320px]'} max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-lg border border-border-strong bg-panel text-[13px] shadow-[var(--shadow-2)] ${pinned ? 'ring-1 ring-accent/30 shadow-md' : ''} ${isDragging ? 'select-none' : ''}`}
       style={{
         left: cardX,
         top: cardY,
@@ -518,18 +565,26 @@ export default function TranslateCard({
           if (!dragPos) setDragPos({ x: cardX, y: cardY })
         }}
       >
-        <span className="min-w-0 flex-1 truncate font-serif text-sm font-semibold" title={request.word}>
-          {request.word}
+        <span className="min-w-0 flex-1 truncate font-serif text-sm font-semibold" title={isSentenceCard ? request.sentence : request.word}>
+          {isSentenceCard ? '整句翻译' : request.word}
         </span>
         {pinned && <span className="shrink-0 text-[10px] text-accent">已钉住</span>}
-        {hit?.phonetic && <span className="max-w-28 shrink-0 truncate text-[11px] text-text-faint">/{hit.phonetic}/</span>}
-        {hit && (
+        {!isSentenceCard && hit?.phonetic && <span className="max-w-28 shrink-0 truncate text-[11px] text-text-faint">/{hit.phonetic}/</span>}
+        {!isSentenceCard && hit && (
           <span className={`badge shrink-0 ${hit.layer === 'glossary' ? 'badge-accent' : ''}`}>
             {hit.badge ?? LAYER_LABEL[hit.layer]}
           </span>
         )}
-        {engine && engine.startsWith('llm') && status === 'done' && <span className="badge shrink-0">LLM</span>}
+        {!isSentenceCard && engine && engine.startsWith('llm') && status === 'done' && <span className="badge shrink-0">LLM</span>}
         <span className="ml-auto flex shrink-0 items-center gap-1">
+          <button
+            title="复制译文"
+            className={`flex items-center rounded px-1.5 py-0.5 text-xs ${copied ? 'text-ok' : 'text-text-faint hover:text-accent'}`}
+            onClick={copyText}
+            disabled={busy && !streamText && !sentenceText}
+          >
+            {copied ? <IconCheck size={12} /> : <IconCopy size={12} />}
+          </button>
           <button
             title="查词历史"
             className={`flex items-center rounded px-1.5 py-0.5 text-xs ${historyOpen ? 'bg-accent-soft text-accent' : 'text-text-faint hover:text-accent'}`}
@@ -579,7 +634,7 @@ export default function TranslateCard({
                 onClick={() => {
                   const gloss = typeof it.result.translation === 'string' ? it.result.translation : String(it.result.gloss ?? '')
                   setHistoryOpen(false)
-                  onToast(`「${it.word}」：${gloss.slice(0, 60)}`)
+                  onToast(`「${it.word}」：${gloss.replace(/【[^】]*】/g, ' ').replace(/\s+/g, ' ').slice(0, 60)}`)
                 }}
                 title={String(it.result.translation ?? it.result.gloss ?? '')}
               >
@@ -596,150 +651,266 @@ export default function TranslateCard({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-        {/* hit 层：词性 + 基本义 / 直接译法 */}
-        {hit && (
-          <div className="mb-2">
-            {hit.layer === 'wordbook' || hit.layer === 'glossary' || hit.layer === 'cache' ? (
-              <div className="u-break rounded-md bg-accent-soft px-2.5 py-2">
-                <div className="font-medium text-accent">{hit.translation || '（暂无译法）'}</div>
-                {hit.stage != null && (
-                  <div className="mt-0.5 text-[11px] text-text-faint">
-                    生词阶段：{hit.stage === 0 ? '陌生' : hit.stage === 1 ? '学习中' : '已掌握'}
-                  </div>
-                )}
+      <div className="max-h-[calc(72vh-88px)] overflow-y-auto px-3 py-2">
+        {/* ── 整句模式 ── */}
+        {isSentenceCard && (
+          <>
+            <details className="mb-1.5 text-[11px] text-text-faint">
+              <summary className="cursor-pointer select-none">原文（{request.sentence.length} 字符）</summary>
+              <div className="u-break mt-1 max-h-28 overflow-y-auto border-l-2 border-border pl-2 leading-5 text-text-soft">
+                {request.sentence}
               </div>
-            ) : (
-              (hit.pos || hit.gloss) && (
-                <div className="u-break text-xs leading-5 text-text-soft">
-                  {hit.pos && <span className="mr-1.5 italic text-text-faint">{hit.pos}</span>}
-                  <span className="whitespace-pre-wrap">{hit.gloss}</span>
-                </div>
-              )
-            )}
-          </div>
-        )}
-
-        {/* LLM 流式 */}
-        {(streamText || status === 'loading') && (
-          <div className="u-break whitespace-pre-wrap text-xs leading-relaxed">
-            {streamText}
-            {status === 'streaming' && <span className="typing-caret" />}
-            {status === 'loading' && !streamText && (
-              <span className="flex items-center gap-1.5 text-text-faint">
-                <span className="h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-                {llmHint || '正在查询…'}
-              </span>
-            )}
-          </div>
-        )}
-
-        {status === 'error' && (
-          <div
-            className="mt-1 flex items-center justify-between rounded-md px-2 py-1.5 text-[11px] text-danger"
-            style={{ background: 'color-mix(in srgb, var(--danger) 7%, transparent)' }}
-          >
-            <span>{errorDetail || '出错了，已保留已收内容'}</span>
-            <button
-              className="btn px-2 py-0.5 text-[11px]"
-              onClick={() => {
-                if (!request) return
-                if (request.mode === 'dict') {
-                  setHit(null)
-                  setStatus('loading')
-                  setErrorDetail('')
-                  api
-                    .dictionary(request.word.trim().split(/\s+/)[0] ?? '')
-                    .then((entry) => {
-                      setHit({ layer: 'dict', pos: entry.pos, phonetic: entry.phonetic, gloss: entry.translation })
-                      setStatus('done')
-                    })
-                    .catch(() => {
-                      setHit({ layer: 'dict' })
-                      setStatus('error')
-                      setErrorDetail('词典未收录')
-                    })
-                } else {
-                  setStreamText('')
-                  setErrorDetail('')
-                  runWordRequest(request)
-                }
-              }}
-            >
-              重试
-            </button>
-          </div>
-        )}
-
-        {/* 修正译法输入 */}
-        {fixOpen && (
-          <div className="mt-2 flex gap-1.5">
-            <input
-              className="input flex-1 py-1 text-xs"
-              placeholder={`${request.word} → 中文译法`}
-              value={fixText}
-              autoFocus
-              onChange={(e) => setFixText(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && submitFix()}
-            />
-            <button className="btn btn-primary px-2.5 py-1 text-xs" onClick={submitFix}>
-              存
-            </button>
-          </div>
-        )}
-
-        {/* 句译区 */}
-        {sentenceMode && (
-          <div className="mt-2 rounded-md bg-panel-soft p-2">
-            <div className="mb-1 text-[10px] font-medium text-text-faint">整句翻译</div>
-            <div className="u-break whitespace-pre-wrap text-xs leading-relaxed">
+            </details>
+            <div className="u-break whitespace-pre-wrap text-[13px] leading-relaxed">
               {sentenceText}
               {sentenceStatus === 'streaming' && <span className="typing-caret" />}
-              {sentenceStatus === 'loading' && !sentenceText && <span className="text-text-faint">翻译中…</span>}
-              {sentenceStatus === 'error' && <span className="text-danger">{sentenceError || '句译失败，可重试'}</span>}
+              {sentenceStatus === 'loading' && !sentenceText && (
+                <span className="flex items-center gap-1.5 text-text-faint">
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                  {llmHint || '翻译中…'}
+                </span>
+              )}
             </div>
-            {sentenceStatus === 'error' && (
-              <button className="btn mt-1 px-2 py-0.5 text-[11px]" onClick={runSentence}>
-                重试句译
-              </button>
+            {sentenceProgress && sentenceProgress.total > 1 && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-text-faint">
+                <span className="h-1 flex-1 overflow-hidden rounded-full bg-border">
+                  <span
+                    className="block h-full rounded-full bg-accent transition-all duration-200"
+                    style={{ width: `${Math.round((sentenceProgress.done / sentenceProgress.total) * 100)}%` }}
+                  />
+                </span>
+                {sentenceProgress.done}/{sentenceProgress.total} 段
+              </div>
             )}
-          </div>
+            {sentenceStatus === 'error' && (
+              <div
+                className="mt-2 flex items-center justify-between rounded-md px-2 py-1.5 text-[11px] text-danger"
+                style={{ background: 'color-mix(in srgb, var(--danger) 7%, transparent)' }}
+              >
+                <span>{sentenceError || '句译失败，可重试'}</span>
+                <button className="btn px-2 py-0.5 text-[11px]" onClick={() => runSentence()}>
+                  重试
+                </button>
+              </div>
+            )}
+          </>
         )}
 
-        {/* 原句上下文折叠 */}
-        <details className="mt-2 text-[11px] text-text-faint">
-          <summary className="cursor-pointer select-none">原句上下文</summary>
-          <div className="u-break mt-1 border-l-2 border-border pl-2 leading-5">
-            {request.prev && <div className="opacity-60">{request.prev}</div>}
-            <div className="text-text-soft">{request.sentence}</div>
-            {request.next && <div className="opacity-60">{request.next}</div>}
-          </div>
-        </details>
+        {/* ── 词卡模式 ── */}
+        {!isSentenceCard && (
+          <>
+            {/* hit 层：词性 + 基本义 / 直接译法 */}
+            {hit && (
+              <div className="mb-2">
+                {hit.layer === 'wordbook' || hit.layer === 'glossary' || hit.layer === 'cache' ? (
+                  <div className="u-break rounded-md bg-accent-soft px-2.5 py-2">
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1 font-medium text-accent">
+                        {parseWordSections(hit.translation ?? '').context || hit.translation || '（暂无译法）'}
+                      </div>
+                      <button
+                        className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-accent/80 hover:bg-panel hover:text-accent"
+                        title="跳过词库/术语表/缓存，让模型结合当前句重新翻译"
+                        onClick={() => runWordRequest({ ...request, force: true })}
+                      >
+                        AI 重译
+                      </button>
+                    </div>
+                    {hit.stage != null && (
+                      <div className="mt-0.5 text-[11px] text-text-faint">
+                        生词阶段：{hit.stage === 0 ? '陌生' : hit.stage === 1 ? '学习中' : '已掌握'}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  // 仅"词典"模式（未走 LLM）直接铺释义；LLM 词卡模式下词典义收进折叠区，
+                  // 避免长词条（harness 8 个义项）把语境译法挤到卡片折叠线以下
+                  hit.layer === 'dict' && (hit.pos || hit.gloss) && (
+                    <div className="u-break text-xs leading-5 text-text-soft">
+                      {hit.pos && <span className="mr-1.5 italic text-text-faint">{hit.pos}</span>}
+                      <span className="whitespace-pre-wrap">{hit.gloss}</span>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
+
+            {/* LLM 三分区（流式中逐段成形；解析不到分区时原样展示） */}
+            {(streamText || status === 'loading') && (
+              <div className="text-xs leading-relaxed">
+                {sections.parsed ? (
+                  <div className="space-y-1.5">
+                    {sections.gloss && (
+                      <div className="u-break whitespace-pre-wrap text-text-soft">
+                        <span className="mr-1 text-[10px] text-text-faint">基本义</span>
+                        {sections.pos && <span className="mr-1 italic text-text-faint">{sections.pos}</span>}
+                        {sections.gloss}
+                      </div>
+                    )}
+                    {sections.context && (
+                      <div className="u-break rounded-md bg-accent-soft px-2 py-1.5">
+                        <span className="mr-1.5 text-[10px] text-accent/70">文中意</span>
+                        <span className="font-medium text-accent">{sections.context}</span>
+                      </div>
+                    )}
+                    {sections.extra.map((x, i) => (
+                      <div key={i} className="u-break text-[11px] text-text-faint">{x}</div>
+                    ))}
+                    {status === 'streaming' && <span className="typing-caret" />}
+                  </div>
+                ) : (
+                  <div className="u-break whitespace-pre-wrap">
+                    {streamText}
+                    {status === 'streaming' && <span className="typing-caret" />}
+                  </div>
+                )}
+                {status === 'loading' && !streamText && (
+                  <span className="flex items-center gap-1.5 text-text-faint">
+                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                    {llmHint || '正在查询…'}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {status === 'error' && (
+              <div
+                className="mt-1 flex items-start justify-between gap-2 rounded-md px-2 py-1.5 text-[11px] text-danger"
+                style={{ background: 'color-mix(in srgb, var(--danger) 7%, transparent)' }}
+              >
+                <span className="min-w-0 flex-1 break-words leading-4">{errorDetail || '出错了，已保留已收内容'}</span>
+                <button
+                  className="btn shrink-0 px-2 py-0.5 text-[11px]"
+                  onClick={() => {
+                    if (!request) return
+                    if (request.mode === 'dict') {
+                      setHit(null)
+                      setStatus('loading')
+                      setErrorDetail('')
+                      api
+                        .dictionary(request.word.trim().split(/\s+/)[0] ?? '')
+                        .then((entry) => {
+                          setHit({ layer: 'dict', pos: entry.pos, phonetic: entry.phonetic, gloss: entry.translation })
+                          setStatus('done')
+                        })
+                        .catch(() => {
+                          setHit({ layer: 'dict' })
+                          setStatus('error')
+                          setErrorDetail('词典未收录')
+                        })
+                    } else {
+                      setStreamText('')
+                      setErrorDetail('')
+                      runWordRequest(request)
+                    }
+                  }}
+                >
+                  重试
+                </button>
+              </div>
+            )}
+
+            {/* 修正译法输入 */}
+            {fixOpen && (
+              <div className="mt-2 flex gap-1.5">
+                <input
+                  className="input flex-1 py-1 text-xs"
+                  placeholder={`${request.word} → 中文译法`}
+                  value={fixText}
+                  autoFocus
+                  onChange={(e) => setFixText(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && submitFix()}
+                />
+                <button className="btn btn-primary px-2.5 py-1 text-xs" onClick={submitFix}>
+                  存
+                </button>
+              </div>
+            )}
+
+            {/* 句译区（词卡内“译全句”） */}
+            {sentenceMode && (
+              <div className="mt-2 rounded-md bg-panel-soft p-2">
+                <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-text-faint">
+                  <span>整句翻译</span>
+                  {sentenceProgress && sentenceProgress.total > 1 && (
+                    <span>{sentenceProgress.done}/{sentenceProgress.total} 段</span>
+                  )}
+                </div>
+                <div className="u-break whitespace-pre-wrap text-xs leading-relaxed">
+                  {sentenceText}
+                  {sentenceStatus === 'streaming' && <span className="typing-caret" />}
+                  {sentenceStatus === 'loading' && !sentenceText && <span className="text-text-faint">翻译中…</span>}
+                  {sentenceStatus === 'error' && <span className="text-danger">{sentenceError || '句译失败，可重试'}</span>}
+                </div>
+                {sentenceStatus === 'error' && (
+                  <button className="btn mt-1 px-2 py-0.5 text-[11px]" onClick={() => runSentence()}>
+                    重试句译
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* 词典释义（补充信息，默认折叠） */}
+            {hit?.layer === 'ecdict' && hit.gloss && (
+              <details className="mt-2 text-[11px] text-text-faint">
+                <summary className="cursor-pointer select-none">
+                  词典释义{hit.pos ? ` · ${hit.pos}` : ''}
+                </summary>
+                <div className="u-break mt-1 whitespace-pre-wrap border-l-2 border-border pl-2 leading-5">
+                  {hit.gloss}
+                </div>
+              </details>
+            )}
+
+            {/* 原句上下文折叠 */}
+            <details className="mt-2 text-[11px] text-text-faint">
+              <summary className="cursor-pointer select-none">原句上下文</summary>
+              <div className="u-break mt-1 border-l-2 border-border pl-2 leading-5">
+                {request.prev && <div className="opacity-60">{request.prev}</div>}
+                <div className="text-text-soft">{request.sentence}</div>
+                {request.next && <div className="opacity-60">{request.next}</div>}
+              </div>
+            </details>
+          </>
+        )}
       </div>
 
       {/* 操作行 */}
       <div className="flex items-center gap-1.5 border-t border-border bg-panel-soft px-2.5 py-1.5">
-        <button className="btn shrink-0 px-2 py-1 text-[11px]" onClick={addToWordbook} title="入生词库（附当前译法与原句）">
-          {saved ? (
-            <>
-              <IconCheck size={11} /> 已入库
-            </>
-          ) : (
-            <>
-              <IconPlus size={11} /> 生词
-            </>
-          )}
-        </button>
-        <button className="btn shrink-0 px-2 py-1 text-[11px]" onClick={() => setFixOpen((v) => !v)} title="修正译法 → 本文术语表">
-          <IconPencil size={11} /> 修正
-        </button>
-        <button className="btn shrink-0 px-2 py-1 text-[11px]" onClick={starTranslation} title="收藏译法">
-          <IconStar size={11} /> 收藏
-        </button>
-        {!sentenceMode && (
-          <button className="btn ml-auto px-2 py-1 text-[11px]" onClick={runSentence} title="翻译整句">
-            译全句
-          </button>
+        {isSentenceCard ? (
+          <>
+            <button className="btn shrink-0 px-2 py-1 text-[11px]" onClick={copyText} disabled={!sentenceText}>
+              <IconCopy size={11} /> 复制译文
+            </button>
+            <span className="ml-auto text-[10px] text-text-faint">
+              {sentenceStatus === 'done' ? '已完成' : busy ? '翻译中…' : ''}
+            </span>
+          </>
+        ) : (
+          <>
+            <button className="btn shrink-0 px-2 py-1 text-[11px]" onClick={addToWordbook} title="入生词库（附当前译法与原句）">
+              {saved ? (
+                <>
+                  <IconCheck size={11} /> 已入库
+                </>
+              ) : (
+                <>
+                  <IconPlus size={11} /> 生词
+                </>
+              )}
+            </button>
+            <button className="btn shrink-0 px-2 py-1 text-[11px]" onClick={() => setFixOpen((v) => !v)} title="修正译法 → 本文术语表">
+              <IconPencil size={11} /> 修正
+            </button>
+            <button className="btn shrink-0 px-2 py-1 text-[11px]" onClick={starTranslation} title="收藏译法">
+              <IconStar size={11} /> 收藏
+            </button>
+            {!sentenceMode && (
+              <button className="btn ml-auto px-2 py-1 text-[11px]" onClick={() => runSentence()} title="翻译整句">
+                译全句
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>

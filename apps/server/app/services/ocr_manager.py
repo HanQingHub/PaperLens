@@ -45,6 +45,9 @@ class OCRManager:
         if not todo:
             self._finalize_db(paper_id, "done", pages_done=len(done_pages), engine=None, error=None)
             return
+        # 先落库再落任务文件：worker 2s 轮询，反序会让"认领→running"被随后的
+        # pending 覆盖，界面永久停在排队中
+        self._set_status(paper_id, "pending", pages_total=pages_total, pages_done=len(done_pages))
         try:
             pdf_rel = pdf_abs.resolve().relative_to(self.settings.data_dir.resolve()).as_posix()
         except ValueError:
@@ -59,13 +62,21 @@ class OCRManager:
             "created_at": now_iso(),
         }
         (d / "task.json").write_text(json.dumps(task, ensure_ascii=False), encoding="utf-8")
-        self._set_status(paper_id, "pending", pages_total=pages_total, pages_done=len(done_pages))
         self.start_poll()
         if not self._paused:
             try:
-                self.spawn_worker()
+                spawn = self.spawn_worker()
             except Exception:
                 logger.exception("OCR spawn_worker 失败 paper_id=%s", paper_id)
+                spawn = "missing"
+            if spawn == "missing":
+                # 组件缺失：必须落可见错误，否则界面永远转圈
+                self._finalize_db(
+                    paper_id, "failed", pages_done=len(done_pages), engine=None,
+                    error="OCR 组件未部署或无法启动（缺少 paperlens-ocr）",
+                )
+                for f in _TASK_FILES:
+                    (d / f).unlink(missing_ok=True)
 
     @staticmethod
     def _strip_verbatim(p: Path) -> Path:
@@ -78,13 +89,15 @@ class OCRManager:
             return Path(s)
         return p
 
-    def spawn_worker(self) -> None:
+    def spawn_worker(self) -> str:
+        """拉起 OCR worker。返回 "alive"（已在跑/已拉起）/ "throttled"（5s 防风暴窗口内，
+        稍后重试即可）/ "missing"（组件未部署，需落可见失败态）。"""
         import time
 
         if self.worker_proc is not None and self.worker_proc.poll() is None:
-            return
+            return "alive"
         if time.monotonic() - self._spawned_at < 5:
-            return  # 防止 respawn 风暴
+            return "throttled"
         self._spawned_at = time.monotonic()
         try:
             if getattr(sys, "frozen", False):
@@ -101,7 +114,8 @@ class OCRManager:
                 ]
                 exe = next((c for c in candidates if c.is_file()), None)
                 if exe is None:
-                    return  # OCR 组件未部署：任务保持 pending
+                    logger.error("OCR 组件缺失：%s 下未找到 paperlens-ocr.exe", base)
+                    return "missing"
                 log_file = str(self.settings.logs_dir / "ocr-worker.log")
                 try:
                     self.settings.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -114,11 +128,12 @@ class OCRManager:
                     stdout=open(log_file, "a", encoding="utf-8"),
                     stderr=subprocess.STDOUT,
                 )
-                return
+                return "alive"
 
             cwd = Path(__file__).resolve().parents[3] / "ocr-worker"
             if not cwd.is_dir():
-                return  # worker 未实现：任务保持 pending
+                logger.error("OCR worker 源码目录缺失：%s", cwd)
+                return "missing"
             log_file = str(self.settings.logs_dir / "ocr-worker.log")
             try:
                 self.settings.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -128,12 +143,27 @@ class OCRManager:
                 [sys.executable, "-m", "worker.run", "--data-dir", str(self.settings.data_dir), "--log-file", log_file],
                 cwd=str(cwd), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
+            return "alive"
         except Exception:
             logger.exception("OCR spawn_worker 异常")
             raise
 
     def worker_alive(self) -> bool:
         return self.worker_proc is not None and self.worker_proc.poll() is None
+
+    def component_available(self) -> bool:
+        """OCR worker 可执行体是否就位（打包看 resources 目录，源码看 apps/ocr-worker）。"""
+        if not getattr(sys, "frozen", False):
+            return (Path(__file__).resolve().parents[3] / "ocr-worker").is_dir()
+        env_exe = os.environ.get("PAPERLENS_OCR_EXE")
+        if env_exe and self._strip_verbatim(Path(env_exe)).is_file():
+            return True
+        base = Path(sys.executable).resolve().parent
+        return any(c.is_file() for c in (
+            base / "paperlens-ocr" / "paperlens-ocr.exe",
+            base.parent / "paperlens-ocr" / "paperlens-ocr.exe",
+            base / "paperlens-ocr.exe",
+        ))
 
     def is_paused(self) -> bool:
         return self._paused
@@ -277,7 +307,19 @@ class OCRManager:
                     if paper is not None and paper.ocr_status == "none":
                         self._set_status(paper_id, "pending", pages_done=pages_done)
                     if not self._paused and not self.worker_alive():
-                        self.spawn_worker()
+                        if not self.component_available():
+                            logger.error("OCR 组件缺失，paper_id=%s 标记 failed", paper_id)
+                            self._finalize_db(
+                                paper_id, "failed", pages_done=pages_done, engine=None,
+                                error="OCR 组件未部署或无法启动（缺少 paperlens-ocr）",
+                            )
+                            for f in _TASK_FILES:
+                                (d / f).unlink(missing_ok=True)
+                        else:
+                            try:
+                                self.spawn_worker()
+                            except Exception:
+                                logger.exception("OCR spawn 失败 paper_id=%s", paper_id)
                 elif not task.exists() and not claimed.exists() and not result.exists():
                     paper = db.get(Paper, paper_id)
                     doc_tmp = db.get(OcrDoc, paper_id)
@@ -295,26 +337,39 @@ class OCRManager:
     def _set_status(self, paper_id: int, status: str, pages_total: int | None = None, pages_done: int | None = None) -> None:
         db = self._session_factory()
         try:
+            changed = False
             paper = db.get(Paper, paper_id)
-            if paper is not None:
+            if paper is not None and paper.ocr_status != status:
                 paper.ocr_status = status
+                changed = True
             doc = db.get(OcrDoc, paper_id)
             if doc is None:
                 if paper is None:
                     return
-                doc = OcrDoc(paper_id=paper_id, status=status)
+                doc = OcrDoc(paper_id=paper_id, status=status, pages_done=pages_done or 0)
                 db.add(doc)
-            doc.status = status
+                changed = True
+            elif doc.status != status:
+                doc.status = status
+                changed = True
             if status == "running" and not doc.started_at:
                 doc.started_at = now_iso()
-            if pages_total is not None:
+                changed = True
+            if pages_total is not None and doc.pages_total != pages_total:
                 doc.pages_total = pages_total
-            if pages_done is not None:
+                changed = True
+            if pages_done is not None and doc.pages_done != pages_done:
                 doc.pages_done = pages_done
-            if status in ("pending",):
+                changed = True
+            if status == "pending" and (doc.error or doc.started_at):
                 doc.error = None
                 doc.started_at = None
-            db.commit()
+                changed = True
+            # 轮询每秒一次：无变化不提交，避免 SQLite WAL 空写放大
+            if changed:
+                db.commit()
+            else:
+                db.rollback()
         finally:
             db.close()
 
@@ -331,11 +386,14 @@ class OCRManager:
                 doc = OcrDoc(paper_id=paper_id, status=status)
                 db.add(doc)
             doc.status = status
-            doc.engine = engine
-            doc.pages_done = pages_done
+            if engine:
+                doc.engine = engine
+            # 页数只增不减：并发下 worker 已写入的页不能被后到的较小值回退
+            doc.pages_done = max(int(doc.pages_done or 0), int(pages_done or 0))
+            if not doc.pages_total:
+                doc.pages_total = paper.page_count if paper is not None else doc.pages_done
             doc.finished_at = now_iso()
-            if error:
-                doc.error = str(error)[:2000]
+            doc.error = str(error)[:2000] if error else None
             db.commit()
         finally:
             db.close()

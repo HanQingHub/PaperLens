@@ -24,9 +24,10 @@ from app.services.llm_service import (
 PING_INTERVAL = 10.0  # 10s 无事件发 ping 心跳
 LOAD_WAIT_PING = 5.0  # 模型加载等待中心跳间隔（< 前端 15s SSE 看门狗；冷加载 60s 窗口不断流）
 FIRST_TOKEN_TIMEOUT = 30.0  # 首 token 30s 超时
-SENT_MAX_TOKENS = 500  # 句译输出上限（词卡 300 不够长句）
+SENT_MAX_TOKENS = 768  # 句译输出上限（学术长句中文常超 500 token，500 会截断）
+WORD_MAX_TOKENS = 320  # 词卡输出上限（三分区 + 少量抖动余量）
 
-INPUT_BUDGET_TOKENS = 1000  # 提示词总输入预算（N_CTX=4096，输出占 300，留足余量）
+INPUT_BUDGET_TOKENS = 1200  # 提示词总输入预算（N_CTX=4096；输出 320/768 + 模板开销仍有余量）
 TITLE_BUDGET_TOKENS = 30  # 论文标题预算
 GLOSSARY_BUDGET_TOKENS = 200  # 术语表（节选）预算
 WORD_MAX_CHARS = 256  # 单词/短语上限，超长视为误选长文本
@@ -182,33 +183,54 @@ class _StreamSanitizer:
 
 
 def _find_glossary(db: Session, paper_id: int, term: str) -> GlossaryTerm | None:
+    """术语表查找：大小写不敏感 + 去首尾标点（划词常带 "," / ")"）。"""
     if not term:
+        return None
+    key = term.strip(_WORD_STRIP_CHARS).strip()
+    if not key:
         return None
     row = (
         db.query(GlossaryTerm)
-        .filter(GlossaryTerm.paper_id == paper_id, GlossaryTerm.term == term)
+        .filter(
+            GlossaryTerm.paper_id == paper_id,
+            func.lower(GlossaryTerm.term) == key.lower(),
+        )
+        .order_by(GlossaryTerm.source.desc())  # user 修正优先于 tfidf
         .first()
     )
-    if row is None and term != term.lower():
-        row = (
-            db.query(GlossaryTerm)
-            .filter(GlossaryTerm.paper_id == paper_id, GlossaryTerm.term == term.lower())
-            .first()
-        )
     return row
 
 
-def _glossary_hits_text(db: Session, paper_id: int, budget: int = GLOSSARY_BUDGET_TOKENS) -> str:
+def _glossary_hits_text(db: Session, paper_id: int, sentence: str = "",
+                        budget: int = GLOSSARY_BUDGET_TOKENS) -> str:
+    """提示词用的术语对照：优先命中当前句的术语（保证本文译名一致），
+    再按置信度补足到 8 条；总 token 受预算约束。"""
     rows = (
         db.query(GlossaryTerm)
         .filter(GlossaryTerm.paper_id == paper_id, GlossaryTerm.domain_translation.isnot(None))
         .order_by(func.coalesce(GlossaryTerm.confidence, 0).desc(), GlossaryTerm.id)
-        .limit(8)
+        .limit(60)
         .all()
     )
+    if not rows:
+        return "（无）"
+    picked: list[GlossaryTerm] = []
+    if sentence:
+        low = sentence.lower()
+        for r in rows:
+            t = (r.term or "").strip().lower()
+            if len(t) < 2:
+                continue
+            if re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", low):
+                picked.append(r)
+    for r in rows:
+        if len(picked) >= 8:
+            break
+        if r not in picked:
+            picked.append(r)
     parts: list[str] = []
     total = 0
-    for r in rows:
+    for r in picked:
         part = f"{r.term}={r.domain_translation}"
         t = _est_tokens(part)
         if total + t > budget:
@@ -216,6 +238,17 @@ def _glossary_hits_text(db: Session, paper_id: int, budget: int = GLOSSARY_BUDGE
         parts.append(part)
         total += t
     return "; ".join(parts) or "（无）"
+
+
+def _word_cache_key(lemma: str, sentence: str) -> str:
+    """词缓存键：lemma + 语境指纹。
+    "文中意"强依赖所在句（attention 在方法段与结论段译法可能不同），
+    只按 lemma 命中会把上一处的语境译法直接搬给新句子 —— 用句子哈希做后缀，
+    同一句内重复查询仍毫秒命中，换句则重新推理。"""
+    if not sentence:
+        return lemma
+    h = hashlib.sha1(sentence.encode("utf-8")).hexdigest()[:10]
+    return f"{lemma}#{h}"
 
 
 def _word_cache_get(db: Session, user_id: int, paper_id: int, lemma: str, engine: str) -> dict | None:
@@ -283,7 +316,7 @@ def _cache_put(
                 TranslationCache.user_id == user_id,
                 TranslationCache.paper_id == paper_id,
                 TranslationCache.sentence_hash == sentence_hash,
-            TranslationCache.engine == engine,
+                TranslationCache.engine == engine,
             )
             .first()
         )
@@ -326,13 +359,113 @@ def save_history(db: Session, user_id: int, *, word: str, mode: str,
         db.rollback()
 
 
-SYSTEM_PROMPT = "你是学术翻译助手。只输出规定内容，不要解释。上下文仅供理解，不要翻译或输出它们。"
+SYSTEM_PROMPT = (
+    "你是学术论文的中英翻译助手。严格遵守输出格式：只输出被要求的分区或译文，"
+    "不解释、不复述原文、不使用 Markdown、不输出多余空行。"
+)
+
+# 词卡三分区：格式示例放在指令里（2B 小模型对"照抄形状"比"理解描述"更稳）
+WORD_FORMAT_EXAMPLE = "【词性】n.\n【基本义】注意；关注\n【文中意】注意力机制"
+
+# 分区名别名（模型自由发挥时归一到前端可解析的三个分区）
+_SECTION_ALIASES = {
+    "词性": "词性", "词类": "词性", "词性标注": "词性",
+    "基本义": "基本义", "基本含义": "基本义", "释义": "基本义", "词义": "基本义",
+    "常见义": "基本义", "常用义": "基本义", "词典义": "基本义",
+    "文中意": "文中意", "本文译法": "文中意", "文中译法": "文中意", "语境义": "文中意",
+    "文中含义": "文中意", "本文含义": "文中意", "语境含义": "文中意", "本句译法": "文中意",
+}
+_SECTION_LINE_RE = re.compile(
+    r"^\s*(?:[\[【]\s*)?(" + "|".join(sorted(map(re.escape, _SECTION_ALIASES), key=len, reverse=True))
+    + r")\s*(?:[\]】])?\s*[:：]?\s*(.*)$"
+)
+_SECTION_ORDER = ("词性", "基本义", "文中意")
+
+
+def _limit(s: str, n: int) -> str:
+    s = s.strip()
+    return s if len(s) <= n else s[:n].rstrip()
+
+
+def normalize_word_output(text: str) -> str:
+    """把模型输出规整成稳定三分区：
+    - 去 Markdown 装饰、行首项目符号、`[词性]`/`词性：` 等变体统一成 `【词性】`
+    - 分区别名归一（本文译法/语境义 → 文中意）
+    - 每个分区只取首行，超长截断；缺【文中意】时用【基本义】首项兜底
+    解析失败（无任何分区标记）时原样返回，交给前端兜底渲染。"""
+    body = (text or "").replace("**", "").replace("##", "")
+    sections: dict[str, str] = {}
+    extra: list[str] = []
+    for raw in body.splitlines():
+        line = raw.strip().lstrip("-•*· ").strip()
+        if not line:
+            continue
+        m = _SECTION_LINE_RE.match(line)
+        if m:
+            name = _SECTION_ALIASES.get(m.group(1), m.group(1))
+            val = m.group(2).strip().strip("｜|")
+            if val and not sections.get(name):
+                sections[name] = val
+            elif val and sections.get(name):
+                # 同一分区换行续写：并入（基本义允许多义项）
+                if name == "基本义":
+                    sections[name] = f"{sections[name]}；{val}"
+        elif sections:
+            # 分区内的续行：并入最后一个分区
+            last = next((k for k in reversed(_SECTION_ORDER) if sections.get(k)), None)
+            if last == "基本义":
+                sections[last] = f"{sections[last]} {line}"
+        else:
+            extra.append(line)
+
+    if not sections:
+        return body.strip()
+
+    caps = {"词性": 24, "基本义": 120, "文中意": 60}
+    out_lines = []
+    for name in _SECTION_ORDER:
+        val = sections.get(name)
+        if name == "词性":
+            val = _limit(val or "", caps[name])
+        elif name == "基本义":
+            val = _limit(val or "", caps[name])
+        else:
+            val = _limit(val or "", caps[name])
+            if not val:
+                val = _limit((sections.get("基本义") or "").split("；")[0], caps[name])
+        if val:
+            out_lines.append(f"【{name}】{val}")
+    for name, val in sections.items():
+        if name not in _SECTION_ORDER and val:
+            out_lines.append(f"【{name}】{_limit(val, 120)}")
+    if not out_lines and extra:
+        out_lines = extra[:3]
+    return "\n".join(out_lines)
+
+
+_SENT_ECHO_RE = re.compile(r"^\s*(?:原文|英文原文|source)\s*[:：]", re.I)
+_SENT_PREFIX_RE = re.compile(r"^\s*(?:译文|翻译|中文译文|translation)\s*[:：]\s*", re.I)
+_SENT_QUOTE_PAIRS = (("“", "”"), ('"', '"'), ("「", "」"), ("『", "』"))
+
+
+def normalize_sentence_output(text: str) -> str:
+    """句译清洗：去"译文："前缀、去整段包裹引号、去模型复述的"原文："行、折叠空行。
+    绝不改写正文用词 —— 只做包装层清理。"""
+    raw = (text or "").replace("\r\n", "\n")
+    lines = [ln for ln in raw.split("\n") if not _SENT_ECHO_RE.match(ln)]
+    out = "\n".join(lines).strip()
+    out = _SENT_PREFIX_RE.sub("", out).strip()
+    for left, right in _SENT_QUOTE_PAIRS:
+        if len(out) >= 2 and out.startswith(left) and out.endswith(right) and out.count(left) == 1:
+            out = out[len(left):-len(right)].strip()
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
 
 
 def word_prompt(paper: Paper, glossary: str, word: str, sentence: str, prev: str, nxt: str) -> str:
     lines = [f"论文标题: {_cut_head(paper.title or '', TITLE_BUDGET_TOKENS) or '（无）'}"]
     if glossary and glossary != "（无）":
-        lines.append(f"本文术语表(节选): {glossary}")
+        lines.append(f"本文术语对照: {glossary}")
     if sentence:
         lines.append(f"当前句: {sentence}")
     if prev:
@@ -340,42 +473,71 @@ def word_prompt(paper: Paper, glossary: str, word: str, sentence: str, prev: str
     if nxt:
         lines.append(f"下文: {nxt}")
     lines.append("")
-    lines.append(f'解释单词 "{word}"，只输出两个分区：')
-    lines.append("【基本义】该词的核心含义")
-    lines.append("【文中意】结合上下文在本句中最贴切的中文译法（一句话）")
-    lines.append("若上下文含公式或乱码，忽略噪声，按可辨识内容判断。")
+    lines.append(f'目标单词: "{word}"')
+    lines.append("请严格按下面三行输出（行首必须是分区名，不要输出其它行）：")
+    lines.append("【词性】词性缩写，如 n. / v. / adj. / adv.")
+    lines.append("【基本义】最常见中文义，多个用；分隔，不超过 20 字")
+    lines.append("【文中意】当前句中的中文译法，只写译法本身，不超过 15 字，不要解释")
+    lines.append("注意：若目标词在当前句中与相邻词构成术语（如 attention mechanism），"
+                 "【文中意】译出完整术语（注意力机制），不要只给单词的词典义。")
+    lines.append("注意：【文中意】的词性必须与当前句中的实际用法一致（名词译名词、动词译动词），"
+                 "不要沿用词典首义；术语对照表里已有的译名优先采用。")
+    lines.append("若目标词是 -ing / -tion 形式且在句中作主语或宾语（如 grounding），"
+                 "【文中意】译作名词或名词短语，不要写成“使……”的动词句式。")
+    lines.append("格式示例（照此形状，针对目标单词重新作答）：")
+    lines.append(WORD_FORMAT_EXAMPLE)
+    lines.append("若目标词是专有名词、缩写或方法名，【文中意】保留英文原名或给出通用中文名。")
+    lines.append("若上下文含公式或 OCR 噪声，忽略噪声，按可辨识内容判断。")
     return "\n".join(lines)
 
 
 def sentence_prompt(paper: Paper, glossary: str, text: str, prev: str, nxt: str) -> str:
     lines = [f"论文标题: {_cut_head(paper.title or '', TITLE_BUDGET_TOKENS) or '（无）'}"]
     if glossary and glossary != "（无）":
-        lines.append(f"本文术语表(节选): {glossary}")
+        lines.append(f"本文术语对照（译名保持一致）: {glossary}")
     if prev:
-        lines.append(f"上文: {prev}")
+        lines.append(f"上文（仅供理解，不要翻译）: {prev}")
     if nxt:
-        lines.append(f"下文: {nxt}")
+        lines.append(f"下文（仅供理解，不要翻译）: {nxt}")
     lines.append("")
-    lines.append("将下面的英文翻译为中文，只输出译文，不要解释：")
+    lines.append("把下面这段学术英文翻译成中文，要求：")
+    lines.append("1. 只输出中文译文：不要英文原文、不要解释、不要引号、不要“译文：”前缀；")
+    lines.append("2. 学术书面语，术语与上方对照表一致；")
+    lines.append("3. 公式、变量、引用编号（如 [12]）、模型/方法名保留原样；")
+    lines.append("4. 不扩写、不省略、不分段，保持原文信息量。")
+    lines.append("原文：")
     lines.append(text)
     return "\n".join(lines)
 
 
-WORD_FRAME_TOKENS = 120  # word 提示词固定文字 + word 本体（≤256 字符）缓冲
-SENT_FRAME_TOKENS = 60  # sentence 提示词固定文字缓冲
+CONTEXT_LABEL_TOKENS = 24  # "当前句:/上文:/下文:" 等标签的固定开销
 
 
-def _fixed_tokens(glossary: str, title: str, frame: int) -> int:
-    """提示词固定开销：system + 标题 + 术语表 + 框架文字，剩余预算全部留给上下文。"""
-    return _est_tokens(SYSTEM_PROMPT) + _est_tokens(title) + _est_tokens(glossary) + frame
+def _frame_budget(frame_prompt: str) -> int:
+    """固定部分（system + 提示词骨架 + 标签）之外可用于上下文的 token 预算。"""
+    return max(0, INPUT_BUDGET_TOKENS - _est_tokens(SYSTEM_PROMPT)
+               - _est_tokens(frame_prompt) - CONTEXT_LABEL_TOKENS)
 
 
-def _budget_contexts(*, fixed: int, sentence: str, prev: str, nxt: str) -> tuple[str, str, str]:
-    """总输入预算内按权重分配：sentence 60%，prev/nxt 各 20%（辅助上下文，超限截断）。"""
-    rest = max(0, INPUT_BUDGET_TOKENS - fixed)
-    s = _cut_middle(sentence, max(0, int(rest * 0.6)))
-    p = _cut_head(prev, max(0, int(rest * 0.2)))
-    n = _cut_head(nxt, max(0, int(rest * 0.2)))
+def _frame_budget(frame_prompt: str) -> int:
+    """固定部分（system + 提示词骨架 + 标签）之外可用于上下文的 token 预算。"""
+    return max(0, INPUT_BUDGET_TOKENS - _est_tokens(SYSTEM_PROMPT)
+               - _est_tokens(frame_prompt) - CONTEXT_LABEL_TOKENS)
+
+
+def _fit_contexts(frame_prompt: str, sentence: str, prev: str, nxt: str,
+                  *, sentence_ratio: float = 0.6) -> tuple[str, str, str]:
+    """按"实际渲染出的提示词"算固定开销，再把剩余预算分给上下文。
+
+    旧实现用经验常数估算框架 token，调整措辞后立刻失准（实测超预算 30%）。
+    这里先用空上下文渲染一遍提示词，量出真实的固定部分，再分配：
+    sentence 占 60%（句译可调高），prev/nxt 各 20%（辅助上下文，超限截断）。
+    """
+    rest = _frame_budget(frame_prompt)
+    head_ratio = max(0.0, (1.0 - sentence_ratio) / 2)
+    s = _cut_middle(sentence, max(0, int(rest * sentence_ratio)))
+    p = _cut_head(prev, max(0, int(rest * head_ratio)))
+    n = _cut_head(nxt, max(0, int(rest * head_ratio)))
     return s, p, n
 
 
@@ -442,6 +604,9 @@ async def _stream_llm(request, messages: list[dict], max_tokens: int = 300) -> A
 
 async def word_stream(db: Session, user_id: int, paper: Paper, body: dict, request) -> AsyncGenerator[str, None]:
     word = _strip_word(_clean(body.get("word") or ""))
+    # 所有格归一：model's → model（ECDICT 无 "model's" 词条）
+    if len(word) > 3 and re.search(r"['’]s$", word, re.I):
+        word = re.sub(r"['’]s$", "", word, flags=re.I)
     lemma = word.lower()
     sentence = _clean(body.get("sentence") or "")
     prev = _clean(body.get("prev") or "")
@@ -456,8 +621,11 @@ async def word_stream(db: Session, user_id: int, paper: Paper, body: dict, reque
     if invalid is not None:
         yield sse_event("error", {"code": "word_invalid", "detail": invalid})
         return
-    is_phrase = " " in word
+    is_phrase = len(word.split()) > 1
     term_match = word if is_phrase else lemma
+    # force=1：跳过词库/术语表/缓存三层命中，强制走 LLM 结合上下文重译
+    # （术语表 tfidf 预译可能语境不符，用户需要一条自救通路）
+    force = bool(body.get("force"))
 
     try:
         glossary = _find_glossary(db, paper.id, term_match)
@@ -466,7 +634,7 @@ async def word_stream(db: Session, user_id: int, paper: Paper, body: dict, reque
             word_row = db.query(Word).filter(Word.user_id == user_id, Word.lemma == lemma).first()
 
         # ① 个人词库（source=user 修正优先；FR-4 要求且带译法才短路）
-        if word_row is not None and word_row.translation:
+        if not force and word_row is not None and word_row.translation:
             user_fix = glossary is not None and glossary.source == "user" and glossary.domain_translation
             translation = glossary.domain_translation if user_fix else word_row.translation
             hit = {"layer": "wordbook", "translation": translation or "", "stage": word_row.stage}
@@ -478,7 +646,7 @@ async def word_stream(db: Session, user_id: int, paper: Paper, body: dict, reque
             return
 
         # ② 本文术语表（需已有译法才出卡；预译留空的词划词时现查）
-        if glossary is not None and glossary.domain_translation:
+        if not force and glossary is not None and glossary.domain_translation:
             yield sse_event("hit", {
                 "layer": "glossary", "translation": glossary.domain_translation or "",
                 "source": glossary.source, "term": glossary.term, "badge": "本文术语",
@@ -486,9 +654,10 @@ async def word_stream(db: Session, user_id: int, paper: Paper, body: dict, reque
             yield sse_event("done", {"layer": "glossary", "cached": True})
             return
 
-        # ③ 翻译缓存
+        # ③ 翻译缓存（lemma + 语境指纹；同句重复查询才命中）
         engine = f"llm-{llm_service.model_id}"
-        cached = _word_cache_get(db, user_id, paper.id, lemma, engine)
+        cache_key = _word_cache_key(lemma, sentence)
+        cached = None if force else _word_cache_get(db, user_id, paper.id, cache_key, engine)
         if cached is not None:
             yield sse_event("hit", {"layer": "cache", **cached})
             yield sse_event("done", {"layer": "cache", "cached": True})
@@ -502,17 +671,16 @@ async def word_stream(db: Session, user_id: int, paper: Paper, body: dict, reque
                 "gloss": entry.get("translation"), "lemma": entry.get("lemma"),
             })
 
-        glossary_text = _glossary_hits_text(db, paper.id)
-        title = _cut_head(paper.title or "", TITLE_BUDGET_TOKENS) or "（无）"
-        fixed = _fixed_tokens(glossary_text if glossary_text != "（无）" else "", title, WORD_FRAME_TOKENS)
-        sentence, prev, nxt = _budget_contexts(fixed=fixed, sentence=sentence, prev=prev, nxt=nxt)
+        glossary_text = _glossary_hits_text(db, paper.id, f"{sentence} {word}")
+        frame = word_prompt(paper, glossary_text, word, "", "", "")
+        sentence, prev, nxt = _fit_contexts(frame, sentence, prev, nxt, sentence_ratio=0.6)
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": word_prompt(paper, glossary_text, word, sentence, prev, nxt)},
         ]
         full = ""
         san = _StreamSanitizer()
-        async for kind, text in _stream_llm(request, messages):
+        async for kind, text in _stream_llm(request, messages, max_tokens=WORD_MAX_TOKENS):
             if kind == "ping":
                 yield sse_event("ping", {})
                 continue
@@ -530,11 +698,12 @@ async def word_stream(db: Session, user_id: int, paper: Paper, body: dict, reque
                 "detail": "模型未返回有效内容，可点击重试",
             })
             return
+        normalized = normalize_word_output(full)
         engine = f"llm-{llm_service.model_id}"
-        _cache_put(db, user_id, paper.id, lemma=lemma, sentence_hash=None,
-                   engine=engine, result={"translation": full})
+        _cache_put(db, user_id, paper.id, lemma=cache_key, sentence_hash=None,
+                   engine=engine, result={"translation": normalized, "raw": full})
         save_history(db, user_id, word=lemma, mode="word",
-                     result={"translation": full}, sentence=sentence or None)
+                     result={"translation": normalized}, sentence=sentence or None)
         yield sse_event("done", {"engine": engine, "cached": False})
     except LLMLoadingTimeout as e:
         yield sse_event("error", {"code": "llm_loading_timeout", "detail": str(e)})
@@ -555,13 +724,13 @@ async def sentence_stream(db: Session, user_id: int, paper: Paper, body: dict, r
         yield sse_event("error", {"code": "text_invalid", "detail": "未选中有效文本"})
         return
     try:
-        glossary_text = _glossary_hits_text(db, paper.id)
-        title = _cut_head(paper.title or "", TITLE_BUDGET_TOKENS) or "（无）"
-        fixed = _fixed_tokens(glossary_text if glossary_text != "（无）" else "", title, SENT_FRAME_TOKENS)
-        rest = max(0, INPUT_BUDGET_TOKENS - fixed)
-        if _est_tokens(text) > int(rest * 0.7):
+        glossary_text = _glossary_hits_text(db, paper.id, text)
+        frame = sentence_prompt(paper, glossary_text, "", "", "")
+        # 超预算直接拒绝（前端按句切段后重发），不静默截断——半句译文比报错更误导
+        if _est_tokens(text) > int(_frame_budget(frame) * 0.8):
             yield sse_event("error", {"code": "text_too_long", "detail": "文本过长，请分段选择后再翻译"})
             return
+        text, prev, nxt = _fit_contexts(frame, text, prev, nxt, sentence_ratio=0.8)
         h = hashlib.sha256(text.encode("utf-8")).hexdigest()
         engine = f"llm-{llm_service.model_id}"
         cached = _sentence_cache_get(db, user_id, paper.id, text, engine)
@@ -569,8 +738,6 @@ async def sentence_stream(db: Session, user_id: int, paper: Paper, body: dict, r
             yield sse_event("hit", {"layer": "cache", **cached})
             yield sse_event("done", {"layer": "cache", "cached": True})
             return
-        prev = _cut_head(prev, max(0, int(rest * 0.15)))
-        nxt = _cut_head(nxt, max(0, int(rest * 0.15)))
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": sentence_prompt(paper, glossary_text, text, prev, nxt)},
@@ -595,11 +762,12 @@ async def sentence_stream(db: Session, user_id: int, paper: Paper, body: dict, r
                 "detail": "模型未返回有效译文，可点击重试",
             })
             return
+        normalized = normalize_sentence_output(full)
         engine = f"llm-{llm_service.model_id}"
         _cache_put(db, user_id, paper.id, lemma=None, sentence_hash=h,
-                   engine=engine, result={"translation": full})
+                   engine=engine, result={"translation": normalized})
         save_history(db, user_id, word=_cut_head(text, 80), mode="sentence",
-                     result={"translation": full}, sentence=text)
+                     result={"translation": normalized}, sentence=text)
         yield sse_event("done", {"engine": engine, "cached": False})
     except LLMLoadingTimeout as e:
         yield sse_event("error", {"code": "llm_loading_timeout", "detail": str(e)})

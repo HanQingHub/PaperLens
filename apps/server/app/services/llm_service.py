@@ -85,7 +85,17 @@ def _strip_verbatim(p: Path) -> Path:
 
 
 def get_rss_mb() -> float | None:
+    """当前进程常驻内存（MB）。优先 psutil；无 psutil 时走 Win32
+    K32GetProcessMemoryInfo（psapi 导出在部分 Python/Windows 组合上返回 0，
+    K32 为内核导出，参数需显式 argtypes 否则 HANDLE 被截断）。"""
     try:
+        import psutil
+
+        return round(psutil.Process().memory_info().rss / 1024 / 1024, 1)
+    except Exception:
+        pass
+    try:
+        import ctypes
         import ctypes.wintypes as wt
 
         class PMC(ctypes.Structure):
@@ -99,8 +109,10 @@ def get_rss_mb() -> float | None:
 
         pmc = PMC()
         pmc.cb = ctypes.sizeof(PMC)
-        handle = ctypes.windll.kernel32.GetCurrentProcess()
-        if ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(pmc), pmc.cb):
+        fn = ctypes.windll.kernel32.K32GetProcessMemoryInfo
+        fn.argtypes = [wt.HANDLE, ctypes.POINTER(PMC), wt.DWORD]
+        fn.restype = wt.BOOL
+        if fn(ctypes.windll.kernel32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
             return round(pmc.WorkingSetSize / 1024 / 1024, 1)
     except Exception:
         pass
@@ -344,6 +356,9 @@ class LLMService:
                 it = llm.create_chat_completion(
                     messages=messages, stream=True, max_tokens=max_tokens,
                     temperature=0.3, top_p=0.8, top_k=20,
+                    # 2B 小模型在长句/术语复述上容易循环（"注意力注意力…"），
+                    # 轻量重复惩罚即可压住，且不改变译文的用词分布
+                    repeat_penalty=1.08,
                 )
                 while True:
                     if self._stopping.is_set():

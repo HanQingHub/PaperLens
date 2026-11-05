@@ -91,9 +91,10 @@ def ocr_queue_pause(body: dict, user: User = Depends(get_current_user)):
 @router.post("/papers/{paper_id}/ocr/cancel", status_code=200)
 def cancel_ocr(paper_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     paper = owned_paper(db, user, paper_id)
-    if paper.ocr_status != "pending":
-        raise HTTPException(status_code=409, detail="仅排队中的任务可取消")
+    if paper.ocr_status not in ("pending", "running"):
+        raise HTTPException(status_code=409, detail="当前没有进行中的 OCR 任务")
     from app.main import app
+    # 运行中同样允许取消：删任务目录后 worker 在页边界自行退出（页内渲染无法中断）
     app.state.ocr_manager.cancel(paper_id)
     paper.ocr_status = "none"
     doc = db.get(OcrDoc, paper_id)
