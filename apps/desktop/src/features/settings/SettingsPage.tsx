@@ -11,6 +11,7 @@ import Modal, { ConfirmModal } from '../shared/Modal'
 import { IconBook, IconPencil, IconX } from '../../components/shared/Icon'
 import { toast } from '../shared/Toast'
 import { guardMdNav } from '../reader/mdDirty'
+import { readFrontendStyle, requestFrontendStyle } from '../../frontend-next/stylePreference'
 
 const THEMES: { key: AppSettings['theme']; label: string; colors: [string, string, string] }[] = [
   { key: 'warm', label: '暖纸', colors: ['#faf7f0', '#ffffff', '#33658a'] },
@@ -497,6 +498,22 @@ export default function SettingsPage() {
           </Row>
           <Row label="动效" hint="关闭后禁用界面过渡与动画">
             <Toggle checked={settings.animations} onChange={(v) => save({ animations: v })} />
+          </Row>
+          <Row label="界面风格" hint="立即切换，无需重启；页签、阅读位置与主题设置保持不变">
+            <div className="flex gap-1.5">
+              {([
+                { key: 'next', label: '全新界面' },
+                { key: 'classic', label: '经典界面' },
+              ] as const).map((s) => (
+                <button
+                  key={s.key}
+                  className={`rounded-md border px-3 py-1 text-[12px] transition-all ${readFrontendStyle() === s.key ? 'border-accent text-accent' : 'border-border text-text-soft hover:border-border-strong'}`}
+                  onClick={() => requestFrontendStyle(s.key)}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
           </Row>
         </Section>
 

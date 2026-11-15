@@ -5,6 +5,7 @@ import App from './App'
 import ErrorBoundary from './components/shared/ErrorBoundary'
 import './styles/theme.css'
 import './styles/panels.css'
+import './frontend-next/next.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -1,0 +1,1330 @@
+/* ==========================================================================
+   PaperLens · 全新阅读器（frontend-next）
+   所有选择器限定在 .pnx-root / .pnx-root.pnx-reader 下，类名统一 pnx- 前缀。
+   硬约束：
+   - PageView（.page-wrapper）及其叠加层原样使用，不复制、不改写；
+   - 不在 .pnx-reader / .pnx-reader-main / .pnx-primary-pane / .pnx-pdf-scroll /
+     .pnx-page-stack 等页面祖先上设置 transform / scale / rotate / filter /
+     zoom，避免选区与批注坐标错位；
+   - 不改 .textLayer 字号 / 行高；
+   - 动效只落在独立浮层（大纲 / 搜索 / 回链 / OCR 提示），结束即归还；
+   - 不跑常驻装饰 rAF（仅 CSS spinner，且 no-motion / reduced-motion 归零）。
+   ========================================================================== */
+
+/* ── 外层：填满壳层内容区（.pnx-content 已是 overflow:hidden 的 flex 列）── */
+.pnx-root.pnx-reader,
+.pnx-root .pnx-reader {
+  --pnx-reader-heading: var(--font-serif);
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--pnx-line);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--pnx-accent) 4%, transparent), transparent 20%),
+    var(--pnx-paper);
+  box-shadow: var(--pnx-shadow);
+  color: var(--pnx-ink);
+}
+
+/* ── 顶部：题录行 + 工具行 ─────────────────────────────────────────────── */
+.pnx-root .pnx-reader-header {
+  position: relative;
+  z-index: 40;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  padding: 10px 72px 9px 16px;
+  border-bottom: 1px solid var(--pnx-line);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--pnx-paper) 84%, var(--pnx-accent) 4%), var(--pnx-paper));
+  /* 右上角为无边框窗口控制区：保留 72px 安全列（控制件 2×28px + 间距 + 边距）。 */
+  padding-right: max(72px, calc(env(safe-area-inset-right) + 64px));
+}
+
+.pnx-root .pnx-reader-masthead {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.pnx-root .pnx-back-button {
+  display: inline-flex;
+  height: 29px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px 0 7px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--pnx-ink-soft);
+  font-size: 11.5px;
+  line-height: 1;
+  transition:
+    background-color var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.pnx-root .pnx-back-button:hover {
+  border-color: var(--pnx-line);
+  background: color-mix(in srgb, var(--pnx-accent) 7%, transparent);
+  color: var(--pnx-accent);
+}
+
+.pnx-root .pnx-back-arrow {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.pnx-root .pnx-document-heading {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pnx-root .pnx-document-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.pnx-root .pnx-document-title-row h1 {
+  overflow: hidden;
+  min-width: 0;
+  flex: 0 1 auto;
+  margin: 0;
+  color: var(--pnx-ink);
+  font-family: var(--pnx-reader-heading);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pnx-root .pnx-document-type {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border: 1px solid color-mix(in srgb, var(--pnx-accent) 32%, transparent);
+  border-radius: 4px;
+  color: var(--pnx-accent);
+  font-family: var(--font-ui);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.pnx-root .pnx-favorite-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--pnx-accent);
+  line-height: 1;
+}
+
+.pnx-root .pnx-document-heading p {
+  overflow: hidden;
+  margin: 0;
+  color: var(--pnx-ink-faint);
+  font-size: 10.5px;
+  letter-spacing: 0.012em;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pnx-root .pnx-document-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+/* ── 工具按钮（通用）────────────────────────────────────────────────────── */
+.pnx-root .pnx-tool-button {
+  position: relative;
+  display: inline-flex;
+  height: 29px;
+  min-width: 29px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--pnx-ink-soft);
+  font-size: 11.5px;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.pnx-root .pnx-tool-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--pnx-accent) 8%, transparent);
+  color: var(--pnx-ink);
+}
+
+.pnx-root .pnx-tool-button.pnx-is-active {
+  border-color: color-mix(in srgb, var(--pnx-accent) 24%, transparent);
+  background: var(--pnx-accent-soft);
+  color: var(--pnx-accent);
+}
+
+.pnx-root .pnx-tool-button.pnx-is-active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--pnx-accent) 16%, var(--pnx-paper));
+  color: var(--pnx-accent);
+}
+
+.pnx-root .pnx-tool-button:disabled {
+  color: var(--pnx-ink-faint);
+}
+
+.pnx-root .pnx-tool-badge {
+  display: inline-flex;
+  height: 15px;
+  min-width: 16px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--pnx-accent);
+  color: var(--pnx-paper);
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.pnx-root .pnx-letter-icon {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-family: var(--font-serif);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.pnx-root .pnx-split-icon,
+.pnx-root .pnx-export-icon {
+  display: inline-flex;
+  width: 14px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  font-size: 12.5px;
+  line-height: 1;
+}
+
+/* ── 工具行：页码 / 缩放 / 模式 / 视图 / 对照 / 导出 ─────────────────────── */
+.pnx-root .pnx-reader-tools {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  row-gap: 6px;
+  margin-top: 8px;
+}
+
+.pnx-root .pnx-tool-group {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 1px;
+  border: 1px solid var(--pnx-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--pnx-paper-soft) 78%, var(--pnx-paper));
+}
+
+.pnx-root .pnx-tool-group .pnx-tool-button {
+  height: 26px;
+  min-width: 26px;
+  padding: 0 6px;
+  border-radius: 7px;
+}
+
+.pnx-root .pnx-tool-group .pnx-tool-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--pnx-accent) 9%, transparent);
+}
+
+.pnx-root .pnx-tool-separator {
+  width: 1px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin: 0 3px;
+  background: var(--pnx-line-strong);
+  opacity: 0.6;
+}
+
+.pnx-root .pnx-page-tools {
+  padding-left: 4px;
+}
+
+.pnx-root .pnx-page-indicator {
+  display: inline-flex;
+  height: 26px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px 0 9px;
+  color: var(--pnx-ink-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pnx-root .pnx-page-indicator input {
+  width: 40px;
+  height: 22px;
+  padding: 0 2px;
+  border: 1px solid var(--pnx-line-strong);
+  border-radius: 6px;
+  background: var(--pnx-paper);
+  color: var(--pnx-ink);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  appearance: textfield;
+  transition:
+    border-color var(--dur-1) var(--ease),
+    box-shadow var(--dur-1) var(--ease);
+}
+
+.pnx-root .pnx-page-indicator input::-webkit-outer-spin-button,
+.pnx-root .pnx-page-indicator input::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.pnx-root .pnx-page-indicator input:focus {
+  border-color: var(--pnx-accent);
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--pnx-accent) 16%, transparent);
+}
+
+.pnx-root .pnx-zoom-value {
+  min-width: 38px;
+  padding: 0 2px;
+  color: var(--pnx-ink-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.pnx-root .pnx-mode-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--pnx-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--pnx-paper-soft) 78%, var(--pnx-paper));
+}
+
+.pnx-root .pnx-mode-switch button {
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--pnx-ink-faint);
+  font-size: 10.5px;
+  line-height: 1;
+  transition:
+    background-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.pnx-root .pnx-mode-switch button:hover {
+  color: var(--pnx-ink-soft);
+}
+
+.pnx-root .pnx-mode-switch button.pnx-is-active {
+  background: var(--pnx-accent);
+  color: var(--pnx-panel);
+  font-weight: 600;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--pnx-ink) 18%, transparent);
+}
+
+.pnx-root .pnx-view-tools,
+.pnx-root .pnx-export-tools {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.pnx-root .pnx-zoom-tools {
+  gap: 1px;
+}
+
+.pnx-root .pnx-compare-dropdown {
+  flex: 0 0 auto;
+}
+
+.pnx-root .pnx-dropdown-panel {
+  z-index: 60;
+}
+
+.pnx-root .pnx-md-tools {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding-left: 2px;
+  color: var(--pnx-ink-faint);
+}
+
+.pnx-root .pnx-md-label {
+  padding: 2px 6px;
+  border: 1px solid var(--pnx-line);
+  border-radius: 4px;
+  color: var(--pnx-accent);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.pnx-root .pnx-md-meta {
+  overflow: hidden;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pnx-root .pnx-md-hint {
+  font-size: 10.5px;
+  opacity: 0.75;
+}
+
+/* ── 主体：阅读区 / 缩略图 / 对照 ───────────────────────────────────────── */
+.pnx-root .pnx-reader-main {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  background:
+    radial-gradient(120% 70% at 50% -8%, color-mix(in srgb, var(--pnx-accent) 7%, transparent), transparent 62%),
+    color-mix(in srgb, var(--pnx-desk) 74%, var(--pnx-paper));
+}
+
+.pnx-root .pnx-primary-pane {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pnx-root .pnx-pdf-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--pnx-line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.pnx-root .pnx-pdf-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.pnx-root .pnx-pdf-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pnx-root .pnx-pdf-scroll::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pnx-ink-faint) 52%, transparent);
+  background-clip: padding-box;
+}
+
+.pnx-root .pnx-pdf-scroll::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--pnx-ink-soft) 62%, transparent);
+  background-clip: padding-box;
+}
+
+.pnx-root .pnx-page-stack {
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  flex-direction: column;
+  align-items: center;
+  padding: 22px 40px 40px;
+}
+
+.pnx-root .pnx-page-placeholder {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+  overflow: hidden;
+  border: 1px dashed color-mix(in srgb, var(--pnx-line-strong) 74%, transparent);
+  border-radius: 3px;
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      color-mix(in srgb, var(--pnx-paper) 64%, transparent) 0 10px,
+      color-mix(in srgb, var(--pnx-paper-soft) 64%, transparent) 10px 20px
+    );
+  color: var(--pnx-ink-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+}
+
+.pnx-root .pnx-page-placeholder span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pnx-paper) 82%, transparent);
+}
+
+.pnx-root .pnx-markdown-host {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 18px 22px 20px;
+}
+
+.pnx-root .pnx-markdown-host > div {
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--pnx-line);
+  border-radius: 12px;
+  background: var(--pnx-paper);
+  box-shadow: var(--pnx-shadow);
+}
+
+.pnx-root .pnx-rail-host {
+  display: flex;
+  min-height: 0;
+  flex: 0 0 auto;
+  border-left: 1px solid var(--pnx-line);
+  background: color-mix(in srgb, var(--pnx-paper-soft) 82%, var(--pnx-paper));
+}
+
+/* 缩略图轨组件自带 Tailwind 边框/底色：宿主统一视觉，组件本身原样保留 */
+.pnx-root .pnx-rail-host > div {
+  border-left: 0;
+  background: transparent;
+}
+
+/* ── 加载 / 失败 / 空态 ─────────────────────────────────────────────────── */
+.pnx-root .pnx-reader-loading {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: auto;
+  padding: 40px 24px;
+  color: var(--pnx-ink-faint);
+  text-align: center;
+}
+
+.pnx-root .pnx-reader-loading strong {
+  margin-top: 10px;
+  color: var(--pnx-ink);
+  font-family: var(--pnx-reader-heading);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.pnx-root .pnx-reader-loading > span:last-child {
+  font-size: 11.5px;
+}
+
+.pnx-root .pnx-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid color-mix(in srgb, var(--pnx-accent) 22%, transparent);
+  border-top-color: var(--pnx-accent);
+  border-radius: 50%;
+  animation: pnx-reader-spin 0.9s linear infinite;
+}
+
+.pnx-root .pnx-reader-state {
+  display: flex;
+  max-width: 430px;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: auto;
+  padding: 30px 34px 28px;
+  border: 1px solid var(--pnx-line);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--pnx-accent) 4%, transparent), transparent 46%),
+    var(--pnx-paper);
+  box-shadow: var(--pnx-shadow-lifted);
+  text-align: center;
+}
+
+.pnx-root .pnx-state-mark {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--pnx-accent) 34%, transparent);
+  border-radius: 50%;
+  color: var(--pnx-accent);
+  font-family: var(--font-serif);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.pnx-root .pnx-reader-state h2 {
+  margin: 4px 0 0;
+  color: var(--pnx-ink);
+  font-family: var(--pnx-reader-heading);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+}
+
+.pnx-root .pnx-reader-state p {
+  max-width: 330px;
+  margin: 0;
+  color: var(--pnx-ink-soft);
+  font-size: 12px;
+  line-height: 1.62;
+}
+
+.pnx-root .pnx-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* ── 通用按钮 ───────────────────────────────────────────────────────────── */
+.pnx-root .pnx-primary-button,
+.pnx-root .pnx-secondary-button {
+  display: inline-flex;
+  height: 31px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  transition:
+    background-color var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+
+.pnx-root .pnx-primary-button {
+  border: 1px solid transparent;
+  background: var(--pnx-accent);
+  color: var(--pnx-panel);
+}
+
+.pnx-root .pnx-primary-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--pnx-accent) 86%, var(--pnx-ink));
+}
+
+.pnx-root .pnx-secondary-button {
+  border: 1px solid var(--pnx-line-strong);
+  background: transparent;
+  color: var(--pnx-ink-soft);
+}
+
+.pnx-root .pnx-secondary-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--pnx-accent) 40%, var(--pnx-line-strong));
+  background: color-mix(in srgb, var(--pnx-accent) 6%, transparent);
+  color: var(--pnx-accent);
+}
+
+/* ── 大纲抽屉（浮层）────────────────────────────────────────────────────── */
+.pnx-root .pnx-outline-drawer {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 14px;
+  z-index: 32;
+  display: flex;
+  width: 272px;
+  max-width: calc(100% - 28px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--pnx-line-strong);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--pnx-paper) 96%, transparent);
+  box-shadow: var(--pnx-shadow-lifted);
+  animation: pnx-reader-slide-in 0.18s var(--ease) both;
+}
+
+.pnx-root .pnx-floating-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 12px 9px;
+  border-bottom: 1px solid var(--pnx-line);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--pnx-accent) 5%, transparent), transparent);
+}
+
+.pnx-root .pnx-floating-header > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pnx-root .pnx-floating-header span {
+  color: var(--pnx-ink);
+  font-family: var(--pnx-reader-heading);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.015em;
+}
+
+.pnx-root .pnx-floating-header small {
+  color: var(--pnx-ink-faint);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.pnx-root .pnx-floating-header button {
+  display: inline-flex;
+  width: 23px;
+  height: 23px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--pnx-ink-faint);
+}
+
+.pnx-root .pnx-floating-header button:hover {
+  border-color: var(--pnx-line);
+  background: color-mix(in srgb, var(--pnx-accent) 8%, transparent);
+  color: var(--pnx-ink);
+}
+
+.pnx-root .pnx-outline-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 7px 10px;
+  scrollbar-color: var(--pnx-line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.pnx-root .pnx-outline-node > button {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--pnx-ink-soft);
+  font-size: 11.5px;
+  line-height: 1.45;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pnx-root .pnx-outline-node > button:hover {
+  background: color-mix(in srgb, var(--pnx-accent) 9%, transparent);
+  color: var(--pnx-accent);
+}
+
+.pnx-root .pnx-empty-note {
+  margin: 10px 8px;
+  color: var(--pnx-ink-faint);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+/* ── 搜索条（浮层）──────────────────────────────────────────────────────── */
+.pnx-root .pnx-search-panel {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 34;
+  display: flex;
+  width: min(432px, calc(100% - 28px));
+  align-items: center;
+  gap: 3px;
+  padding: 5px 6px 5px 10px;
+  border: 1px solid var(--pnx-line-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--pnx-paper) 97%, transparent);
+  box-shadow: var(--pnx-shadow-lifted);
+  animation: pnx-reader-pop-in 0.16s var(--ease) both;
+}
+
+.pnx-root .pnx-search-panel:focus-within {
+  border-color: color-mix(in srgb, var(--pnx-accent) 46%, var(--pnx-line-strong));
+}
+
+.pnx-root .pnx-search-panel > svg {
+  flex: 0 0 auto;
+  color: var(--pnx-accent);
+  opacity: 0.8;
+}
+
+.pnx-root .pnx-search-panel input {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 26px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--pnx-ink);
+  font-size: 12.5px;
+  outline: none;
+}
+
+.pnx-root .pnx-search-panel input::placeholder {
+  color: var(--pnx-ink-faint);
+}
+
+.pnx-root .pnx-search-count {
+  flex: 0 0 auto;
+  min-width: 62px;
+  padding: 0 3px;
+  color: var(--pnx-ink-faint);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pnx-root .pnx-search-panel button {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--pnx-ink-faint);
+  font-size: 11.5px;
+  line-height: 1;
+}
+
+.pnx-root .pnx-search-panel button:hover {
+  border-color: var(--pnx-line);
+  background: color-mix(in srgb, var(--pnx-accent) 8%, transparent);
+  color: var(--pnx-accent);
+}
+
+/* ── 文献回链条（浮层）──────────────────────────────────────────────────── */
+.pnx-root .pnx-ref-bar {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 33;
+  display: flex;
+  max-width: calc(100% - 28px);
+  align-items: center;
+  gap: 6px;
+  padding: 6px 7px 6px 12px;
+  border: 1px solid var(--pnx-line-strong);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pnx-paper) 97%, transparent);
+  box-shadow: var(--pnx-shadow-lifted);
+  animation: pnx-reader-pop-in 0.16s var(--ease) both;
+}
+
+.pnx-root .pnx-ref-title {
+  overflow: hidden;
+  max-width: 240px;
+  color: var(--pnx-ink-soft);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pnx-root .pnx-ref-position,
+.pnx-root .pnx-ref-empty {
+  color: var(--pnx-ink-faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pnx-root .pnx-ref-bar button {
+  display: inline-flex;
+  height: 23px;
+  min-width: 23px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--pnx-ink-soft);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.pnx-root .pnx-ref-bar button:hover {
+  border-color: var(--pnx-line);
+  background: color-mix(in srgb, var(--pnx-accent) 9%, transparent);
+  color: var(--pnx-accent);
+}
+
+.pnx-root .pnx-ref-bar .pnx-ref-return {
+  padding: 0 9px;
+  border-color: var(--pnx-line);
+  color: var(--pnx-accent);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.pnx-root .pnx-mini-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 1.5px solid color-mix(in srgb, var(--pnx-accent) 24%, transparent);
+  border-top-color: var(--pnx-accent);
+  border-radius: 50%;
+  animation: pnx-reader-spin 0.8s linear infinite;
+}
+
+/* ── OCR 状态条 ─────────────────────────────────────────────────────────── */
+.pnx-root .pnx-ocr-banner {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  z-index: 33;
+  display: flex;
+  max-width: calc(100% - 32px);
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px 7px 14px;
+  border: 1px solid var(--pnx-line-strong);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pnx-paper) 97%, transparent);
+  box-shadow: var(--pnx-shadow-lifted);
+  color: var(--pnx-ink-soft);
+  font-size: 11px;
+  transform: translateX(-50%);
+  animation: pnx-reader-pop-in-centered 0.16s var(--ease) both;
+}
+
+.pnx-root .pnx-ocr-banner button {
+  height: 23px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  border: 1px solid var(--pnx-line-strong);
+  border-radius: 999px;
+  background: var(--pnx-paper);
+  color: var(--pnx-ink-soft);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.pnx-root .pnx-ocr-banner button:hover {
+  border-color: color-mix(in srgb, var(--pnx-accent) 40%, var(--pnx-line-strong));
+  color: var(--pnx-accent);
+}
+
+.pnx-root .pnx-ocr-error {
+  color: var(--pnx-danger);
+}
+
+.pnx-root .pnx-ocr-banner .pnx-ocr-start {
+  border-color: transparent;
+  background: var(--pnx-accent);
+  color: var(--pnx-panel);
+  font-weight: 600;
+}
+
+.pnx-root .pnx-ocr-banner .pnx-ocr-start:hover {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--pnx-accent) 86%, var(--pnx-ink));
+  color: var(--pnx-panel);
+}
+
+/* 回链条与 OCR 条同处底部：回链优先，OCR 上移避免重叠 */
+.pnx-root .pnx-ref-bar ~ .pnx-ocr-banner {
+  bottom: 57px;
+}
+
+.pnx-root .pnx-linking-hint {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  z-index: 33;
+  padding: 7px 14px;
+  border: 1px dashed color-mix(in srgb, var(--pnx-accent) 46%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pnx-paper) 95%, transparent);
+  color: var(--pnx-accent);
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.pnx-root .pnx-ocr-banner ~ .pnx-linking-hint {
+  bottom: 100px;
+}
+
+/* 连线模式：只给新阅读器滚动区及其后代设置光标，不重定义旧叠加层选择器 */
+.pnx-root .pnx-reader-linking .pnx-pdf-scroll,
+.pnx-root .pnx-reader-linking .pnx-pdf-scroll * {
+  cursor: crosshair !important;
+}
+
+/* ── 对照分隔条 ─────────────────────────────────────────────────────────── */
+.pnx-root .pnx-compare-divider {
+  position: relative;
+  z-index: 5;
+  width: 7px;
+  flex: 0 0 7px;
+  border-right: 1px solid var(--pnx-line);
+  border-left: 1px solid var(--pnx-line);
+  background: color-mix(in srgb, var(--pnx-paper-soft) 66%, transparent);
+  cursor: col-resize;
+  touch-action: none;
+  transition: background-color var(--dur-1) var(--ease);
+}
+
+.pnx-root .pnx-compare-divider::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 34px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pnx-ink-faint) 42%, transparent);
+  content: '';
+  transform: translate(-50%, -50%);
+}
+
+.pnx-root .pnx-compare-divider:hover,
+.pnx-root .pnx-compare-divider:focus-visible {
+  background: color-mix(in srgb, var(--pnx-accent) 13%, transparent);
+  outline: none;
+}
+
+.pnx-root .pnx-compare-divider:hover::after,
+.pnx-root .pnx-compare-divider:focus-visible::after {
+  background: var(--pnx-accent);
+}
+
+.pnx-root .pnx-reader-main .compare-pane {
+  border-left: 0;
+  background: color-mix(in srgb, var(--pnx-paper-soft) 72%, var(--pnx-paper));
+}
+
+/* ── 对照下拉（自绘 Dropdown 的面板定位）────────────────────────────────── */
+.pnx-root .pnx-dropdown {
+  position: relative;
+  display: inline-flex;
+}
+
+.pnx-root .pnx-compare-options {
+  top: calc(100% + 6px);
+  right: 0;
+  left: auto;
+  z-index: 60 !important;
+  min-width: 236px;
+  max-height: 288px;
+  overflow-y: auto;
+  border-radius: 10px !important;
+  border-color: var(--pnx-line-strong) !important;
+  background: var(--pnx-paper) !important;
+  box-shadow: var(--pnx-shadow-lifted) !important;
+  scrollbar-color: var(--pnx-line-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.pnx-root .pnx-compare-options > button {
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* ── 导出对话框：复用旧 Modal 的只读实现与默认样式 ─────────────────────── */
+
+.pnx-root .pnx-export-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
+.pnx-root .pnx-export-form > p {
+  margin: 0;
+  color: var(--pnx-ink-faint);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.pnx-root .pnx-export-field {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.pnx-root .pnx-export-field > span {
+  color: var(--pnx-ink-soft);
+  font-size: 11.5px;
+}
+
+.pnx-root .pnx-select {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--pnx-line-strong);
+  border-radius: 7px;
+  background: var(--pnx-paper-soft);
+  color: var(--pnx-ink);
+  font-size: 11.5px;
+  outline: none;
+}
+
+.pnx-root .pnx-select:focus-visible {
+  border-color: var(--pnx-accent);
+}
+
+.pnx-root .pnx-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* ── 键盘可达性 ─────────────────────────────────────────────────────────── */
+.pnx-root .pnx-reader button:focus-visible,
+.pnx-root .pnx-reader input:focus-visible,
+.pnx-root .pnx-reader select:focus-visible {
+  outline: 2px solid var(--pnx-accent);
+  outline-offset: 1px;
+}
+
+.pnx-root .pnx-search-panel input:focus-visible,
+.pnx-root .pnx-page-indicator input:focus-visible {
+  outline: none;
+}
+
+/* ── 动效 ───────────────────────────────────────────────────────────────── */
+@keyframes pnx-reader-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pnx-reader-slide-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pnx-reader-pop-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* OCR 条自带 translateX(-50%)：单独写关键帧，避免与入场位移叠加 */
+@keyframes pnx-reader-pop-in-centered {
+  from { opacity: 0; transform: translate(-50%, 4px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* 设置项关闭动效 */
+.no-motion .pnx-root .pnx-spinner,
+.no-motion .pnx-root .pnx-mini-spinner {
+  animation: none;
+  border-top-color: currentColor;
+  opacity: 0.7;
+}
+
+.no-motion .pnx-root .pnx-outline-drawer,
+.no-motion .pnx-root .pnx-search-panel,
+.no-motion .pnx-root .pnx-ref-bar,
+.no-motion .pnx-root .pnx-ocr-banner {
+  animation: none;
+}
+
+.no-motion .pnx-root .pnx-reader *,
+.no-motion .pnx-root .pnx-reader *::before,
+.no-motion .pnx-root .pnx-reader *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pnx-root .pnx-spinner,
+  .pnx-root .pnx-mini-spinner {
+    animation: none;
+    border-top-color: currentColor;
+    opacity: 0.7;
+  }
+
+  .pnx-root .pnx-outline-drawer,
+  .pnx-root .pnx-search-panel,
+  .pnx-root .pnx-ref-bar,
+  .pnx-root .pnx-ocr-banner,
+  .pnx-root .pnx-linking-hint {
+    animation: none;
+  }
+
+  .pnx-root .pnx-reader *,
+  .pnx-root .pnx-reader *::before,
+  .pnx-root .pnx-reader *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── 尺寸适配：1280×800 紧凑不重叠；1920×1080 保持呼吸感 ───────────────── */
+@media (max-width: 1440px) {
+  .pnx-root .pnx-reader-header {
+    padding: 9px 72px 8px 14px;
+    padding-right: max(72px, calc(env(safe-area-inset-right) + 64px));
+  }
+
+  .pnx-root .pnx-page-stack {
+    padding: 18px 28px 34px;
+  }
+
+  .pnx-root .pnx-tool-button {
+    padding: 0 7px;
+  }
+
+  .pnx-root .pnx-document-title-row h1 {
+    font-size: 17px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .pnx-root .pnx-tool-label {
+    display: none;
+  }
+
+  .pnx-root .pnx-tool-button {
+    padding: 0 6px;
+  }
+
+  .pnx-root .pnx-document-heading p {
+    display: none;
+  }
+
+  .pnx-root .pnx-document-actions {
+    gap: 0;
+  }
+
+  .pnx-root .pnx-md-hint {
+    display: none;
+  }
+
+  .pnx-root .pnx-page-indicator {
+    padding: 0 5px 0 6px;
+  }
+}
+
+@media (max-width: 980px) {
+  .pnx-root .pnx-reader-masthead {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .pnx-root .pnx-document-heading {
+    flex: 1 1 220px;
+  }
+
+  .pnx-root .pnx-document-actions {
+    order: 3;
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .pnx-root .pnx-outline-drawer {
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    width: auto;
+    max-width: none;
+  }
+
+  .pnx-root .pnx-search-panel {
+    top: 10px;
+    right: 10px;
+  }
+
+  .pnx-root .pnx-page-stack {
+    padding: 14px 16px 28px;
+  }
+
+  .pnx-root .pnx-markdown-host {
+    padding: 12px;
+  }
+}
+
+@media (max-height: 700px) {
+  .pnx-root .pnx-reader-header {
+    padding-top: 7px;
+    padding-bottom: 6px;
+  }
+
+  .pnx-root .pnx-reader-tools {
+    margin-top: 6px;
+  }
+}

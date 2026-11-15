@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -22,6 +22,11 @@ import ReaderPage from './features/reader/ReaderPage'
 import SettingsPage from './features/settings/SettingsPage'
 import ReviewPage from './features/review/ReviewPage'
 import UpdaterBoot from './features/updater/UpdaterBoot'
+import NextBootScreen from './frontend-next/NextBootScreen'
+import NextAuthPage from './frontend-next/NextAuthPage'
+import NextAppRoutes from './frontend-next/NextApp'
+import NextErrorBoundary from './frontend-next/NextErrorBoundary'
+import { readFrontendStyle, subscribeFrontendStyle } from './frontend-next/stylePreference'
 
 /** 主题色 → [r,g,b]（0-1），供 WebGL uniform 使用。须在 applyTheme 之后的
  *  layout effect 里调用，读到的才是当前主题色而非未设 data-theme 的默认值 */
@@ -103,6 +108,8 @@ function ExternalOpenBridge() {
 
 export default function App() {
   const { booted, boot, bootError, retryBoot, user, settings } = useAuth()
+  // 界面风格：同步读取（首帧即正确，不会先闪旧界面），切换时由订阅驱动重渲染
+  const frontendStyle = useSyncExternalStore(subscribeFrontendStyle, readFrontendStyle)
   const [themeColors, setThemeColors] = useState(readThemeColors)
   const animationsOn = settings.animations !== false
 
@@ -195,6 +202,9 @@ export default function App() {
   }, [userId])
 
   if (!booted) {
+    if (frontendStyle === 'next') {
+      return <NextBootScreen error={bootError} retry={() => void retryBoot()} animate={animationsOn} />
+    }
     if (bootError) {
       return (
         <div className="flex h-full flex-col items-center justify-center gap-4 bg-bg">
@@ -250,7 +260,19 @@ export default function App() {
     )
   }
 
-  if (!user)
+  if (!user) {
+    if (frontendStyle === 'next') {
+      return (
+        <>
+          <NextErrorBoundary>
+            <WindowControls />
+            <NextAuthPage />
+          </NextErrorBoundary>
+          <UpdaterBoot />
+          <ExternalOpenBridge />
+        </>
+      )
+    }
     return (
       <>
         <WindowControls />
@@ -259,6 +281,20 @@ export default function App() {
         <ExternalOpenBridge />
       </>
     )
+  }
+
+  if (frontendStyle === 'next') {
+    return (
+      <>
+        <ExternalOpenBridge />
+        <NextErrorBoundary>
+          <WindowControls />
+          <NextAppRoutes />
+        </NextErrorBoundary>
+        <UpdaterBoot />
+      </>
+    )
+  }
 
   return (
     <>
