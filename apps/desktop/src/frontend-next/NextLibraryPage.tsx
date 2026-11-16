@@ -30,6 +30,10 @@ import NextPaperCard, { type OcrProgress } from './NextPaperCard'
 import NextProjectRail from './NextProjectRail'
 import './NextLibraryPage.css'
 
+// 网格列数换算与 .pnx-grid 的 column-gap 必须一致，否则列数与实际排版会错位。
+const CARD_MIN_WIDTH = 196
+const CARD_COL_GAP = 14
+
 const VIEW_TABS: { key: LibraryView; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'project', label: '项目' },
@@ -108,7 +112,7 @@ export default function NextLibraryPage() {
   const [ocrProgress, setOcrProgress] = useState<Record<number, OcrProgress>>({})
   const [queuePaused, setQueuePaused] = useState(false)
   const [queueBusy, setQueueBusy] = useState(false)
-  const [cols, setCols] = useState(4)
+  const [cols, setCols] = useState(5)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [allTags, setAllTags] = useState<{ name: string; count: number }[]>([])
@@ -191,7 +195,9 @@ export default function NextLibraryPage() {
     let frame = 0
     let debounceTimer: number | undefined
     let lastCols = cols
-    const calculate = (width: number) => Math.max(1, Math.floor((width + 14) / (230 + 14)))
+    // 卡片最小宽 196px、列间距 14px（与 .pnx-grid 的 column-gap 一致）。
+    // 上限 6 列：再窄标题就会碎行，1920 宽屏也保持 5~6 列的手感。
+    const calculate = (width: number) => Math.min(6, Math.max(2, Math.floor((width + CARD_COL_GAP) / (CARD_MIN_WIDTH + CARD_COL_GAP))))
     const observer = new ResizeObserver((entries) => {
       const width = Math.round(entries[0]?.contentRect.width ?? element.clientWidth)
       const nextCols = calculate(width)
@@ -945,7 +951,7 @@ export default function NextLibraryPage() {
 
           {loading ? (
             <div className="pnx-grid pnx-loading-grid" style={gridStyle} aria-label="正在加载文库" aria-busy="true">
-              {Array.from({ length: Math.max(4, cols) }, (_, index) => <div className="pnx-skeleton-card" key={index} />)}
+              {Array.from({ length: cols }, (_, index) => <div className="pnx-skeleton-card" key={index} />)}
             </div>
           ) : papers.length === 0 && view !== 'project' ? (
             <EmptyState

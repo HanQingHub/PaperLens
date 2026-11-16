@@ -24,10 +24,15 @@
   isolation: isolate;
   display: block;
   width: 100%;
-  /* 覆盖文库页 .pnx-root 的 height:100%/overflow:hidden：本页由外层滚动容器承接长内容 */
-  height: auto;
-  min-height: 100%;
-  overflow: visible;
+  /* 外壳 .pnx-content 是 overflow:hidden 的 flex 列，页面必须自己承接长内容滚动，
+     否则设置页在窗口高度不足时会被直接裁掉且无法滚动。 */
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   color: var(--pnx-ink);
   font-family: var(--font-ui);
   font-size: 0.9286rem;

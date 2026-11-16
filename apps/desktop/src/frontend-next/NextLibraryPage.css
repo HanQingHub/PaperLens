@@ -1123,11 +1123,85 @@
   position: absolute;
   top: 11px;
   left: 24px;
+  padding: 2px 6px 1px;
+  border: 1px solid color-mix(in srgb, var(--pnx-ink-soft) 34%, transparent);
+  border-radius: 3px;
   color: color-mix(in srgb, var(--pnx-ink-soft) 82%, hsl(var(--pnx-hue) 38% 38%));
   font-family: Georgia, serif;
   font-size: 8px;
   font-weight: 700;
   letter-spacing: 0.15em;
+  line-height: 1.35;
+}
+
+/* ── Markdown 与 PDF 的识别度：MD 是“文档页”，PDF 是“书封” ─────────────
+   PDF：保留书脊 + 衬线标题 + 描边角标（下方既有规则）。
+   MD ：去掉书脊、换成横线稿纸 + 折角 + 实心 MD 角标 + 无衬线标题 + 左侧强调条。 */
+
+.pnx-root.pnx-library-page .pnx-paper-card.is-md {
+  border-left: 3px solid color-mix(in srgb, var(--pnx-accent) 62%, transparent);
+  background: color-mix(in srgb, var(--pnx-paper) 90%, var(--pnx-accent) 10%);
+}
+
+.pnx-root.pnx-library-page .pnx-paper-card.is-md .pnx-book-spine {
+  display: none;
+}
+
+.pnx-root.pnx-library-page .pnx-paper-card.is-md .pnx-book-cover {
+  padding: 26px 16px 16px 18px;
+  border-color: color-mix(in srgb, var(--pnx-accent) 30%, var(--pnx-line));
+  border-radius: 4px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--pnx-accent) 7%, transparent), transparent 42%),
+    repeating-linear-gradient(180deg, transparent 0 21px, color-mix(in srgb, var(--pnx-accent) 16%, transparent) 21px 22px),
+    var(--pnx-paper);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 55%), 2px 3px 0 -1px color-mix(in srgb, var(--pnx-line-strong) 70%, transparent);
+}
+
+/* 折角：右上角的纸张翻页角 */
+.pnx-root.pnx-library-page .pnx-paper-card.is-md .pnx-book-cover::after {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 16px;
+  height: 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--pnx-accent) 32%, var(--pnx-line));
+  border-left: 1px solid color-mix(in srgb, var(--pnx-accent) 32%, var(--pnx-line));
+  background: linear-gradient(225deg, var(--pnx-desk) 49%, var(--pnx-paper-soft) 50%);
+  content: '';
+}
+
+.pnx-root.pnx-library-page .pnx-paper-card.is-md .pnx-file-type {
+  top: 10px;
+  left: 16px;
+  border-color: transparent;
+  color: var(--pnx-paper);
+  background: var(--pnx-accent);
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+}
+
+.pnx-root.pnx-library-page .pnx-paper-card.is-md .pnx-cover-title {
+  margin: 12px 0 auto;
+  color: var(--pnx-ink);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.62;
+  -webkit-line-clamp: 4;
+}
+
+.pnx-root.pnx-library-page .pnx-paper-card.is-md .pnx-cover-rule {
+  width: 100%;
+  margin: 9px 0 6px;
+  background: color-mix(in srgb, var(--pnx-accent) 26%, transparent);
+}
+
+.pnx-root.pnx-library-page .pnx-paper-card.is-md .pnx-book-cover small {
+  font-family: var(--font-ui);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
 }
 
 .pnx-root.pnx-library-page .pnx-cover-title {

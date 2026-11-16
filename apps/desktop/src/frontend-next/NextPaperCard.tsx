@@ -57,7 +57,7 @@ export default function NextPaperCard(props: Props) {
       data-card
       // pl-paper-card 仅为满足 useLibraryDnd 的 DOM 契约（closest('.pl-paper-card')），
       // 不沿用旧视觉；新样式通过 .pnx- 自有类完整覆盖。
-      className={`pl-paper-card pnx-paper-card${selected ? ' is-selected' : ''}${isDragging ? ' is-dragging' : ''}${insertSide ? ` is-insert-${insertSide}` : ''}`}
+      className={`pl-paper-card pnx-paper-card ${isMd ? 'is-md' : 'is-pdf'}${selected ? ' is-selected' : ''}${isDragging ? ' is-dragging' : ''}${insertSide ? ` is-insert-${insertSide}` : ''}`}
       style={{ '--pnx-hue': hue, '--pnx-delay': `${Math.min(enterIndex ?? 0, 20) * 28}ms` } as CSSProperties}
       tabIndex={0}
       aria-label={`打开${paper.title}`}
@@ -73,7 +73,7 @@ export default function NextPaperCard(props: Props) {
     >
       <div className="pnx-book-cover">
         <span className="pnx-book-spine" aria-hidden />
-        <span className="pnx-file-type">{isMd ? 'MARKDOWN' : 'PDF'}</span>
+        <span className="pnx-file-type" aria-label={isMd ? 'Markdown 文档' : 'PDF 文献'}>{isMd ? 'MD' : 'PDF'}</span>
         <button className={`pnx-favorite${paper.is_favorite ? ' is-active' : ''}`} title={paper.is_favorite ? '取消收藏' : '收藏'} onClick={(event) => { event.stopPropagation(); onToggleFav(paper) }}>
           {paper.is_favorite ? <IconStar size={15} /> : <IconStarOutline size={15} />}
         </button>
