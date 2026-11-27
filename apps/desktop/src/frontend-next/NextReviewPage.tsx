@@ -291,7 +291,7 @@ export default function NextReviewPage() {
       <aside className="pnx-review-sidebar" aria-label="复习与分组导航">
         <div className="pnx-review-brand">
           <span className="pnx-review-brand-mark" aria-hidden><IconBook size={19} /></span>
-          <div><strong>生词书房</strong><small>把生词读成熟悉</small></div>
+          <div><strong>生词复习</strong><small>把生词读成熟悉</small></div>
         </div>
 
         <div className="pnx-review-tabs" role="tablist" aria-label="生词功能" onKeyDown={onTabKeyDown}>

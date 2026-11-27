@@ -4,7 +4,9 @@ import { invoke, isTauri } from '@tauri-apps/api/core'
 import { api, llmDownloadStream } from '../api/client'
 import type { LLMModelInfo } from '../api/types'
 import { useAuth } from '../stores/auth'
-import { IconBook, IconCheck, IconPlus, IconSpark } from '../components/shared/Icon'
+import { IconBook, IconCheck, IconPlus } from '../components/shared/Icon'
+import NextStrataSlices from './NextStrataSlices'
+import { strataMotionOn, useStrataDocument } from './strataDocument'
 import { toast } from '../features/shared/Toast'
 import './NextWizardPage.css'
 
@@ -13,7 +15,7 @@ const MODEL_DESC: Record<string, string> = {
   'qwen3.5-0.8b-q4km': '提速档 · 更小更快，适合低配机器（约 508 MiB）',
 }
 
-const STEPS = ['安顿书房', '准备模型', '开始阅读']
+const STEPS = ['设定数据目录', '准备模型', '开始阅读']
 
 type DownloadProgress = {
   percent: number | null
@@ -32,6 +34,8 @@ function errorMessage(reason: unknown, fallback: string) {
 }
 
 export default function NextWizardPage() {
+  useStrataDocument()
+  const animations = useAuth((state) => state.settings.animations)
   const navigate = useNavigate()
   const { updateSettings } = useAuth()
   const [step, setStep] = useState(1)
@@ -266,22 +270,11 @@ export default function NextWizardPage() {
           <span>PaperLens</span>
         </header>
         <div className="pnx-wizard-story-copy">
-          <p className="pnx-eyebrow">你的私人研究书房</p>
+          <p className="pnx-eyebrow">STRATA · 层析</p>
           <h1>让每一页阅读，<br />都有迹可循。</h1>
-          <p>论文、批注、生词与灵感，收进一间安静的本地书房。</p>
+          <p>论文、批注、生词与术语，全部保存在本机。</p>
         </div>
-        <div className="pnx-cover-scene" aria-hidden="true">
-          <div className="pnx-cover-shadow" />
-          <div className="pnx-cover-book">
-            <span className="pnx-cover-spine" />
-            <div className="pnx-cover-topline"><span>PAPERLENS</span><span>VOL. 01</span></div>
-            <IconBook size={38} />
-            <div className="pnx-cover-title">READ<br />DEEPLY</div>
-            <div className="pnx-cover-rule" />
-            <span className="pnx-cover-caption">NOTES · WORDS · IDEAS</span>
-          </div>
-          <div className="pnx-cover-note"><IconSpark size={14} /><span>离线阅读，安静积累</span></div>
-        </div>
+        <div className="pnx-sx-wizard-art"><NextStrataSlices size="sm" motion={animations && strataMotionOn()} /></div>
         <footer className="pnx-wizard-story-foot">数据仅保存在你的设备 · 无需云端</footer>
       </aside>
 
@@ -463,7 +456,7 @@ export default function NextWizardPage() {
           {step === 3 && (
             <section className="pnx-wizard-panel pnx-wizard-complete" aria-labelledby="pnx-complete-title">
               <div className="pnx-complete-seal" aria-hidden="true"><IconCheck size={30} /></div>
-              <p className="pnx-eyebrow">03 · 书房已经就绪</p>
+              <p className="pnx-eyebrow">03 · 文库已经就绪</p>
               <h2 id="pnx-complete-title">从第一篇论文开始</h2>
               <p className="pnx-wizard-lead">上传一篇论文，留下第一段批注。阅读中划词即可翻译、收入生词库，让理解慢慢沉淀。</p>
               <div className="pnx-complete-summary">

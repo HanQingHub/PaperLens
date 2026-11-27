@@ -1,10 +1,11 @@
-import { useRef, useState, type DragEvent } from 'react'
+import { useRef, useState, type CSSProperties, type DragEvent } from 'react'
 import { api, ApiError } from '../api/client'
 import type { Project } from '../api/types'
 import { ConfirmModal } from '../features/shared/Modal'
 import { toast } from '../features/shared/Toast'
 import { dragKind } from '../features/library/dnd/guard'
 import { PROJECT_DRAG_MIME } from '../features/library/dnd/types'
+import { projectHue } from './terrain'
 
 interface Props {
   projects: Project[]
@@ -144,7 +145,7 @@ export default function NextProjectRail({
   return (
     <aside
       className="pnx-rail"
-      aria-label="项目书架"
+      aria-label="项目索引"
       data-group-drop
       onDragOver={(event) => {
         if (
@@ -158,7 +159,7 @@ export default function NextProjectRail({
       <div className="pnx-rail-heading">
         <div>
           <span className="pnx-eyebrow">COLLECTIONS</span>
-          <h2>项目书架</h2>
+          <h2>项目索引</h2>
         </div>
         <button
           type="button"
@@ -174,7 +175,7 @@ export default function NextProjectRail({
         </button>
       </div>
 
-      <p className="pnx-rail-intro">把相近的研究放进同一层书架。</p>
+      <p className="pnx-rail-intro">把相近的研究归入同一项目。</p>
 
       {creating && (
         <form
@@ -209,7 +210,7 @@ export default function NextProjectRail({
           <div className="pnx-rail-empty">
             <span className="pnx-rail-empty-mark" aria-hidden="true">＋</span>
             <p>还没有项目</p>
-            <span>点击上方加号，建立第一层书架。</span>
+            <span>点击上方加号，建立第一个项目。</span>
           </div>
         )}
         {projects.map((project, index) => {
@@ -282,7 +283,7 @@ export default function NextProjectRail({
                       }
                     }}
                   >
-                    <span className="pnx-project-glyph" aria-hidden="true">
+                    <span className="pnx-project-glyph" aria-hidden="true" style={{ '--pnx-proj-hue': projectHue(project.id) } as CSSProperties}>
                       <svg viewBox="0 0 24 24"><path d="M4 7.5h6l2-2h8v13H4z" /></svg>
                     </span>
                     <span className="pnx-project-name">{project.name}</span>

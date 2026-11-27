@@ -1,5 +1,5 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../stores/auth'
 import { useReaderTabs } from '../stores/readerTabs'
 import { useCompareStore } from '../stores/compareStore'
@@ -11,27 +11,46 @@ import { routeOf, tabIdFromPath, type AppTab } from '../features/reader/tabOps'
 import { ConfirmModal } from '../features/shared/Modal'
 import { IconX } from '../components/shared/Icon'
 import NextRightPanel from './NextRightPanel'
+import { useStrataDocument } from './strataDocument'
 
-const NAV = [
-  { to: '/', key: 'library', label: '文库', glyph: '书' },
-  { to: '/review', key: 'review', label: '生词复习', glyph: '词' },
-  { to: '/settings', key: 'settings', label: '设置', glyph: '设' },
-] as const
+type SceneKey = 'library' | 'reader' | 'review' | 'settings'
+
+const SCENES: { key: SceneKey; num: string; label: string }[] = [
+  { key: 'library', num: '01', label: '文库' },
+  { key: 'reader', num: '02', label: '阅读台' },
+  { key: 'review', num: '03', label: '复习' },
+  { key: 'settings', num: '04', label: '设置' },
+]
+
+function sceneOf(pathname: string): SceneKey | null {
+  if (pathname === '/') return 'library'
+  if (pathname.startsWith('/reader/')) return 'reader'
+  if (pathname.startsWith('/review')) return 'review'
+  if (pathname.startsWith('/settings')) return 'settings'
+  return null
+}
 
 export default function NextShell() {
+  useStrataDocument()
   const location = useLocation()
   const navigate = useNavigate()
   const tabs = useReaderTabs((s) => s.tabs)
   const hydratedFor = useReaderTabs((s) => s.hydratedFor)
   const user = useAuth((s) => s.user)
+  const fontScale = useAuth((s) => s.settings.font_scale)
   const rightTab = useUi((s) => s.rightTab)
   const openPanel = useUi((s) => s.openPanel)
   const openReview = useUi((s) => s.openReview)
   const hasUpdate = useUpdater((s) => s.update !== null && s.phase !== 'idle')
   const mdConfirmOpen = useSyncExternalStore(subscribeMdGuard, hasPendingNav)
   const [online, setOnline] = useState(() => navigator.onLine)
+  const [inkStyle, setInkStyle] = useState<CSSProperties>({ width: 0 })
+  const scenesRef = useRef<HTMLElement>(null)
   const currentId = tabIdFromPath(location.pathname)
   const reading = location.pathname.startsWith('/reader/')
+  const scene = sceneOf(location.pathname)
+  const lastReaderTab = [...tabs].reverse().find((tab) => tab.kind === 'reader')
+  const readerTarget = reading ? location.pathname : lastReaderTab ? routeOf(lastReaderTab) : null
 
   useEffect(() => {
     useReaderTabs.getState().ensureFromPath(location.pathname)
@@ -46,6 +65,17 @@ export default function NextShell() {
       window.removeEventListener('offline', update)
     }
   }, [])
+
+  // 墨条：量取当前场景按钮的位置；路由、字号、窗口尺寸变化时重测
+  useLayoutEffect(() => {
+    const measure = () => {
+      const active = scenesRef.current?.querySelector<HTMLElement>('.pnx-sx-scene.is-active')
+      setInkStyle(active ? { transform: `translateX(${active.offsetLeft}px)`, width: active.offsetWidth } : { width: 0, opacity: 0 })
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [scene, fontScale])
 
   const guardedNavigate = (to: string, prepare?: () => void) => {
     const run = () => {
@@ -68,40 +98,46 @@ export default function NextShell() {
 
   const openTab = (tab: AppTab) => guardedNavigate(routeOf(tab))
 
-  return (
-    <div className={`pnx-root pnx-shell${reading ? ' pnx-shell-reading' : ''}`}>
-      <aside className="pnx-nav-rail" aria-label="主导航">
-        <NavLink to="/" className="pnx-brand" title="PaperLens 文库" onClick={(e) => { e.preventDefault(); guardedNavigate('/') }}>
-          <img src={APP_ICONS[resolveAppIcon()]} alt="" />
-        </NavLink>
-        <nav>
-          {NAV.map((item) => (
-            <NavLink
-              key={item.key}
-              to={item.to}
-              onClick={(e) => {
-                e.preventDefault()
-                guardedNavigate(item.to, item.key === 'review' ? () => openReview('review') : undefined)
-              }}
-              className={({ isActive }) => `pnx-nav-button${isActive ? ' is-active' : ''}`}
-              title={item.label}
-            >
-              <span aria-hidden>{item.glyph}</span><small>{item.label}</small>
-              {item.key === 'settings' && hasUpdate && <i className="pnx-update-dot" aria-label="有可用更新" />}
-            </NavLink>
-          ))}
-          <button className={`pnx-nav-button${rightTab === 'stats' ? ' is-active' : ''}`} onClick={() => openPanel('stats')} title="阅读统计">
-            <span aria-hidden>览</span><small>阅读统计</small>
-          </button>
-        </nav>
-        <div className="pnx-nav-bottom">
-          <button className={`pnx-nav-button${rightTab === 'annotations' ? ' is-active' : ''}`} onClick={() => openPanel('annotations')} title="批注"><span aria-hidden>注</span><small>批注</small></button>
-          <button className="pnx-avatar" title={`当前账号：${user?.display_name ?? user?.username ?? ''}`} onClick={() => guardedNavigate('/settings')}>{(user?.display_name ?? user?.username ?? '我').slice(0, 1).toUpperCase()}</button>
-        </div>
-      </aside>
+  const goScene = (key: SceneKey) => {
+    if (key === 'library') guardedNavigate('/')
+    else if (key === 'reader') { if (readerTarget) guardedNavigate(readerTarget) }
+    else if (key === 'review') guardedNavigate('/review', () => openReview('review'))
+    else guardedNavigate('/settings')
+  }
 
+  const userName = user?.display_name ?? user?.username ?? ''
+
+  return (
+    <div className={`pnx-root pnx-shell pnx-sx-shell${reading ? ' pnx-shell-reading' : ''}`}>
       <div className="pnx-workspace">
-        <header className="pnx-topbar" data-tauri-drag-region>
+        <header className="pnx-topbar pnx-sx-topbar" data-tauri-drag-region>
+          <button type="button" className="pnx-sx-brand" title="层析 · 返回文库" onClick={() => goScene('library')}>
+            <img src={APP_ICONS[resolveAppIcon()]} alt="" />
+            <b>层析</b>
+            <small>STRATA<br />PAPERLENS</small>
+          </button>
+          <nav className="pnx-sx-scenes" aria-label="主导航" ref={scenesRef}>
+            {SCENES.map((item) => {
+              const active = scene === item.key
+              const disabled = item.key === 'reader' && !readerTarget
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`pnx-sx-scene${active ? ' is-active' : ''}`}
+                  aria-current={active ? 'page' : undefined}
+                  disabled={disabled}
+                  title={disabled ? '暂无打开的论文' : item.label}
+                  onClick={() => goScene(item.key)}
+                >
+                  <span className="pnx-sx-scene-num">{item.num}</span>
+                  <span className="pnx-sx-scene-label">{item.label}</span>
+                  {item.key === 'settings' && hasUpdate && <i className="pnx-update-dot" aria-label="有可用更新" />}
+                </button>
+              )
+            })}
+            <span className="pnx-sx-ink" aria-hidden style={inkStyle} />
+          </nav>
           <div className="pnx-tabs" role="tablist" aria-label="全局页签">
             {tabs.map((tab) => {
               const active = tab.id === currentId
@@ -124,7 +160,17 @@ export default function NextShell() {
               )
             })}
           </div>
-          {!online && <span className="pnx-offline" role="status">离线模式 · 本地功能可用</span>}
+          <span className="pnx-sx-drag" data-tauri-drag-region aria-hidden />
+          {!online && <span className="pnx-offline" role="status">离线 · 本地</span>}
+          <div className="pnx-sx-tools">
+            <button type="button" className={`pnx-icon-button${rightTab === 'stats' ? ' is-active' : ''}`} aria-pressed={rightTab === 'stats'} onClick={() => openPanel('stats')} title="阅读统计">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 17.5h15M5 14.5v-5M9 14.5V4.5M13 14.5v-7M17 14.5V11" /></svg>
+            </button>
+            <button type="button" className={`pnx-icon-button${rightTab === 'annotations' ? ' is-active' : ''}`} aria-pressed={rightTab === 'annotations'} onClick={() => openPanel('annotations')} title="批注">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 3.5h13v9l-4 4h-9z" /><path d="M12.5 16.5v-4h4M6.5 7.5h7M6.5 10.5h4" /></svg>
+            </button>
+            <button type="button" className="pnx-avatar" title={`当前账号：${userName}`} onClick={() => guardedNavigate('/settings')}>{(userName || '我').slice(0, 1).toUpperCase()}</button>
+          </div>
           <span className="pnx-window-space" aria-hidden />
         </header>
         <main className={`pnx-content${reading ? '' : ' pnx-page-enter'}`} key={reading ? 'reader' : location.pathname}>

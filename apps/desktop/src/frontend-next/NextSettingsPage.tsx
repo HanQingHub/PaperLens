@@ -90,7 +90,7 @@ function Section({
   return (
     <section id={id} className={`pnx-section${wide ? ' pnx-section-wide' : ''}`} aria-labelledby={`${id}-title`}>
       <header className="pnx-section-header">
-        <span className="pnx-section-index" aria-hidden>{index}</span>
+        <span className="pnx-section-index" aria-hidden>{`C-${index}`}</span>
         <div>
           <h2 id={`${id}-title`}>{title}</h2>
           {description && <p>{description}</p>}
@@ -713,11 +713,11 @@ export default function NextSettingsPage() {
                         aria-pressed={frontendStyle === style}
                         onClick={() => requestFrontendStyle(style)}
                       >
-                        {style === 'next' ? '新版界面' : '经典界面'}
+                        {style === 'next' ? '层析界面' : '经典界面'}
                       </button>
                     ))}
                   </div>
-                  <p className="pnx-inline-note">当前：{frontendStyle === 'next' ? '新版界面（Next）' : '经典界面（Classic）'}</p>
+                  <p className="pnx-inline-note">当前：{frontendStyle === 'next' ? '层析界面（STRATA）' : '经典界面（Classic）'}</p>
                 </div>
               </div>
 

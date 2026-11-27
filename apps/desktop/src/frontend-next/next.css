@@ -1,5 +1,5 @@
 /* ────────────────────────────────────────────────────────────────
-   全新界面 · 基础层（壳 / 启动 / 登录补充 / 回退屏 / 通用控件）
+   层析界面 · 基础层（壳 / 启动 / 登录补充 / 回退屏 / 通用控件）
    - 所有规则限定在 .pnx-root 内，禁止出现全局选择器
    - 颜色全部从既有主题变量派生，6 个色彩主题继续生效
    - 只动画 transform / opacity；.no-motion 与 reduced-motion 下归零
@@ -71,7 +71,7 @@
 
 .pnx-root .pnx-icon-button {
   display: inline-grid; width: 27px; height: 27px; flex: 0 0 auto; padding: 0; place-items: center;
-  border: 1px solid transparent; border-radius: 7px; color: var(--pnx-ink-faint); background: transparent;
+  border: 1px solid transparent; border-radius: var(--sx-r); color: var(--pnx-ink-faint); background: transparent;
   transition: color var(--pnx-dur) var(--pnx-ease), background var(--pnx-dur) var(--pnx-ease), border-color var(--pnx-dur) var(--pnx-ease);
 }
 
@@ -84,7 +84,7 @@
 
 .pnx-root .pnx-menu-item {
   display: flex; width: 100%; align-items: center; gap: 7px; padding: 7px 9px;
-  border: 0; border-radius: 6px; color: var(--pnx-ink-soft); background: transparent;
+  border: 0; border-radius: var(--sx-r); color: var(--pnx-ink-soft); background: transparent;
   font-size: 11.5px; line-height: 1.45; text-align: left; white-space: nowrap;
   transition: color var(--pnx-dur) var(--pnx-ease), background var(--pnx-dur) var(--pnx-ease);
 }
@@ -152,7 +152,7 @@
 
 .pnx-root .pnx-brand {
   display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center;
-  border: 1px solid color-mix(in srgb, var(--pnx-line) 82%, transparent); border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--pnx-line) 82%, transparent); border-radius: 0;
   background: color-mix(in srgb, var(--pnx-paper) 76%, transparent); box-shadow: var(--pnx-shadow);
   transition: transform 180ms var(--pnx-spring), border-color var(--pnx-dur) var(--pnx-ease), box-shadow var(--pnx-dur) var(--pnx-ease);
 }
@@ -162,7 +162,7 @@
   box-shadow: var(--pnx-shadow-lifted); transform: translateY(-1px) scale(1.02);
 }
 
-.pnx-root .pnx-brand img { display: block; width: 26px; height: 26px; border-radius: 7px; object-fit: contain; }
+.pnx-root .pnx-brand img { display: block; width: 26px; height: 26px; border-radius: var(--sx-r); object-fit: contain; }
 
 .pnx-root .pnx-nav-rail nav {
   display: flex; width: 100%; flex-direction: column; align-items: center; gap: 4px; padding-top: 14px;
@@ -171,7 +171,7 @@
 .pnx-root .pnx-nav-button {
   position: relative; display: flex; width: 100%; height: 54px; flex-direction: column;
   align-items: center; justify-content: center; gap: 3px; padding: 0;
-  border: 1px solid transparent; border-radius: 10px; color: var(--pnx-ink-faint); background: transparent;
+  border: 1px solid transparent; border-radius: 0; color: var(--pnx-ink-faint); background: transparent;
   transition: color 150ms var(--pnx-ease), background 150ms var(--pnx-ease), border-color 150ms var(--pnx-ease);
 }
 
@@ -198,13 +198,13 @@
 
 .pnx-root .pnx-nav-button.is-active::after {
   position: absolute; top: 50%; left: -9px; width: 3px; height: 22px;
-  border-radius: 0 3px 3px 0; background: var(--pnx-accent); content: ''; pointer-events: none;
+  border-radius: var(--sx-r); background: var(--pnx-accent); content: ''; pointer-events: none;
   opacity: 1; transform: translateY(-50%) scaleY(1);
   transition: opacity 160ms var(--pnx-ease), transform 220ms var(--pnx-spring);
 }
 
 .pnx-root .pnx-update-dot {
-  position: absolute; top: 7px; right: 8px; width: 6px; height: 6px; border-radius: 50%;
+  position: absolute; top: 7px; right: 8px; width: 6px; height: 6px; border-radius: 0;
   background: var(--pnx-danger); box-shadow: 0 0 0 2px var(--pnx-paper-soft);
   animation: pnx-pulse 1.8s ease-in-out infinite;
 }
@@ -216,7 +216,7 @@
 
 .pnx-root .pnx-avatar {
   display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; padding: 0;
-  border: 1px solid var(--pnx-line-strong); border-radius: 50%; color: var(--pnx-accent);
+  border: 1px solid var(--pnx-line-strong); border-radius: 0; color: var(--pnx-accent);
   background: linear-gradient(145deg, color-mix(in srgb, var(--pnx-accent-soft) 76%, var(--pnx-paper)), var(--pnx-paper-soft));
   box-shadow: var(--pnx-shadow); font-family: var(--font-serif); font-size: 13px; font-weight: 600; line-height: 1;
   transition: transform 180ms var(--pnx-spring), border-color var(--pnx-dur) var(--pnx-ease);
@@ -249,7 +249,7 @@
 .pnx-root .pnx-tab {
   position: relative; display: inline-flex; min-width: 58px; max-width: 190px; height: 30px;
   flex: 0 1 auto; align-items: center; gap: 6px; padding: 0 7px 0 9px;
-  border: 1px solid transparent; border-radius: 8px; color: var(--pnx-ink-faint);
+  border: 1px solid transparent; border-radius: var(--sx-r); color: var(--pnx-ink-faint);
   font-size: 12px; line-height: 1; white-space: nowrap; user-select: none; cursor: pointer;
   transition: color 140ms var(--pnx-ease), background 140ms var(--pnx-ease), border-color 140ms var(--pnx-ease);
 }
@@ -264,12 +264,12 @@
 
 .pnx-root .pnx-tab.is-active::after {
   position: absolute; right: 9px; bottom: -9px; left: 9px; height: 2px;
-  border-radius: 2px; background: var(--pnx-accent); content: ''; pointer-events: none;
+  border-radius: var(--sx-r); background: var(--pnx-accent); content: ''; pointer-events: none;
 }
 
 .pnx-root .pnx-tab-kind {
   flex: 0 0 auto; padding: 1px 4px; border: 1px solid color-mix(in srgb, var(--pnx-line) 90%, transparent);
-  border-radius: 4px; color: var(--pnx-ink-faint); background: var(--pnx-paper-soft);
+  border-radius: var(--sx-r); color: var(--pnx-ink-faint); background: var(--pnx-paper-soft);
   font-family: var(--font-serif); font-size: 8px; font-weight: 700; letter-spacing: 0.08em; line-height: 1.4;
 }
 
@@ -282,7 +282,7 @@
 
 .pnx-root .pnx-tab-close {
   display: grid; width: 18px; height: 18px; flex: 0 0 auto; padding: 0; place-items: center;
-  border: 0; border-radius: 4px; color: var(--pnx-ink-faint); background: transparent; opacity: 0;
+  border: 0; border-radius: var(--sx-r); color: var(--pnx-ink-faint); background: transparent; opacity: 0;
   transition: opacity 140ms var(--pnx-ease), color 140ms var(--pnx-ease), background 140ms var(--pnx-ease);
 }
 
@@ -296,12 +296,12 @@
 
 .pnx-root .pnx-offline {
   display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; margin-right: 2px; padding: 4px 9px;
-  border: 1px solid color-mix(in srgb, var(--pnx-danger) 28%, transparent); border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--pnx-danger) 28%, transparent); border-radius: var(--sx-r);
   color: var(--pnx-danger); background: color-mix(in srgb, var(--pnx-danger) 8%, transparent);
   font-size: 10px; letter-spacing: 0.02em; white-space: nowrap;
 }
 
-.pnx-root .pnx-offline::before { width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: currentColor; content: ''; }
+.pnx-root .pnx-offline::before { width: 5px; height: 5px; flex: 0 0 auto; border-radius: 0; background: currentColor; content: ''; }
 
 /* 右上角常驻窗口控制区（最小化 / 关闭）预留：任何顶栏内容
    都不得侵入这 80px，否则会压住控制按钮的点击区。 */
@@ -358,7 +358,7 @@
 }
 
 .pnx-root .pnx-panel-tabs button {
-  height: 26px; flex: 1 1 0; padding: 0 6px; border: 1px solid transparent; border-radius: 6px;
+  height: 26px; flex: 1 1 0; padding: 0 6px; border: 1px solid transparent; border-radius: var(--sx-r);
   color: var(--pnx-ink-faint); background: transparent; font-size: 11px; line-height: 1; white-space: nowrap;
   transition: color 150ms var(--pnx-ease), background 150ms var(--pnx-ease), border-color 150ms var(--pnx-ease);
 }
@@ -394,14 +394,14 @@
 
 .pnx-root .pnx-boot-shelf::after {
   position: absolute; right: -14px; bottom: -9px; left: -14px; height: 9px;
-  border: 1px solid color-mix(in srgb, var(--pnx-line-strong) 82%, transparent); border-radius: 2px 2px 5px 5px;
+  border: 1px solid color-mix(in srgb, var(--pnx-line-strong) 82%, transparent); border-radius: var(--sx-r);
   background: linear-gradient(180deg, color-mix(in srgb, var(--pnx-paper) 82%, var(--pnx-line)), var(--pnx-line) 46%, var(--pnx-line-strong));
   box-shadow: 0 7px 18px color-mix(in srgb, var(--pnx-ink) 16%, transparent); content: ''; pointer-events: none;
 }
 
 .pnx-root .pnx-boot-shelf i {
   display: block; width: clamp(30px, 3.8vw, 44px); height: calc(96px + var(--pnx-book, 0) * 18px);
-  border: 1px solid color-mix(in srgb, var(--pnx-line-strong) 76%, transparent); border-radius: 3px 6px 5px 3px;
+  border: 1px solid color-mix(in srgb, var(--pnx-line-strong) 76%, transparent); border-radius: var(--sx-r);
   background:
     linear-gradient(105deg, color-mix(in srgb, var(--pnx-paper) 34%, transparent), transparent 30%),
     linear-gradient(155deg, color-mix(in srgb, var(--pnx-paper) 62%, var(--pnx-accent)), color-mix(in srgb, var(--pnx-paper-soft) 54%, var(--pnx-accent)));
@@ -410,7 +410,7 @@
 }
 
 .pnx-root .pnx-boot-shelf i:nth-child(1) {
-  border-radius: 5px 3px 3px 5px;
+  border-radius: var(--sx-r);
   background:
     linear-gradient(105deg, color-mix(in srgb, var(--pnx-paper) 34%, transparent), transparent 30%),
     linear-gradient(155deg, color-mix(in srgb, var(--pnx-ink-faint) 34%, var(--pnx-paper)), var(--pnx-paper-soft));
@@ -428,7 +428,7 @@
 .pnx-root .pnx-boot-shelf i:nth-child(4) { width: clamp(28px, 3.4vw, 40px); }
 
 .pnx-root .pnx-boot-shelf i:nth-child(5) {
-  border-radius: 3px 5px 5px 3px;
+  border-radius: var(--sx-r);
   background:
     linear-gradient(105deg, color-mix(in srgb, var(--pnx-paper) 34%, transparent), transparent 30%),
     linear-gradient(155deg, color-mix(in srgb, var(--pnx-ok) 26%, var(--pnx-paper)), var(--pnx-paper-soft));
@@ -450,7 +450,7 @@
 }
 
 .pnx-root .pnx-boot-copy img {
-  display: block; width: 56px; height: 56px; margin-bottom: 14px; border-radius: 13px; box-shadow: var(--pnx-shadow-lifted);
+  display: block; width: 56px; height: 56px; margin-bottom: 14px; border-radius: 0; box-shadow: var(--pnx-shadow-lifted);
 }
 
 .pnx-root .pnx-boot-copy h1 {
@@ -464,7 +464,7 @@
 }
 
 .pnx-root .pnx-boot-status span {
-  width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%;
+  width: 6px; height: 6px; flex: 0 0 auto; border-radius: 0;
   background: var(--pnx-accent); animation: pnx-pulse 1.7s ease-in-out infinite;
 }
 
@@ -475,7 +475,7 @@
 
 .pnx-root .pnx-boot-error {
   width: min(460px, 82vw); margin-top: 18px; padding: 16px 18px;
-  border: 1px solid color-mix(in srgb, var(--pnx-danger) 32%, transparent); border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--pnx-danger) 32%, transparent); border-radius: 0;
   background: color-mix(in srgb, var(--pnx-danger) 7%, var(--pnx-paper)); box-shadow: var(--pnx-shadow); text-align: left;
 }
 
@@ -514,7 +514,7 @@
 }
 
 .pnx-root .pnx-fallback-card {
-  width: min(560px, 100%); padding: 30px 32px; border: 1px solid var(--pnx-line); border-radius: 16px;
+  width: min(560px, 100%); padding: 30px 32px; border: 1px solid var(--pnx-line); border-radius: 0;
   background: linear-gradient(180deg, color-mix(in srgb, var(--pnx-paper) 92%, var(--pnx-accent-soft)), var(--pnx-paper));
   box-shadow: var(--pnx-shadow-lifted);
 }
@@ -528,7 +528,7 @@
 
 .pnx-root .pnx-fallback-card code {
   display: block; max-height: 120px; margin-bottom: 4px; padding: 9px 11px; overflow: auto;
-  border: 1px dashed color-mix(in srgb, var(--pnx-danger) 32%, var(--pnx-line-strong)); border-radius: 8px;
+  border: 1px dashed color-mix(in srgb, var(--pnx-danger) 32%, var(--pnx-line-strong)); border-radius: var(--sx-r);
   color: var(--pnx-danger); background: var(--pnx-paper-soft);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10.5px; line-height: 1.6;
   overflow-wrap: anywhere; white-space: pre-wrap;
@@ -564,7 +564,7 @@
   color: var(--pnx-ink); font-family: var(--font-serif); font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
 }
 
-.pnx-root .pnx-auth-brand img { display: block; width: 27px; height: 27px; border-radius: 7px; box-shadow: var(--pnx-shadow); }
+.pnx-root .pnx-auth-brand img { display: block; width: 27px; height: 27px; border-radius: var(--sx-r); box-shadow: var(--pnx-shadow); }
 
 .pnx-root .pnx-auth-quote { max-width: 520px; margin: auto 0 30px; }
 
@@ -581,7 +581,7 @@
 
 .pnx-root .pnx-auth-books i {
   position: absolute; bottom: 16px; left: 0; display: block; width: 248px; height: 24px;
-  border: 1px solid color-mix(in srgb, var(--pnx-line-strong) 82%, transparent); border-radius: 3px 6px 6px 3px;
+  border: 1px solid color-mix(in srgb, var(--pnx-line-strong) 82%, transparent); border-radius: var(--sx-r);
   background:
     linear-gradient(100deg, color-mix(in srgb, var(--pnx-paper) 40%, transparent), transparent 24%),
     linear-gradient(140deg, color-mix(in srgb, var(--pnx-accent) 24%, var(--pnx-paper)), var(--pnx-paper-soft));
@@ -590,7 +590,7 @@
 }
 
 .pnx-root .pnx-auth-books i::before {
-  position: absolute; top: 3px; bottom: 3px; left: 9px; width: 3px; border-radius: 2px;
+  position: absolute; top: 3px; bottom: 3px; left: 9px; width: 3px; border-radius: var(--sx-r);
   content: ''; background: color-mix(in srgb, var(--pnx-ink) 12%, transparent);
 }
 
@@ -627,7 +627,7 @@
 
 .pnx-root .pnx-auth-form {
   display: flex; width: min(382px, 100%); flex-direction: column; gap: 12px; padding: clamp(22px, 2.6vw, 30px);
-  border: 1px solid var(--pnx-line); border-radius: 16px;
+  border: 1px solid var(--pnx-line); border-radius: 0;
   background: linear-gradient(180deg, color-mix(in srgb, var(--pnx-paper) 96%, var(--pnx-accent-soft)), var(--pnx-paper));
   box-shadow: var(--pnx-shadow-lifted);
 }
@@ -639,11 +639,11 @@
 
 .pnx-root .pnx-segment {
   display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 3px;
-  border: 1px solid color-mix(in srgb, var(--pnx-line) 86%, transparent); border-radius: 9px; background: var(--pnx-paper-soft);
+  border: 1px solid color-mix(in srgb, var(--pnx-line) 86%, transparent); border-radius: 0; background: var(--pnx-paper-soft);
 }
 
 .pnx-root .pnx-segment button {
-  height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px;
+  height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: var(--sx-r);
   color: var(--pnx-ink-faint); background: transparent; font-size: 12px; line-height: 1;
   transition: color 150ms var(--pnx-ease), background 150ms var(--pnx-ease), border-color 150ms var(--pnx-ease);
 }
@@ -661,7 +661,7 @@
 
 .pnx-root .pnx-recent button {
   max-width: 100%; padding: 4px 9px; overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--pnx-line) 90%, transparent); border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--pnx-line) 90%, transparent); border-radius: var(--sx-r);
   color: var(--pnx-ink-soft); background: var(--pnx-paper-soft); font-size: 10.5px; line-height: 1.5;
   text-overflow: ellipsis; white-space: nowrap;
   transition: color 150ms var(--pnx-ease), background 150ms var(--pnx-ease), border-color 150ms var(--pnx-ease);
@@ -676,7 +676,7 @@
 .pnx-root .pnx-field > span { color: var(--pnx-ink-faint); font-size: 10px; letter-spacing: 0.1em; }
 
 .pnx-root .pnx-field .input {
-  height: 36px; padding: 0 11px; border-radius: 8px;
+  height: 36px; padding: 0 11px; border-radius: var(--sx-r);
   color: var(--pnx-ink); background: var(--pnx-paper-soft); font-size: 12.5px;
 }
 
@@ -684,7 +684,7 @@
 .pnx-root .pnx-password .input { width: 100%; padding-right: 56px; }
 
 .pnx-root .pnx-password button {
-  position: absolute; right: 6px; height: 24px; padding: 0 8px; border: 0; border-radius: 6px;
+  position: absolute; right: 6px; height: 24px; padding: 0 8px; border: 0; border-radius: var(--sx-r);
   color: var(--pnx-ink-faint); background: transparent; font-size: 10px; line-height: 1;
   transition: color 150ms var(--pnx-ease), background 150ms var(--pnx-ease);
 }
@@ -700,13 +700,13 @@
 
 .pnx-root .pnx-form-error {
   margin: 0; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--pnx-danger) 30%, transparent);
-  border-radius: 7px; color: var(--pnx-danger); background: color-mix(in srgb, var(--pnx-danger) 8%, transparent);
+  border-radius: var(--sx-r); color: var(--pnx-danger); background: color-mix(in srgb, var(--pnx-danger) 8%, transparent);
   font-size: 10.5px; line-height: 1.65;
 }
 
 .pnx-root .pnx-submit {
   display: flex; width: 100%; height: 39px; align-items: center; justify-content: center;
-  margin-top: 2px; border-radius: 9px; font-size: 12.5px; font-weight: 600; letter-spacing: 0.14em;
+  margin-top: 2px; border-radius: 0; font-size: 12.5px; font-weight: 600; letter-spacing: 0.14em;
 }
 
 .pnx-root .pnx-auth-hint {

@@ -7,7 +7,7 @@ import NextSettingsPage from './NextSettingsPage'
 import NextWizardPage from './NextWizardPage'
 
 /**
- * 全新界面的路由表：与经典界面逐条对齐（/wizard 独立于壳，其余在壳内）。
+ * 层析界面的路由表：与经典界面逐条对齐（/wizard 独立于壳，其余在壳内）。
  * 页签对账（ensureFromPath）、脏 Markdown 拦截、关闭页签路由选择都由 NextShell 承担。
  */
 export default function NextApp() {

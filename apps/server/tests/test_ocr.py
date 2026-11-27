@@ -85,6 +85,21 @@ def test_ocr_done_via_mock_worker(client, tmp_path, data_dir):
     assert "OCR text" in r.text
 
 
+def test_done_pages_cache_sees_appended_pages(client, tmp_path, data_dir):
+    """轮询按 (size, mtime_ns) 缓存解析结果：worker 逐页追加后进度必须即时可见。"""
+    token = register(client)
+    paper = upload_pdf(client, token, tmp_path, is_scanned=True, pages=(("a",), ("b",)))
+    pid = paper["id"]
+    d = ocr_dir_for(data_dir, pid)
+    m = get_manager()
+    assert m._done_pages(d) == frozenset()
+    append_page(data_dir, pid, 0)
+    assert m._done_pages(d) == frozenset({0})  # 文件变化 → 缓存失效重解析
+    append_page(data_dir, pid, 1)
+    assert m._done_pages(d) == frozenset({0, 1})
+    assert m._done_pages(d) == frozenset({0, 1})  # 重复调用走缓存，结果一致
+
+
 def test_claimed_stale_heartbeat_marks_failed(client, tmp_path, data_dir):
     """B14：认领后心跳超时（无句柄场景）→ failed 并清理，保证 retry 可重入队。"""
     token = register(client)

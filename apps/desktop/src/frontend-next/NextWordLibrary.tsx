@@ -253,7 +253,7 @@ export default function NextWordLibrary({ groupFilter, groups, onGroupsChanged, 
   return (
     <div className="pnx-library">
       <header className="pnx-library-heading">
-        <div><span className="pnx-rv-eyebrow">我的词库</span><h1>把生词，收进书房。</h1><p>搜索、整理，也为下一次复习做好准备。</p></div>
+        <div><span className="pnx-rv-eyebrow">我的词库</span><h1>把生词，收进词库。</h1><p>搜索、整理，也为下一次复习做好准备。</p></div>
         <div className="pnx-export-actions" role="group" aria-label="导出词库">
           <button type="button" className="pnx-rv-button" disabled={exporting !== null} onClick={() => void doExport('csv')}>{exporting === 'csv' ? '导出中…' : '导出 CSV'}</button>
           <button type="button" className="pnx-rv-button" disabled={exporting !== null} onClick={() => void doExport('anki')}>{exporting === 'anki' ? '导出中…' : '导出 Anki'}</button>

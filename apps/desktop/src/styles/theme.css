@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source not "../../frontend-demo";
 
 /* ── PaperLens 设计系统（§10.2 色板）────────────────────────── */
 :root {

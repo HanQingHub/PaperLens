@@ -124,7 +124,7 @@
   min-width: 116px;
   padding: 10px 14px;
   border: 1px solid color-mix(in srgb, var(--pnx-line) 72%, transparent);
-  border-radius: 12px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--pnx-paper) 70%, transparent);
   box-shadow: inset 0 1px rgb(255 255 255 / 35%);
 }
@@ -134,7 +134,7 @@
   width: 34px;
   height: 34px;
   place-items: center;
-  border-radius: 9px;
+  border-radius: 0;
   color: var(--pnx-accent);
   background: var(--pnx-accent-soft);
 }
@@ -168,7 +168,7 @@
   flex: 0 0 auto;
   margin: 0 26px;
   border: 1px solid var(--pnx-line);
-  border-radius: 13px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--pnx-paper) 92%, transparent);
   box-shadow: var(--pnx-shadow);
 }
@@ -204,7 +204,7 @@
   height: 34px;
   padding: 0 32px 0 34px;
   border: 1px solid var(--pnx-line);
-  border-radius: 9px;
+  border-radius: 0;
   outline: none;
   color: var(--pnx-ink);
   background: var(--pnx-paper-soft);
@@ -232,7 +232,7 @@
   padding: 0;
   place-items: center;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--sx-r);
   color: var(--pnx-ink-faint);
   background: transparent;
 }
@@ -254,7 +254,7 @@
   gap: 2px;
   padding: 3px;
   border: 1px solid color-mix(in srgb, var(--pnx-line) 78%, transparent);
-  border-radius: 9px;
+  border-radius: 0;
   background: var(--pnx-paper-soft);
 }
 
@@ -263,7 +263,7 @@
   height: 27px;
   padding: 0 10px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--sx-r);
   color: var(--pnx-ink-soft);
   background: transparent;
   font-size: 12px;
@@ -315,7 +315,7 @@
   padding: 0 27px 0 10px;
   appearance: none;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--sx-r);
   outline: none;
   color: var(--pnx-ink-soft);
   background: transparent;
@@ -340,7 +340,7 @@
 
 .pnx-root.pnx-library-page .pnx-manual-badge {
   padding: 6px 9px;
-  border-radius: 7px;
+  border-radius: var(--sx-r);
   color: var(--pnx-accent);
   background: var(--pnx-accent-soft);
   font-size: 11px;
@@ -372,7 +372,7 @@
   padding: 4px 7px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--pnx-accent) 20%, transparent);
-  border-radius: 6px;
+  border-radius: var(--sx-r);
   color: var(--pnx-accent);
   background: var(--pnx-accent-soft);
   font-size: 10px;
@@ -412,7 +412,7 @@
   gap: 6px;
   padding: 5px 11px;
   border: 1px solid var(--pnx-line);
-  border-radius: 8px;
+  border-radius: var(--sx-r);
   color: var(--pnx-ink-soft);
   background: var(--pnx-paper);
   box-shadow: 0 1px 2px rgb(70 48 28 / 4%);
@@ -477,7 +477,7 @@
   padding: 0;
   place-items: center;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--sx-r);
   color: var(--pnx-ink-faint);
   background: transparent;
   transition: color 150ms ease, background 150ms ease;
@@ -513,7 +513,7 @@
   height: 32px;
   padding: 0 10px;
   border: 1px solid var(--pnx-line);
-  border-radius: 7px;
+  border-radius: var(--sx-r);
   outline: none;
   color: var(--pnx-ink);
   background: var(--pnx-paper);
@@ -561,7 +561,7 @@
 .pnx-root.pnx-library-page .pnx-progress-track {
   height: 3px;
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: var(--sx-r);
   background: var(--pnx-line);
 }
 
@@ -591,7 +591,7 @@
   min-height: 0;
   padding: 15px 12px 12px;
   border: 1px solid var(--pnx-line);
-  border-radius: 12px;
+  border-radius: 0;
   background:
     linear-gradient(90deg, rgb(255 255 255 / 18%), transparent 12%),
     color-mix(in srgb, var(--pnx-paper-soft) 88%, transparent);
@@ -659,7 +659,7 @@
   align-items: center;
   gap: 2px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--sx-r);
   color: var(--pnx-ink-soft);
   transition: border-color 150ms ease, background 150ms ease, opacity 150ms ease, transform 150ms ease;
 }
@@ -695,7 +695,7 @@
   gap: 8px;
   padding: 5px 4px 5px 7px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--sx-r);
   color: inherit;
   background: transparent;
   text-align: left;
@@ -751,7 +751,7 @@
 .pnx-root.pnx-library-page .pnx-project-count {
   min-width: 20px;
   padding: 1px 5px;
-  border-radius: 999px;
+  border-radius: var(--sx-r);
   color: var(--pnx-ink-faint);
   background: color-mix(in srgb, var(--pnx-line) 52%, transparent);
   font-family: Georgia, serif;
@@ -802,7 +802,7 @@
   margin-bottom: 8px;
   place-items: center;
   border: 1px dashed var(--pnx-line-strong);
-  border-radius: 8px;
+  border-radius: var(--sx-r);
   color: var(--pnx-accent);
   font-size: 18px;
 }
@@ -881,7 +881,7 @@
 .pnx-root.pnx-library-page .pnx-shelf {
   position: relative;
   padding: 0 4px 11px;
-  border-radius: 11px;
+  border-radius: 0;
   transition: background 160ms ease, box-shadow 160ms ease;
 }
 
@@ -938,7 +938,7 @@
   height: 9px;
   margin: 17px -5px 0;
   border: 1px solid var(--pnx-line-strong);
-  border-radius: 2px 2px 5px 5px;
+  border-radius: var(--sx-r);
   background: linear-gradient(180deg, var(--pnx-paper) 0%, var(--pnx-line) 45%, var(--pnx-line-strong) 100%);
   box-shadow:
     0 4px 0 color-mix(in srgb, var(--pnx-line-strong) 72%, var(--pnx-desk)),
@@ -959,7 +959,7 @@
   justify-content: center;
   padding: 18px;
   border: 1px dashed var(--pnx-line-strong);
-  border-radius: 9px;
+  border-radius: 0;
   color: var(--pnx-ink-faint);
   background: color-mix(in srgb, var(--pnx-paper-soft) 62%, transparent);
   font-size: 11px;
@@ -991,7 +991,7 @@
   margin: 13px auto -3px;
   padding: 4px 12px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--sx-r);
   color: var(--pnx-accent);
   background: transparent;
   font-size: 10px;
@@ -1008,12 +1008,12 @@
   min-height: 292px;
   flex-direction: column;
   border: 1px solid var(--pnx-line);
-  border-radius: 9px 12px 11px 9px;
+  border-radius: 0;
   color: var(--pnx-ink);
   background: var(--pnx-paper);
   box-shadow: 0 3px 6px rgb(70 48 28 / 7%), 0 10px 20px rgb(70 48 28 / 5%);
   cursor: pointer;
-  animation: pnx-card-enter 400ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  animation: pnx-card-enter 400ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
   animation-delay: var(--pnx-delay, 0ms);
   transform-origin: center bottom;
   transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
@@ -1048,7 +1048,7 @@
   height: 22px;
   place-items: center;
   border: 2px solid var(--pnx-paper);
-  border-radius: 50%;
+  border-radius: 0;
   color: var(--pnx-paper);
   background: var(--pnx-accent);
   content: '✓';
@@ -1068,7 +1068,7 @@
   bottom: -5px;
   z-index: 25;
   width: 3px;
-  border-radius: 3px;
+  border-radius: var(--sx-r);
   background: var(--pnx-accent);
   box-shadow: 0 0 0 2px var(--pnx-accent-soft);
   content: '';
@@ -1093,7 +1093,7 @@
   padding: 28px 18px 16px 25px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, hsl(var(--pnx-hue) 35% 48%) 30%, var(--pnx-line));
-  border-radius: 5px 9px 8px 4px;
+  border-radius: 0;
   background:
     linear-gradient(105deg, rgb(255 255 255 / 26%), transparent 28%),
     linear-gradient(145deg,
@@ -1125,7 +1125,7 @@
   left: 24px;
   padding: 2px 6px 1px;
   border: 1px solid color-mix(in srgb, var(--pnx-ink-soft) 34%, transparent);
-  border-radius: 3px;
+  border-radius: var(--sx-r);
   color: color-mix(in srgb, var(--pnx-ink-soft) 82%, hsl(var(--pnx-hue) 38% 38%));
   font-family: Georgia, serif;
   font-size: 8px;
@@ -1150,7 +1150,7 @@
 .pnx-root.pnx-library-page .pnx-paper-card.is-md .pnx-book-cover {
   padding: 26px 16px 16px 18px;
   border-color: color-mix(in srgb, var(--pnx-accent) 30%, var(--pnx-line));
-  border-radius: 4px;
+  border-radius: var(--sx-r);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--pnx-accent) 7%, transparent), transparent 42%),
     repeating-linear-gradient(180deg, transparent 0 21px, color-mix(in srgb, var(--pnx-accent) 16%, transparent) 21px 22px),
@@ -1243,7 +1243,7 @@
   padding: 0;
   place-items: center;
   border: 0;
-  border-radius: 50%;
+  border-radius: 0;
   color: var(--pnx-ink-faint);
   background: color-mix(in srgb, var(--pnx-paper) 58%, transparent);
   transition: color 150ms ease, background 150ms ease, transform 150ms ease;
@@ -1262,7 +1262,7 @@
   min-height: 133px;
   flex-direction: column;
   padding: 11px 12px 12px;
-  border-radius: 0 0 10px 8px;
+  border-radius: 0;
   background: var(--pnx-paper);
 }
 
@@ -1301,7 +1301,7 @@
   z-index: 50;
   padding: 5px;
   border: 1px solid var(--pnx-line);
-  border-radius: 8px;
+  border-radius: var(--sx-r);
   background: var(--pnx-paper);
   box-shadow: var(--pnx-shadow-lifted);
 }
@@ -1313,7 +1313,7 @@
   gap: 7px;
   padding: 7px 8px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--sx-r);
   color: var(--pnx-ink-soft);
   background: transparent;
   font-size: 11px;
@@ -1371,7 +1371,7 @@
   max-width: 100%;
   padding: 2px 5px;
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: var(--sx-r);
   color: var(--pnx-ink-soft);
   background: var(--pnx-paper-soft);
   font-size: 8px;
@@ -1408,7 +1408,7 @@
 .pnx-root.pnx-library-page .pnx-skeleton-card {
   min-height: 292px;
   border: 1px solid var(--pnx-line);
-  border-radius: 10px;
+  border-radius: 0;
   background: linear-gradient(105deg, var(--pnx-paper-soft) 25%, var(--pnx-paper) 42%, var(--pnx-paper-soft) 60%);
   background-size: 240% 100%;
   animation: pnx-skeleton 1.4s ease-in-out infinite;
@@ -1501,7 +1501,7 @@
   display: grid;
   place-items: center;
   border: 2px dashed var(--pnx-accent);
-  border-radius: 18px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--pnx-accent-soft) 76%, transparent);
   backdrop-filter: blur(4px);
   pointer-events: none;
@@ -1515,7 +1515,7 @@
   gap: 9px;
   padding: 25px 35px;
   border: 1px solid var(--pnx-line);
-  border-radius: 15px;
+  border-radius: 0;
   background: var(--pnx-paper);
   box-shadow: var(--pnx-shadow-lifted);
   text-align: center;
@@ -1537,7 +1537,7 @@
   width: 45px;
   height: 45px;
   place-items: center;
-  border-radius: 50%;
+  border-radius: 0;
   color: var(--pnx-paper);
   background: var(--pnx-accent);
 }
@@ -1559,7 +1559,7 @@
   padding: 9px 12px;
   overflow-x: auto;
   border: 1px solid var(--pnx-line-strong);
-  border-radius: 13px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--pnx-paper) 94%, transparent);
   box-shadow: var(--pnx-shadow-lifted);
   backdrop-filter: blur(14px);

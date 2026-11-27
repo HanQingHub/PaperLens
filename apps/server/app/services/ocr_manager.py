@@ -35,6 +35,8 @@ class OCRManager:
         self._spawned_at = 0.0
         self._poll_failures = 0
         self._paused = (self.settings.ocr_dir / ".paused").exists()
+        # blocks.ndjson 解析缓存：key=paper 目录，value=((size, mtime_ns), 已完成页)
+        self._done_cache: dict[Path, tuple[tuple[int, int], frozenset[int]]] = {}
 
     # ---- 任务入队 ----
     def enqueue(self, paper_id: int, pdf_abs: Path, pages_total: int, pages_todo: list[int] | None = None) -> None:
@@ -210,12 +212,31 @@ class OCRManager:
                 if self._poll_failures >= 5:
                     logger.warning("OCR poll_once 连续失败 %d 次，请检查数据目录与数据库", self._poll_failures)
 
-    @staticmethod
-    def _done_pages(d: Path) -> set[int]:
-        done: set[int] = set()
+    def _done_pages(self, d: Path) -> frozenset[int]:
+        """已完成页集合（按 (size, mtime_ns) 缓存）。
+
+        1s 轮询会对全部 ocr 目录调用本方法；blocks.ndjson 单篇可达数 MB，逐行
+        json.loads 全量重解析实测 ~250ms/轮（59 篇 15MB），空闲期也要每秒跑一次，
+        是 server 进程常驻 CPU 的主要来源。worker 每追加一页 size/mtime 必然变化，
+        因此按 stat 指纹做缓存仍能即时看到进度，且空闲期只剩一次 stat。
+        """
         nd = d / "blocks.ndjson"
-        if not nd.exists():
-            return done
+        try:
+            st = nd.stat()
+        except OSError:
+            self._done_cache.pop(d, None)
+            return frozenset()
+        sig = (st.st_size, st.st_mtime_ns)
+        cached = self._done_cache.get(d)
+        if cached is not None and cached[0] == sig:
+            return cached[1]
+        done = frozenset(self._parse_done_pages(nd))
+        self._done_cache[d] = (sig, done)
+        return done
+
+    @staticmethod
+    def _parse_done_pages(nd: Path) -> set[int]:
+        done: set[int] = set()
         with open(nd, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -423,6 +444,7 @@ class OCRManager:
 
     def cancel(self, paper_id: int) -> None:
         d = self.settings.ocr_dir / str(paper_id)
+        self._done_cache.pop(d, None)
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
 

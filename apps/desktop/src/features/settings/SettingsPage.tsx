@@ -502,7 +502,7 @@ export default function SettingsPage() {
           <Row label="界面风格" hint="立即切换，无需重启；页签、阅读位置与主题设置保持不变">
             <div className="flex gap-1.5">
               {([
-                { key: 'next', label: '全新界面' },
+                { key: 'next', label: '层析界面' },
                 { key: 'classic', label: '经典界面' },
               ] as const).map((s) => (
                 <button

@@ -28,6 +28,11 @@ import { toast } from '../features/shared/Toast'
 import EditPaperModal from '../features/library/EditPaperModal'
 import NextPaperCard, { type OcrProgress } from './NextPaperCard'
 import NextProjectRail from './NextProjectRail'
+import NextTerrain from './NextTerrain'
+import NextInspector from './NextInspector'
+import { TERRAIN_MAX, projectHue } from './terrain'
+import { flyToReader } from './flyTransition'
+import { strataMotionOn } from './strataDocument'
 import './NextLibraryPage.css'
 
 // 网格列数换算与 .pnx-grid 的 column-gap 必须一致，否则列数与实际排版会错位。
@@ -124,6 +129,12 @@ export default function NextLibraryPage() {
   const [mdOpen, setMdOpen] = useState(false)
   const [mdTitle, setMdTitle] = useState('')
   const [mdBusy, setMdBusy] = useState(false)
+  // 层析地形 / 网格布局（命名避开既有 view / setView）
+  const [layout, setLayout] = useState<'terrain' | 'grid'>(() => {
+    try { return localStorage.getItem('pl_sx_lib_layout') === 'grid' ? 'grid' : 'terrain' } catch { return 'terrain' }
+  })
+  const [currentId, setCurrentId] = useState<number | null>(null)
+  const [hoverId, setHoverId] = useState<number | null>(null)
 
   const contentRef = useRef<HTMLDivElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -482,6 +493,37 @@ export default function NextLibraryPage() {
     navigate(`/reader/${paper.id}`)
   }
 
+  const terrainTooMany = papers.length > TERRAIN_MAX
+  const effectiveLayout: 'terrain' | 'grid' = layout === 'terrain' && !terrainTooMany ? 'terrain' : 'grid'
+  const chooseLayout = (next: 'terrain' | 'grid') => {
+    setLayout(next)
+    try { localStorage.setItem('pl_sx_lib_layout', next) } catch { /* 非关键偏好 */ }
+  }
+
+  useEffect(() => {
+    if (currentId != null && !papers.some((paper) => paper.id === currentId)) setCurrentId(null)
+    if (hoverId != null && !papers.some((paper) => paper.id === hoverId)) setHoverId(null)
+  }, [papers, currentId, hoverId])
+
+  // 地形打开：与 openPaper 同序（入签成功后才播放转场，页签满不播放）
+  const openFromTerrain = (id: number, face: HTMLElement | null) => {
+    const paper = papers.find((item) => item.id === id)
+    if (!paper) return
+    const opened = useReaderTabs.getState().openReaderTab(paperToTabInput(paper))
+    if (!opened) {
+      toast('页签已达上限，请先关闭部分页签', 'error')
+      return
+    }
+    const isMd = paper.file_type === 'markdown'
+    flyToReader(face, {
+      title: paper.title,
+      subtitle: [paper.authors?.split(/[;,]/)[0], paper.venue, paper.year].filter(Boolean).join(' · '),
+      code: `${isMd ? 'MD' : 'PDF'} · ${paper.year ?? '—'} · ${paper.page_count}${isMd ? ' 行' : ' 页'}`,
+      hue: isMd ? 205 : projectHue(paper.project_id),
+    }, animations && strataMotionOn())
+    navigate(`/reader/${paper.id}`)
+  }
+
   const toggleFavorite = async (paper: Paper) => {
     try {
       await api.updatePaper(paper.id, { is_favorite: !paper.is_favorite })
@@ -700,6 +742,9 @@ export default function NextLibraryPage() {
   }
 
   const gridStyle: CSSProperties = { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }
+  const inspected = papers.find((paper) => paper.id === (hoverId ?? currentId)) ?? null
+  // 项目视图保留分组网格 / 投放 / 组内排序，地形只用于全部、最近、打开过、收藏
+  const showTerrain = effectiveLayout === 'terrain' && !loading && papers.length > 0 && view !== 'project'
   const pageDrop = dnd.pageDropProps()
   const activeProject = projects.find((project) => project.id === selectedProjectId)
   const currentTitle = activeProject?.name ?? VIEW_TABS.find((tab) => tab.key === view)?.label ?? '全部'
@@ -721,7 +766,7 @@ export default function NextLibraryPage() {
         <div className="pnx-drop-overlay" role="status">
           <div className="pnx-drop-card">
             <span className="pnx-drop-icon"><PnxIcon name="upload" /></span>
-            <strong>松手，把文献放上书架</strong>
+            <strong>松手，导入到文库</strong>
             <span>上传到{activeProject ? `「${activeProject.name}」` : '文库'} · 扫描版 PDF 将自动 OCR</span>
           </div>
         </div>
@@ -729,7 +774,7 @@ export default function NextLibraryPage() {
 
       <header className="pnx-header">
         <div className="pnx-title-block">
-          <span className="pnx-eyebrow">PaperLens 书房</span>
+          <span className="pnx-eyebrow">STRATA · 层析文库</span>
           <h1>我的文库</h1>
           <p>让每一篇论文，都有可归之处。</p>
         </div>
@@ -775,6 +820,22 @@ export default function NextLibraryPage() {
               )
             })}
           </nav>
+
+          <div className="pnx-sx-layout">
+            <div className="pnx-segment" role="radiogroup" aria-label="浏览视图">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={effectiveLayout === 'terrain'}
+                className={effectiveLayout === 'terrain' ? 'is-active' : ''}
+                disabled={terrainTooMany}
+                title={terrainTooMany ? `超过 ${TERRAIN_MAX} 篇，已使用网格视图` : '3D 地形：高度 = 批注数，顶面 = 阅读状态，色带 = 项目'}
+                onClick={() => chooseLayout('terrain')}
+              >地形</button>
+              <button type="button" role="radio" aria-checked={effectiveLayout === 'grid'} className={effectiveLayout === 'grid' ? 'is-active' : ''} onClick={() => chooseLayout('grid')}>网格</button>
+            </div>
+            {effectiveLayout === 'terrain' && view !== 'project' && <small>拖拽整理请切到网格或项目视图</small>}
+          </div>
 
           <div className="pnx-filter-group">
             {view === 'project' ? (
@@ -940,10 +1001,10 @@ export default function NextLibraryPage() {
           onFileDrop={dnd.railFileDrop}
         />
 
-        <div ref={contentRef} className="pnx-content" onScroll={handleScroll} tabIndex={0} aria-label="论文书架，可滚动">
+        <div ref={contentRef} className="pnx-content" onScroll={handleScroll} tabIndex={0} aria-label="论文列表，可滚动">
           <div className="pnx-content-heading">
             <div>
-              <span className="pnx-eyebrow">文献书架</span>
+              <span className="pnx-eyebrow">INDEX · 文库索引</span>
               <h2>{currentTitle}</h2>
             </div>
             {!loading && <span>{papers.length} 篇</span>}
@@ -963,6 +1024,17 @@ export default function NextLibraryPage() {
                 setSelectedProjectId(null)
                 setView('all')
               }}
+            />
+          ) : showTerrain ? (
+            <NextTerrain
+              papers={papers}
+              selected={selected}
+              currentId={currentId}
+              motion={animations && strataMotionOn()}
+              onPick={setCurrentId}
+              onHover={setHoverId}
+              onToggleSelect={toggleSelect}
+              onOpen={openFromTerrain}
             />
           ) : view === 'project' && selectedProjectId == null ? (
             <div className="pnx-shelves">
@@ -1023,7 +1095,7 @@ export default function NextLibraryPage() {
                   {singleGroupItems.length === 0 ? (
                     <div className="pnx-empty-shelf pnx-empty-shelf-large">
                       <PnxIcon name="book" />
-                      <strong>这层书架还空着</strong>
+                      <strong>这个项目还没有论文</strong>
                       <span>拖拽文件到这里上传，或把其他论文卡片拖进来。</span>
                     </div>
                   ) : <div className="pnx-grid" style={gridStyle} onDragOver={keepCardInsertMark}>{cardList(singleGroupItems, selectedProjectId)}</div>}
@@ -1038,6 +1110,24 @@ export default function NextLibraryPage() {
             </section>
           )}
         </div>
+        {showTerrain && (
+          <NextInspector
+            paper={inspected}
+            index={inspected ? papers.indexOf(inspected) : 0}
+            total={papers.length}
+            projectName={inspected ? projects.find((project) => project.id === inspected.project_id)?.name ?? null : null}
+            peek={hoverId != null && hoverId !== currentId}
+            selected={inspected ? selected.has(inspected.id) : false}
+            onOpen={() => { if (inspected) openFromTerrain(inspected.id, document.querySelector<HTMLElement>(`.pnx-sx-blk[data-id="${inspected.id}"] .pnx-sx-blk-top`)) }}
+            onEdit={() => { if (inspected) setEditing(inspected) }}
+            onToggleFavorite={() => { if (inspected) void toggleFavorite(inspected) }}
+            onToggleSelect={() => { if (inspected) toggleSelect(inspected.id) }}
+            ocrProgress={inspected ? ocrProgress[inspected.id] ?? null : null}
+            onDelete={() => { if (inspected) setDeleting(inspected) }}
+            onRetryOcr={() => { if (inspected) void retryOcr(inspected) }}
+            onCancelOcr={() => { if (inspected) void cancelOcr(inspected) }}
+          />
+        )}
       </div>
 
       {selected.size > 0 && (
@@ -1126,7 +1216,7 @@ function EmptyState({ filtered, onUpload, onClear }: { filtered: boolean; onUplo
       {filtered ? (
         <>
           <h2>这一层暂时没有匹配的文献</h2>
-          <p>换个关键词或清除筛选，再看看其他书架。</p>
+          <p>换个关键词或清除筛选，再看看其他项目。</p>
           <button type="button" className="pnx-button" onClick={onClear}>清除筛选</button>
         </>
       ) : (
