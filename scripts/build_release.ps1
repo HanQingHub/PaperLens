@@ -245,8 +245,10 @@ if (-not $SkipUpload) {
     $nl = [char]10
     $releaseNotes = ((@($Notes, $fullHint) | Where-Object { $_ }) -join ($nl + $nl + '---' + $nl + $nl))
     Write-Host "==> gh release create v$Version"
-    $assets = @(Get-ChildItem "$releaseDir\PaperLens_${Version}_x64-setup-*.exe*") + @("$releaseDir\latest.json")
-    & gh release create "v$Version" @($assets | ForEach-Object FullName) --title "v$Version" --notes $releaseNotes
+    # 统一为完整路径字符串：FileInfo 与字符串混装后 ForEach-Object FullName 会让字符串变 $null，
+    # 导致 latest.json 被静默漏传（v0.9.3 实测：release 只有 exe/.sig，自动更新端点 404）
+    $assets = @(Get-ChildItem "$releaseDir\PaperLens_${Version}_x64-setup-*.exe*" | ForEach-Object { $_.FullName }) + @((Resolve-Path "$releaseDir\latest.json").Path)
+    & gh release create "v$Version" @assets --title "v$Version" --notes $releaseNotes
     if ($LASTEXITCODE -ne 0) { throw 'gh release create 失败' }
     Write-Host '    GitHub Release 已创建。请手动将 latest.mirror.json（如有）与更新包上传至国内镜像。'
   } else {
